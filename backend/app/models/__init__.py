@@ -11,6 +11,7 @@ from app.models.bot import Bot
 from app.models.enums import OrderSide, OrderStatus, OrderType
 from app.models.execution import Execution
 from app.models.instrument import Instrument
+from app.models.market_candle import MarketCandle
 from app.models.order import Order
 from app.models.position import Position
 from app.models.strategy import Strategy, StrategyVersion
@@ -21,6 +22,7 @@ __all__ = [
     "Bot",
     "Execution",
     "Instrument",
+    "MarketCandle",
     "Order",
     "OrderSide",
     "OrderStatus",

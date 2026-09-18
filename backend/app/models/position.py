@@ -27,18 +27,12 @@ class Position(TimestampMixin, Base):
         BigInteger, ForeignKey("instruments.id"), index=True, nullable=False
     )
     quantity: Mapped[float] = mapped_column(Numeric(20, 8), default=0, nullable=False)
-    average_price: Mapped[float | None] = mapped_column(
-        Numeric(20, 8), nullable=True
-    )
+    average_price: Mapped[float | None] = mapped_column(Numeric(20, 8), nullable=True)
     realized_pnl: Mapped[float] = mapped_column(Numeric(20, 8), default=0, nullable=False)
     unrealized_pnl: Mapped[float] = mapped_column(Numeric(20, 8), default=0, nullable=False)
     fees: Mapped[float] = mapped_column(Numeric(20, 8), default=0, nullable=False)
-    opened_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    closed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Position duration (seconds), see spec section 8.
     duration: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 

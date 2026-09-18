@@ -33,12 +33,8 @@ class Bot(TimestampMixin, Base):
     # e.g. "stopped", "running", "error". Exact vocabulary TBD at MVP-6.
     status: Mapped[str] = mapped_column(String(32), default="stopped", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    stopped_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f"<Bot id={self.id} name={self.name!r} status={self.status!r}>"

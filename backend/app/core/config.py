@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     # Comma-separated list in env, or JSON array. Parsed by pydantic-settings.
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # --- T-Invest ---
+    # API token. Must come from the environment, never from source. If empty the
+    # integration is reported as "not_configured" rather than failing startup.
+    tinvest_token: str | None = None
+    # Official prod REST endpoint. Sandbox is available for testing.
+    tinvest_base_url: str = "https://invest-public-api.tbank.ru/rest"
+
 
 @lru_cache
 def get_settings() -> Settings:

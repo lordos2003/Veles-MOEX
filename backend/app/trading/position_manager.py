@@ -22,9 +22,7 @@ class PositionManager:
         """Return the tracked position for an instrument."""
         return self._positions.get(instrument_id)
 
-    def apply_fill(
-        self, instrument_id: int, quantity: float, price: float
-    ) -> BrokerPosition:
+    def apply_fill(self, instrument_id: int, quantity: float, price: float) -> BrokerPosition:
         """Apply an execution to a position and recalculate average price.
 
         Average-price recalculation after DCA is implemented later.

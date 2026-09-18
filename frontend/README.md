@@ -27,6 +27,13 @@ npm run build
 npm run preview
 ```
 
+## Status
+
+The page displays the backend health status and a T-Invest integration panel:
+connection status (Connected / Disconnected / Not configured), accounts,
+instruments, and market data (last price + candles) for a selected instrument.
+The data comes from the read-only backend endpoints via `/api`.
+
 ## Notes
 
 - `shadcn/ui` was not added at this stage to keep the initial scaffold minimal

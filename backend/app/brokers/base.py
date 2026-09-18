@@ -4,6 +4,10 @@ The Strategy/Trading Engine must depend only on this interface, never on
 T-Invest specifics. Live uses TInvestAdapter; Backtest uses BacktestBroker,
 which also implements this interface. This keeps Live and Backtest on the same
 Strategy/Trading Engine (Architecture & Product Specification section 11).
+
+This layer hands out broker-agnostic DTOs (accounts, instruments) and the
+internal domain market-data models (``Candle``, ``LastPrice``, ``Timeframe``),
+so higher layers never see broker (T-Invest) objects.
 """
 
 from __future__ import annotations
@@ -11,7 +15,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
+from app.domain.instrument import InstrumentType, TradingStatus
+from app.domain.marketdata import Candle, LastPrice, Timeframe
 from app.models.enums import OrderSide, OrderStatus, OrderType
 
 
@@ -50,12 +57,37 @@ class BrokerPosition:
 
 @dataclass
 class BrokerAccount:
-    """Broker-agnostic account summary."""
+    """Broker-agnostic account summary.
+
+    For the account list, ``name``/``status``/``account_type`` are populated;
+    for a single account request, cash/equity are populated from the portfolio.
+    """
 
     account_id: str
     currency: str = "RUB"
-    available_cash: float = 0.0
-    equity: float = 0.0
+    available_cash: Decimal = Decimal("0")
+    equity: Decimal = Decimal("0")
+    name: str | None = None
+    account_type: str | None = None
+    status: str | None = None
+    opened_at: datetime | None = None
+    closed_at: datetime | None = None
+
+
+@dataclass
+class BrokerInstrument:
+    """Broker-agnostic instrument metadata (normalized to domain types)."""
+
+    figi: str
+    ticker: str | None = None
+    name: str | None = None
+    instrument_type: InstrumentType | None = None
+    currency: str | None = None
+    lot_size: int | None = None
+    tick_size: Decimal | None = None
+    trading_status: TradingStatus = TradingStatus.TRADING_AVAILABLE
+    exchange: str | None = None
+    is_active: bool = True
 
 
 @dataclass
@@ -79,6 +111,8 @@ class BrokerAdapter(ABC):
     and marked as the integration seam for a broker.
     """
 
+    # --- Connection ---
+
     @abstractmethod
     async def connect(self) -> None:
         """Establish and validate the broker connection."""
@@ -87,9 +121,42 @@ class BrokerAdapter(ABC):
     async def close(self) -> None:
         """Close the broker connection."""
 
+    # --- Accounts ---
+
+    @abstractmethod
+    async def get_accounts(self) -> list[BrokerAccount]:
+        """Return all available broker accounts."""
+
     @abstractmethod
     async def get_account(self, account_id: str | None = None) -> BrokerAccount:
         """Return account summary (cash/equity)."""
+
+    # --- Instruments / market data (read-only) ---
+
+    @abstractmethod
+    async def get_instruments(self, kind: str | None = None) -> list[BrokerInstrument]:
+        """Return a list of instruments, optionally filtered by kind."""
+
+    @abstractmethod
+    async def get_instrument(self, figi: str) -> BrokerInstrument:
+        """Return a single instrument by FIGI."""
+
+    @abstractmethod
+    async def get_last_price(self, figi: str) -> LastPrice:
+        """Return the last trade price for an instrument."""
+
+    @abstractmethod
+    async def get_candles(
+        self,
+        figi: str,
+        timeframe: Timeframe,
+        from_: datetime,
+        to: datetime,
+        limit: int | None = None,
+    ) -> list[Candle]:
+        """Return historical OHLCV candles for an instrument and timeframe."""
+
+    # --- Trading (not implemented in this phase) ---
 
     @abstractmethod
     async def place_order(self, request: BrokerOrderRequest) -> BrokerOrder:

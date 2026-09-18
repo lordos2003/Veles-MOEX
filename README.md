@@ -126,12 +126,21 @@ pytest
 - Конфигурация через переменные окружения (без секретов в коде).
 - ORM-модели: Instrument, Account, Order, Execution, Position, Strategy,
   StrategyVersion, Bot.
-- `BrokerAdapter` (абстракция) + `TInvestAdapter` (заглушка) + `BacktestBroker`.
+- `BrokerAdapter` (абстракция) + `TInvestAdapter` (**read-only**) +
+  `BacktestBroker`.
+- **Read-only интеграция T-Invest**: счета, портфель, инструменты, последняя
+  цена, исторические свечи (через официальный REST API, нормализованные DTO,
+  типизированные ошибки).
+- **Слой Instrument + Market Data** (Task №3): единая модель `Instrument`
+  (FIGI, типы/статус как enum, exchange), `InstrumentService` (фильтры,
+  синхронизация из T-Invest в PostgreSQL без дублей), `MarketDataService`
+  (`Candle`/`LastPrice` на Decimal, UTC, чанкинг/сортировка/дедупликация,
+  enum `Timeframe`).
 - Каркасы: StrategyEngine, EntryEngine, ExitEngine, DCA/Grid Engine,
   TradingEngine, OrderManager, PositionManager, RiskManager, BacktestEngine.
 - PostgreSQL + Alembic (первичная миграция), Redis в `docker-compose.yml`.
 - Docker-образы backend/frontend и nginx-прокси.
 
 Не реализовано (намеренно, по следующим заданиям): реальная торговля,
-T-Invest-интеграция, Backtest-исполнение, торговые стратегии, Paper Trading,
-второй брокер, микросервисы.
+Dispatch/торговые операции T-Invest (place/cancel order), Backtest-исполнение,
+торговые стратегии, Paper Trading, второй брокер, микросервисы.

@@ -44,9 +44,7 @@ def test_trading_engine_constructs() -> None:
     position_manager = PositionManager()
     risk_manager = RiskManager()
     strategy_engine = StrategyEngine(EntryEngine(), DCAGridEngine(), ExitEngine())
-    te = TradingEngine(
-        broker, strategy_engine, order_manager, position_manager, risk_manager
-    )
+    te = TradingEngine(broker, strategy_engine, order_manager, position_manager, risk_manager)
     assert te.broker is broker
 
 

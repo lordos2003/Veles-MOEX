@@ -4,19 +4,25 @@
 
 ```
 Browser (React/TS, Web UI)
-   │   REST, WebSocket
+   │   REST
    ▼
 FastAPI (Python)
    │
    ▼
-Strategy Engine │ Trading Engine │ Backtest Engine
-   │                    │                │
-   │                    └── Order Manager ── Position Manager ── Risk Manager
-   ▼
+Instrument Service │ Market Data Service   (внутренний слой данных)
+   │                       │
+   ▼                       ▼
 BrokerAdapter (абстракция)
    │
-   ├── TInvestAdapter ──→ T-Invest API ──→ MOEX      (Live)
-   └── BacktestBroker                                 (Backtest, та же логика)
+   ├── TInvestAdapter ──→ TInvestClient ──→ T-Invest API ──→ MOEX   (Live)
+   └── BacktestBroker                                              (Backtest, та же логика)
+```
+
+В будущем:
+
+```
+Strategy Engine ──→ Market Data Service
+Backtest Engine ──→ Historical Market Data
 ```
 
 ## Принципы
@@ -36,21 +42,33 @@ BrokerAdapter (абстракция)
 
 ## Слои
 
-| Слой | Ответственность |
+| Layer | Responsibility |
 |------|-----------------|
-| Browser | Web UI, отображение, ввод стратегий |
-| FastAPI | REST/WebSocket, валидация, маршрутизация |
-| Strategy Engine | Оценка входа/выхода, сетка DCA — без отправки ордеров |
-| Trading Engine | Оркестрация: Order/Position/Risk Managers |
-| BrokerAdapter | Абстрактный контракт брокера |
-| TInvestAdapter | Реализация для T-Invest (Live), заглушка |
-| BacktestBroker | Реализация для исторических данных (Backtest) |
-| PostgreSQL | Персистентность данных |
-| Redis | Кэш/очередь/события |
+| Browser | Web UI, display, strategy input |
+| FastAPI | REST/WebSocket, validation, routing |
+| Instrument Service | Instruments from PostgreSQL (filters, sync-by-FIGI upsert) |
+| Market Data Service | Normalized last price / candles, chunking, sort, de-duplication |
+| BrokerAdapter | Abstract broker contract (read + trade) |
+| TInvestAdapter | T-Invest read-only integration (Live) |
+| BacktestBroker | Historical-data implementation (Backtest) |
+| PostgreSQL | Persistence (instruments, market candles) |
+| Redis | Cache/queue/events |
 
-## Замечания
+## Реализованный слой Instrument + Market Data
 
-- Прямое подключение к MOEX (ASTS/FIX/TWIME), Paper Trading, второй брокер и
-  микросервисы — вне скоупа MVP (см. product specification, разделы 16–18).
-- Реальные адаптеры и торговая механика реализуются в последующих заданиях;
-  на данном этапе метод-заглушки поднимают `NotImplementedError`.
+- Единая внутренняя модель `Instrument` (FIGI как идентификатор), внутренние
+  enum `InstrumentType` / `TradingStatus`, колонка `exchange`.
+- `InstrumentService` — получение по FIGI/ticker, список с фильтрами
+  (type/active/ticker), синхронизация из брокера (upsert по FIGI, без дублей).
+- `MarketDataService` + domain DTO `Candle` / `LastPrice` (Decimal, UTC),
+  enum `Timeframe`; нормализация, сортировка, дедупликация, разбиение больших
+  диапазонов на чанки.
+- Роуты `/api/instruments`, `/api/market-data/*` используют внутренние сервисы;
+  T-Invest остаётся только внешним источником внутри `TInvestAdapter`.
+
+## Remarks
+
+- Direct MOEX API (ASTS/FIX/TWIME), Paper Trading, a second broker and
+  microservices are out of MVP scope (see product spec sections 16–18).
+- Trading methods (`place_order`, `cancel_order`, `get_order`, `get_deals`)
+  remain unimplemented by design.

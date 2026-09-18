@@ -13,9 +13,7 @@ from app.strategies.domain import EntrySignal, MarketContext
 class EntryEngine:
     """Evaluates entry conditions and emits an entry signal."""
 
-    def evaluate(
-        self, config: EntryConfig, context: MarketContext
-    ) -> EntrySignal | None:
+    def evaluate(self, config: EntryConfig, context: MarketContext) -> EntrySignal | None:
         """Return an EntrySignal when entry conditions are met, else None.
 
         Not implemented yet; wiring is scheduled for MVP-2.
