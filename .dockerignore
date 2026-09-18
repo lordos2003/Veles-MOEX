@@ -1,0 +1,10 @@
+# Docker build context exclusions
+**/node_modules
+**/.venv
+**/venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/dist
+**/.env
+.git

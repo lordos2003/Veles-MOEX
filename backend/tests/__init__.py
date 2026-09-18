@@ -1,0 +1,1 @@
+"""Veles-MOEX tests package."""
