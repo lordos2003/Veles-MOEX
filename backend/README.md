@@ -83,11 +83,20 @@ Smoke test (read-only, real token only if provided via env): see
 
 ## Database & migrations
 
+Alembic is used for schema management:
+
+- `0001_initial` — core domain tables.
+- `0002_instrument_fields_and_market_candles` — extends `Instrument`
+  (`trading_status`, `exchange`, non-null `figi`) and adds `market_candles`.
+
 Apply migrations (requires a running PostgreSQL):
 
 ```powershell
 alembic upgrade head
 ```
+
+> Migration `0002` is committed; applying it requires a running PostgreSQL
+> instance. It has not been applied to a live/production database.
 
 Generate a new migration after model changes:
 
@@ -101,11 +110,12 @@ alembic revision --autogenerate -m "message"
 pytest
 ```
 
-The tests cover backend startup, `/api/health`, configuration loading, domain
-model import, broker abstraction, engine interface availability, the T-Invest
-adapter + REST endpoints, and the Instrument/MarketData services (chunking,
-sorting, de-duplication, sync) — all mocked / in-memory, no real token or
-running database.
+Current local state: **47 passed**. The tests cover backend startup,
+`/api/health`, configuration loading, domain model import, broker abstraction,
+engine interface availability, the T-Invest adapter + REST endpoints, and the
+Instrument/MarketData services (chunking, sorting, de-duplication, sync) — all
+mocked / in-memory, no real token or running database. A real T-Invest smoke
+test requires a user-provided `TINVEST_TOKEN` (see `docs/tinvest-smoke-test.md`).
 
 ## Notes
 

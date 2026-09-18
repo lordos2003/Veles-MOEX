@@ -1,43 +1,118 @@
 # Veles-MOEX
 
-Веб-платформа для алгоритмической торговли инструментами MOEX через T-Invest API,
-функционально сопоставимая с Veles, но адаптированная под российский рынок.
+Веб-платформа для алгоритмической торговли инструментами MOEX через T-Invest
+API, функционально сопоставимая с Veles, но адаптированная под российский рынок.
 
-Это **каркас (skeleton)** проекта: базовая инфраструктура и архитектурная основа.
-Торговая логика на этом этапе не реализована.
+Это рабочий **modular monolith** с выделенным слоем данных (Instrument +
+Market Data) и read-only интеграцией с T-Invest. Торговая логика (Strategy /
+Backtest / Trading Engine) — следующие этапы, ещё не реализованы.
 
 > Архитектурные решения и объём MVP зафиксированы в
 > `Veles-MOEX — Architecture & Product Specification v1.0.md`.
 
-## Назначение
+## Что это за проект
 
-- Модульный монолит (modular monolith), без микросервисов.
-- Один Strategy/Trading Engine для Live и Backtest.
-- Слоистый доступ: Web UI → REST → FastAPI → Strategy/Trading → Broker →
-  T-Invest API → MOEX.
-- Прямое подключение к MOEX (ASTS/FIX/TWIME) и Paper Trading **вне скоупа**.
-- Поддерживается один брокер (T-Invest), абстракция `BrokerAdapter` оставляет
-  возможность расширения.
+- Модульный монолит, без микросервисов.
+- Один будущий Strategy/Trading Engine для Live и Backtest.
+- T-Invest — единственный брокер MVP; за ним следует MOEX.
+- Прямое подключение к MOEX (ASTS/FIX/TWIME) и Paper Trading — вне MVP.
 
-## Архитектура
+## Уже реализовано
+
+### Foundation
+
+- FastAPI (Python) + Pydantic.
+- React + TypeScript + Vite + Tailwind CSS.
+- PostgreSQL + SQLAlchemy 2 (async) + Alembic.
+- Redis (инфраструктура).
+- Абстракция `BrokerAdapter`; конкретная реализация `TInvestAdapter`.
+
+### Task №2 — T-Invest read-only integration
+
+- Проверка авторизации/статуса подключения.
+- Список счетов; портфель по счёту (cash/equity, позиции).
+- Список инструментов и инструмент по FIGI.
+- Последняя цена и исторические свечи.
+- Нормализованные broker-agnostic DTO; типизированные ошибки.
+- Торговые операции отсутствуют.
+
+### Task №3 — Instrument & Market Data foundation
+
+- Domain enum `InstrumentType` (SHARE/BOND/ETF/FUTURE/CURRENCY).
+- Domain enum `TradingStatus`.
+- Domain enum `Timeframe` (1m…1mo).
+- Domain DTO `Candle` и `LastPrice` (Decimal-цены, timezone-aware UTC).
+- `InstrumentService` — получение по FIGI/ticker, список, фильтры
+  (type/active/ticker), синхронизация из брокера (upsert по FIGI, без дублей).
+- `MarketDataService` — нормализация, чанкинг длинных диапазонов, сортировка,
+  дедупликация свечей.
+- PostgreSQL `MarketCandle` (уникальный ключ FIGI + timeframe + timestamp).
+- Read-only REST-эндпоинты и базовая визуализация во frontend.
+
+## Project Status
+
+```
+Task 0 — Architecture / project foundation      DONE
+Task 1 — Initial skeleton                       DONE
+Task 2 — T-Invest read-only integration         DONE
+Task 3 — Instrument & Market Data foundation    DONE
+Task 4 — Account / Position / Order / Deal read NEXT
+Task 5+ — дальнейшие этапы                       PLANNED
+```
+
+## Roadmap
+
+```
+DONE
+├── Project architecture
+├── Initial application skeleton
+├── T-Invest read-only integration
+└── Instrument & Market Data foundation
+
+NEXT
+└── Account / Position / Order / Deal read-only layer
+
+PLANNED
+├── Strategy Engine
+├── Backtest Engine
+├── DCA / Grid
+├── Trading Engine
+├── Risk Management
+└── Live Trading
+```
+
+## Как устроено
 
 ```
 Browser (React/TS)
-      │ REST (/api, /api/health)
-      ▼
-   FastAPI (Python)
-      ▼
-   Strategy Engine / Trading Engine / Backtest Engine
-      │                │
-      │                └── Order Manager → Position Manager → Risk Manager
-      ▼
-   BrokerAdapter
-      │
-      ├── TInvestAdapter ──→ T-Invest API ──→ MOEX   (Live)
-      └── BacktestBroker                         (Backtest)
-
-Инфраструктура: PostgreSQL (данные), Redis (кэш/очередь/события), Docker.
+        │
+        ▼
+     FastAPI
+        │
+        ├── Instrument Service
+        │
+        └── Market Data Service
+                 │
+                 ▼
+           BrokerAdapter
+                 │
+                 ▼
+          TInvestAdapter
+                 │
+                 ▼
+          TInvestClient
+                 │
+                 ▼
+           T-Invest API
+                 │
+                 ▼
+                MOEX
 ```
+
+`Strategy Engine`, `Backtest Engine` и `Trading Engine` — следующие слои
+проекта. Они ещё не реализованы и должны оставаться broker-agnostic: в будущем
+они обращаются к `MarketDataService`/`InstrumentService`, а не к T-Invest
+напрямую.
 
 Подробнее — `docs/architecture/README.md`.
 
@@ -49,13 +124,14 @@ veles-moex/
 │   ├── app/
 │   │   ├── api/          # HTTP-роуты (FastAPI)
 │   │   ├── core/         # конфигурация (env) и подключение к БД
-│   │   ├── models/       # SQLAlchemy доменные ORM-модели
+│   │   ├── domain/       # broker-agnostic enum и market-data DTO
+│   │   ├── models/       # SQLAlchemy ORM-модели
 │   │   ├── schemas/      # Pydantic-схемы
-│   │   ├── services/     # сервисы приложения (заполняется далее)
-│   │   ├── brokers/      # BrokerAdapter + TInvestAdapter
-│   │   ├── strategies/   # Strategy Engine (Entry / DCA-Grid / Exit)
-│   │   ├── trading/      # Trading Engine (Order / Position / Risk)
-│   │   ├── backtest/     # Backtest Engine + BacktestBroker
+│   │   ├── services/     # InstrumentService, MarketDataService
+│   │   ├── brokers/      # BrokerAdapter + TInvestAdapter + REST-клиент
+│   │   ├── strategies/   # Strategy Engine (каркас, не реализован)
+│   │   ├── trading/      # Trading Engine (каркас, не реализован)
+│   │   ├── backtest/     # Backtest Engine + BacktestBroker (каркас)
 │   │   └── main.py       # точка входа FastAPI
 │   ├── alembic/          # миграции
 │   ├── tests/            # тесты
@@ -75,13 +151,10 @@ veles-moex/
 └── README.md
 ```
 
-## Быстрый старт
+## Локальная разработка
 
-### PostgreSQL и Redis
-
-```powershell
-docker compose up -d postgres redis
-```
+Основной сценарий разработки работает **без Docker**. Нужны только Python 3.12+
+и Node.js 20+.
 
 ### Backend
 
@@ -95,7 +168,7 @@ uvicorn app.main:app --reload --port 8000
 
 Проверка: `http://localhost:8000/api/health` → `{"status":"ok"}`.
 
-Применить миграции (нужен работающий PostgreSQL):
+Подготовить базу (нужен запущенный PostgreSQL):
 
 ```powershell
 alembic upgrade head
@@ -119,28 +192,61 @@ cd backend
 pytest
 ```
 
-## Статус (рама, не торговля)
+### Docker (инфраструктурный вариант, не обязателен)
 
-Реализовано:
-- FastAPI-приложение с `/api/health`.
-- Конфигурация через переменные окружения (без секретов в коде).
-- ORM-модели: Instrument, Account, Order, Execution, Position, Strategy,
-  StrategyVersion, Bot.
-- `BrokerAdapter` (абстракция) + `TInvestAdapter` (**read-only**) +
-  `BacktestBroker`.
-- **Read-only интеграция T-Invest**: счета, портфель, инструменты, последняя
-  цена, исторические свечи (через официальный REST API, нормализованные DTO,
-  типизированные ошибки).
-- **Слой Instrument + Market Data** (Task №3): единая модель `Instrument`
-  (FIGI, типы/статус как enum, exchange), `InstrumentService` (фильтры,
-  синхронизация из T-Invest в PostgreSQL без дублей), `MarketDataService`
-  (`Candle`/`LastPrice` на Decimal, UTC, чанкинг/сортировка/дедупликация,
-  enum `Timeframe`).
-- Каркасы: StrategyEngine, EntryEngine, ExitEngine, DCA/Grid Engine,
-  TradingEngine, OrderManager, PositionManager, RiskManager, BacktestEngine.
-- PostgreSQL + Alembic (первичная миграция), Redis в `docker-compose.yml`.
-- Docker-образы backend/frontend и nginx-прокси.
+`docker-compose.yml` поднимает PostgreSQL, Redis, backend и frontend:
 
-Не реализовано (намеренно, по следующим заданиям): реальная торговля,
-Dispatch/торговые операции T-Invest (place/cancel order), Backtest-исполнение,
-торговые стратегии, Paper Trading, второй брокер, микросервисы.
+```powershell
+docker compose up -d
+```
+
+## База данных
+
+- Используется **Alembic**.
+- `0001_initial` — базовая схема (основные доменные таблицы).
+- `0002_instrument_fields_and_market_candles` — расширение `Instrument`
+  (`trading_status`, `exchange`, NOT NULL `figi`) и таблица `market_candles`.
+
+> Миграция `0002` закоммичена; её применение требует запущенного экземпляра
+> PostgreSQL. К production/Live БД миграции не применялись.
+
+## T-Invest
+
+Интеграция **read-only**. Токен задаётся только в окружении backend и никогда
+не попадает в Git:
+
+```powershell
+$env:TINVEST_TOKEN="your_token"
+```
+
+- Токен не хранится в коде, README или frontend; реальные токены не коммитятся.
+- Read-only эндпоинты:
+  - `GET /api/tinvest/status`
+  - `GET /api/accounts`, `GET /api/accounts/{id}`
+  - `GET /api/instruments`, `GET /api/instruments/{figi}`
+  - `POST /api/instruments/sync?kind=share`
+  - `GET /api/market-data/{figi}/last-price`
+  - `GET /api/market-data/{figi}/candles?timeframe=..&from=..&to=..`
+- Единственный брокер MVP — T-Invest; прямой MOEX API, ASTS/FIX/TWIME,
+  Paper Trading и микросервисы — вне MVP.
+- Торговые операции (place/cancel order, deals) не реализованы.
+
+## Тесты (текущее состояние)
+
+- `pytest` — **47 passed**.
+- `ruff check app tests scripts` — **passed**.
+- `npm run build` — **passed**.
+
+Это состояние проверено локально, а не гарантированный CI-статус. Реальный
+smoke-тест T-Invest требует пользовательский `TINVEST_TOKEN` и выполняется
+только локально (см. `backend/docs/tinvest-smoke-test.md`).
+
+## Архитектурные ограничения
+
+- T-Invest — единственный брокер MVP.
+- Прямой MOEX API, ASTS/FIX/TWIME — вне MVP.
+- Paper Trading — вне MVP.
+- Микросервисы — вне MVP.
+- Strategy/Backtest должны оставаться broker-agnostic.
+- Стратегия является конфигурацией, а не пользовательским Python-кодом.
+- Live и Backtest в будущем используют общий trading/strategy logic.

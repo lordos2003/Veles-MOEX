@@ -25,6 +25,9 @@ Strategy Engine ──→ Market Data Service
 Backtest Engine ──→ Historical Market Data
 ```
 
+Эти движки (`Strategy Engine`, `Backtest Engine`, `Trading Engine`) пока не
+реализованы — существуют только архитектурные каркасы.
+
 ## Принципы
 
 1. **Один движок.** Live и Backtest используют один и тот же
