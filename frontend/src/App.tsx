@@ -22,6 +22,45 @@ interface Account {
   equity: string;
 }
 
+interface Position {
+  account_id: string;
+  figi: string;
+  ticker: string | null;
+  instrument_type: string | null;
+  quantity: string;
+  average_price: string;
+  current_price: string;
+  current_value: string;
+  unrealized_pnl: string;
+  currency: string | null;
+}
+
+interface Order {
+  order_id: string;
+  account_id: string | null;
+  figi: string | null;
+  ticker: string | null;
+  status: string;
+  type: string | null;
+  side: string | null;
+  requested_quantity: string;
+  executed_quantity: string;
+  price: string | null;
+  currency: string | null;
+}
+
+interface Deal {
+  deal_id: string;
+  account_id: string | null;
+  figi: string;
+  side: string;
+  quantity: string;
+  price: string;
+  commission: string;
+  currency: string | null;
+  happened_at: string | null;
+}
+
 interface Instrument {
   figi: string;
   ticker: string | null;
@@ -57,6 +96,10 @@ function App() {
   const [backend, setBackend] = useState<BackendStatus>("checking");
   const [status, setStatus] = useState<TInvestStatus | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [deals, setDeals] = useState<Deal[]>([]);
+  const [loading, setLoading] = useState(false);
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [lastPrice, setLastPrice] = useState<LastPrice | null>(null);
@@ -85,21 +128,30 @@ function App() {
 
   const loadIntegration = useCallback(async () => {
     setError(null);
+    setLoading(true);
     try {
-      const [statusRes, accountsRes, instrumentsRes] = await Promise.all([
-        fetch("/api/tinvest/status"),
-        fetch("/api/accounts"),
-        fetch("/api/instruments"),
-      ]);
+      const [statusRes, accountsRes, instrumentsRes, positionsRes, ordersRes, dealsRes] =
+        await Promise.all([
+          fetch("/api/tinvest/status"),
+          fetch("/api/accounts"),
+          fetch("/api/instruments"),
+          fetch("/api/positions"),
+          fetch("/api/orders"),
+          fetch("/api/deals"),
+        ]);
       const statusData: TInvestStatus = await statusRes.json();
-      const accountsData: Account[] = (await accountsRes.json()) as Account[];
-      const instrumentsData: Instrument[] = (await instrumentsRes.json()) as Instrument[];
       setStatus(statusData);
-      setAccounts(accountsData);
+      setAccounts(await accountsRes.json());
+      const instrumentsData: Instrument[] = await instrumentsRes.json();
       setInstruments(instrumentsData);
+      setPositions(positionsRes.ok ? await positionsRes.json() : []);
+      setOrders(ordersRes.ok ? await ordersRes.json() : []);
+      setDeals(dealsRes.ok ? await dealsRes.json() : []);
       if (instrumentsData.length > 0) setSelected(instrumentsData[0].figi);
     } catch {
       setError("Не удалось загрузить данные интеграции");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -250,6 +302,93 @@ function App() {
               </p>
             )}
           </div>
+        </section>
+
+        <section className="mt-6">
+          <h2 className="text-lg font-medium">Broker Data (read-only)</h2>
+          {loading && <p className="mt-2 text-sm text-zinc-500">Загрузка…</p>}
+          {!loading &&
+            (positions.length === 0 && orders.length === 0 && deals.length === 0 ? (
+              <p className="mt-2 text-xs text-zinc-500">Нет данных (нужен TINVEST_TOKEN).</p>
+            ) : (
+              <div className="mt-3 grid grid-cols-1 gap-6 lg:grid-cols-3">
+                <div>
+                  <h3 className="text-sm font-medium text-zinc-400">Positions</h3>
+                  <table className="mt-1 w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-zinc-800 text-zinc-500">
+                        <th className="py-1">ticker</th>
+                        <th>qty</th>
+                        <th>avg</th>
+                        <th>cur</th>
+                        <th>pnl</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {positions.map((p) => (
+                        <tr key={p.figi} className="border-b border-zinc-900">
+                          <td className="py-1">{p.ticker ?? p.figi}</td>
+                          <td>{p.quantity}</td>
+                          <td>{p.average_price}</td>
+                          <td>{p.current_price}</td>
+                          <td>{p.unrealized_pnl}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium text-zinc-400">Orders</h3>
+                  <table className="mt-1 w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-zinc-800 text-zinc-500">
+                        <th className="py-1">id</th>
+                        <th>status</th>
+                        <th>side</th>
+                        <th>qty</th>
+                        <th>filled</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {orders.map((o) => (
+                        <tr key={o.order_id} className="border-b border-zinc-900">
+                          <td className="py-1">{o.order_id}</td>
+                          <td>{o.status}</td>
+                          <td>{o.side ?? "—"}</td>
+                          <td>{o.requested_quantity}</td>
+                          <td>{o.executed_quantity}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium text-zinc-400">Deals</h3>
+                  <table className="mt-1 w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-zinc-800 text-zinc-500">
+                        <th className="py-1">id</th>
+                        <th>figi</th>
+                        <th>side</th>
+                        <th>qty</th>
+                        <th>price</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {deals.map((d) => (
+                        <tr key={d.deal_id} className="border-b border-zinc-900">
+                          <td className="py-1">{d.deal_id}</td>
+                          <td>{d.figi}</td>
+                          <td>{d.side}</td>
+                          <td>{d.quantity}</td>
+                          <td>{d.price}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
         </section>
 
         <section className="mt-6">

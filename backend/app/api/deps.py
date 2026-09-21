@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.brokers import BrokerAdapter, TInvestAdapter
 from app.core.db import get_session
+from app.services.broker_data import BrokerDataService
 from app.services.instruments import InstrumentService
 from app.services.market_data import MarketDataService
 
@@ -34,3 +35,10 @@ def get_market_data_service(
 ) -> MarketDataService:
     """Return a MarketDataService bound to the request broker adapter."""
     return MarketDataService(broker)
+
+
+def get_broker_data_service(
+    broker: Annotated[BrokerAdapter, Depends(get_broker_adapter)],
+) -> BrokerDataService:
+    """Return a BrokerDataService bound to the request broker adapter."""
+    return BrokerDataService(broker)

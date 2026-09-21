@@ -8,10 +8,11 @@ Browser (React/TS, Web UI)
    ▼
 FastAPI (Python)
    │
+   ├── Instrument Service
+   ├── Market Data Service
+   └── Broker Data Service   (accounts / positions / orders / deals)
+   │
    ▼
-Instrument Service │ Market Data Service   (внутренний слой данных)
-   │                       │
-   ▼                       ▼
 BrokerAdapter (абстракция)
    │
    ├── TInvestAdapter ──→ TInvestClient ──→ T-Invest API ──→ MOEX   (Live)
@@ -51,13 +52,14 @@ Backtest Engine ──→ Historical Market Data
 | FastAPI | REST/WebSocket, validation, routing |
 | Instrument Service | Instruments from PostgreSQL (filters, sync-by-FIGI upsert) |
 | Market Data Service | Normalized last price / candles, chunking, sort, de-duplication |
+| Broker Data Service | Accounts / positions / orders / deals (read-only, filtering) |
 | BrokerAdapter | Abstract broker contract (read + trade) |
 | TInvestAdapter | T-Invest read-only integration (Live) |
 | BacktestBroker | Historical-data implementation (Backtest) |
 | PostgreSQL | Persistence (instruments, market candles) |
 | Redis | Cache/queue/events |
 
-## Реализованный слой Instrument + Market Data
+## Реализованный слой Instrument + Market Data + Broker Data
 
 - Единая внутренняя модель `Instrument` (FIGI как идентификатор), внутренние
   enum `InstrumentType` / `TradingStatus`, колонка `exchange`.
@@ -66,8 +68,11 @@ Backtest Engine ──→ Historical Market Data
 - `MarketDataService` + domain DTO `Candle` / `LastPrice` (Decimal, UTC),
   enum `Timeframe`; нормализация, сортировка, дедупликация, разбиение больших
   диапазонов на чанки.
-- Роуты `/api/instruments`, `/api/market-data/*` используют внутренние сервисы;
-  T-Invest остаётся только внешним источником внутри `TInvestAdapter`.
+- `BrokerDataService` — read-only слой `Account` / `Position` / `Order` /
+  `Deal` с broker-agnostic DTO (Decimal, UTC) и фильтрацией по account_id/FIGI.
+- Роуты `/api/instruments`, `/api/market-data/*`, `/api/positions`,
+  `/api/orders`, `/api/deals` используют внутренние сервисы; T-Invest
+  остаётся только внешним источником внутри `TInvestAdapter`.
 
 ## Remarks
 

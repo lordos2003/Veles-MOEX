@@ -49,6 +49,23 @@ Backtest / Trading Engine) — следующие этапы, ещё не реа
 - PostgreSQL `MarketCandle` (уникальный ключ FIGI + timeframe + timestamp).
 - Read-only REST-эндпоинты и базовая визуализация во frontend.
 
+### Task №4 — Account / Position / Order / Deal read-only layer
+
+- broker-agnostic DTO `BrokerAccount` (account_id, broker, статус, тип, валюты,
+  cash/equity).
+- broker-agnostic DTO `BrokerPosition` (account_id, FIGI, ticker, quantity,
+  средняя/текущая цена, стоимость, unrealized P&L, валюта) — `Decimal`,
+  timezone-aware.
+- broker-agnostic DTO `BrokerOrder` (order_id, FIGI, статус, тип, направление,
+  запрошенное/исполненное количество, цена, валюта, время) — read-only.
+- broker-agnostic DTO `BrokerDeal` (deal_id, FIGI, направление, количество,
+  цена исполнения, комиссия, валюта, время).
+- `BrokerDataService` — accounts/positions/orders/deals с фильтрацией по
+  account_id и FIGI; T-Invest-специфика остаётся в `TInvestAdapter`.
+- Read-only эндпоинты `/api/positions`, `/api/orders`, `/api/deals`;
+  нормализованные статусы/типы/направления через внутренние enum.
+- Торговые операции по-прежнему не реализованы.
+
 ## Project Status
 
 ```
@@ -56,8 +73,8 @@ Task 0 — Architecture / project foundation      DONE
 Task 1 — Initial skeleton                       DONE
 Task 2 — T-Invest read-only integration         DONE
 Task 3 — Instrument & Market Data foundation    DONE
-Task 4 — Account / Position / Order / Deal read NEXT
-Task 5+ — дальнейшие этапы                       PLANNED
+Task 4 — Account / Position / Order / Deal read DONE
+Task 5 — далее                                    NEXT
 ```
 
 ## Roadmap
@@ -67,13 +84,13 @@ DONE
 ├── Project architecture
 ├── Initial application skeleton
 ├── T-Invest read-only integration
-└── Instrument & Market Data foundation
-
-NEXT
+├── Instrument & Market Data foundation
 └── Account / Position / Order / Deal read-only layer
 
+NEXT
+└── Strategy Engine
+
 PLANNED
-├── Strategy Engine
 ├── Backtest Engine
 ├── DCA / Grid
 ├── Trading Engine
@@ -223,6 +240,9 @@ $env:TINVEST_TOKEN="your_token"
 - Read-only эндпоинты:
   - `GET /api/tinvest/status`
   - `GET /api/accounts`, `GET /api/accounts/{id}`
+  - `GET /api/positions`
+  - `GET /api/orders`
+  - `GET /api/deals`
   - `GET /api/instruments`, `GET /api/instruments/{figi}`
   - `POST /api/instruments/sync?kind=share`
   - `GET /api/market-data/{figi}/last-price`

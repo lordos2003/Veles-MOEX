@@ -69,7 +69,10 @@ class BacktestBroker(BrokerAdapter):
     async def get_order(self, order_id: str) -> BrokerOrder:
         raise NotImplementedError("Backtest broker is not implemented yet")
 
-    async def get_open_positions(self) -> list[BrokerPosition]:
+    async def get_open_positions(self, account_id: str | None = None) -> list[BrokerPosition]:
+        raise NotImplementedError("Backtest broker is not implemented yet")
+
+    async def get_orders(self, account_id: str | None = None) -> list[BrokerOrder]:
         raise NotImplementedError("Backtest broker is not implemented yet")
 
     async def get_deals(self, account_id: str | None = None) -> list[BrokerDeal]:

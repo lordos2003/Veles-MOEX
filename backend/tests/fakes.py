@@ -32,6 +32,39 @@ class TInvestFakeClient:
         return self.responses.get(method_path, {})
 
 
+class FakeBrokerData:
+    """In-memory BrokerAdapter stand-in returning canned broker data."""
+
+    def __init__(
+        self,
+        accounts: list | None = None,
+        positions: list | None = None,
+        orders: list | None = None,
+        deals: list | None = None,
+    ) -> None:
+        self._accounts = accounts or []
+        self._positions = positions or []
+        self._orders = orders or []
+        self._deals = deals or []
+
+    async def get_accounts(self) -> list:
+        return self._accounts
+
+    async def get_account(self, account_id: str | None = None):
+        if self._accounts:
+            return self._accounts[0]
+        raise ValueError("no account")
+
+    async def get_open_positions(self, account_id: str | None = None) -> list:
+        return self._positions
+
+    async def get_orders(self, account_id: str | None = None) -> list:
+        return self._orders
+
+    async def get_deals(self, account_id: str | None = None) -> list:
+        return self._deals
+
+
 class FakeInstrumentService:
     """In-memory stand-in for InstrumentService (no DB)."""
 

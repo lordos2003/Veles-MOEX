@@ -1,4 +1,4 @@
-"""Pydantic schemas for the T-Invest / market data REST API."""
+"""Pydantic schemas for the T-Invest / market data / broker data REST API."""
 
 from __future__ import annotations
 
@@ -15,24 +15,62 @@ class TInvestStatusResponse(BaseModel):
 
 
 class PositionResponse(BaseModel):
+    account_id: str
     figi: str
     ticker: str | None = None
     instrument_type: str | None = None
     quantity: Decimal
     average_price: Decimal
+    current_price: Decimal
+    current_value: Decimal
+    unrealized_pnl: Decimal
+    currency: str | None = None
+    timestamp: datetime | None = None
 
 
 class AccountInfoResponse(BaseModel):
     account_id: str
+    broker: str = "tinvest"
     currency: str = "RUB"
     available_cash: Decimal = Decimal("0")
     equity: Decimal = Decimal("0")
+    currencies: list[str] = []
     name: str | None = None
     account_type: str | None = None
     status: str | None = None
     opened_at: datetime | None = None
     closed_at: datetime | None = None
     positions: list[PositionResponse] = []
+
+
+class OrderResponse(BaseModel):
+    order_id: str
+    account_id: str | None = None
+    figi: str | None = None
+    ticker: str | None = None
+    status: str
+    type: str | None = None
+    side: str | None = None
+    requested_quantity: Decimal
+    executed_quantity: Decimal
+    price: Decimal | None = None
+    currency: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    reject_info: str | None = None
+
+
+class DealResponse(BaseModel):
+    deal_id: str
+    account_id: str | None = None
+    order_id: str | None = None
+    figi: str
+    side: str
+    quantity: Decimal
+    price: Decimal
+    commission: Decimal = Decimal("0")
+    currency: str | None = None
+    happened_at: datetime | None = None
 
 
 class InstrumentResponse(BaseModel):

@@ -5,15 +5,17 @@ T-Invest specifics. Live uses TInvestAdapter; Backtest uses BacktestBroker,
 which also implements this interface. This keeps Live and Backtest on the same
 Strategy/Trading Engine (Architecture & Product Specification section 11).
 
-This layer hands out broker-agnostic DTOs (accounts, instruments) and the
-internal domain market-data models (``Candle``, ``LastPrice``, ``Timeframe``),
-so higher layers never see broker (T-Invest) objects.
+This layer hands out broker-agnostic DTOs (accounts, positions, orders, deals,
+instruments) and the internal domain market-data models (``Candle``,
+``LastPrice``, ``Timeframe``), so higher layers never see broker (T-Invest)
+objects. All money/quantity values use ``Decimal``; timestamps are timezone-aware
+UTC.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
@@ -35,27 +37,6 @@ class BrokerOrderRequest:
 
 
 @dataclass
-class BrokerOrder:
-    """Broker-agnostic order representation."""
-
-    order_id: str
-    status: OrderStatus
-    filled_quantity: float = 0.0
-    remaining_quantity: float = 0.0
-    created_at: datetime | None = None
-
-
-@dataclass
-class BrokerPosition:
-    """Broker-agnostic open position."""
-
-    instrument_figi: str
-    quantity: float
-    average_price: float
-    unrealized_pnl: float = 0.0
-
-
-@dataclass
 class BrokerAccount:
     """Broker-agnostic account summary.
 
@@ -64,14 +45,57 @@ class BrokerAccount:
     """
 
     account_id: str
+    broker: str = "tinvest"
     currency: str = "RUB"
     available_cash: Decimal = Decimal("0")
     equity: Decimal = Decimal("0")
+    currencies: list[str] = field(default_factory=list)
     name: str | None = None
     account_type: str | None = None
     status: str | None = None
     opened_at: datetime | None = None
     closed_at: datetime | None = None
+
+
+@dataclass
+class BrokerPosition:
+    """Broker-agnostic open position."""
+
+    account_id: str
+    instrument_figi: str
+    ticker: str | None = None
+    instrument_type: str | None = None
+    quantity: Decimal = Decimal("0")
+    average_price: Decimal = Decimal("0")
+    current_price: Decimal = Decimal("0")
+    current_value: Decimal = Decimal("0")
+    unrealized_pnl: Decimal = Decimal("0")
+    currency: str | None = None
+    timestamp: datetime | None = None
+
+
+@dataclass
+class BrokerOrder:
+    """Broker-agnostic order (read-only).
+
+    ``requested_quantity`` / ``executed_quantity`` are expressed in the
+    broker's native unit (lots for T-Invest).
+    """
+
+    order_id: str
+    status: OrderStatus
+    account_id: str | None = None
+    instrument_figi: str | None = None
+    ticker: str | None = None
+    type: OrderType | None = None
+    side: OrderSide | None = None
+    requested_quantity: Decimal = Decimal("0")
+    executed_quantity: Decimal = Decimal("0")
+    price: Decimal | None = None
+    currency: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    reject_info: str | None = None
 
 
 @dataclass
@@ -92,14 +116,17 @@ class BrokerInstrument:
 
 @dataclass
 class BrokerDeal:
-    """Broker-agnostic settled deal/execution record."""
+    """Broker-agnostic settled deal/execution."""
 
     deal_id: str
     instrument_figi: str
     side: OrderSide
-    quantity: float
-    price: float
-    commission: float
+    quantity: Decimal
+    price: Decimal
+    account_id: str | None = None
+    order_id: str | None = None
+    commission: Decimal = Decimal("0")
+    currency: str | None = None
     happened_at: datetime | None = None
 
 
@@ -130,6 +157,20 @@ class BrokerAdapter(ABC):
     @abstractmethod
     async def get_account(self, account_id: str | None = None) -> BrokerAccount:
         """Return account summary (cash/equity)."""
+
+    # --- Read-only broker data ---
+
+    @abstractmethod
+    async def get_open_positions(self, account_id: str | None = None) -> list[BrokerPosition]:
+        """Return currently open positions (optionally for an account)."""
+
+    @abstractmethod
+    async def get_orders(self, account_id: str | None = None) -> list[BrokerOrder]:
+        """Return existing orders (optionally for an account)."""
+
+    @abstractmethod
+    async def get_deals(self, account_id: str | None = None) -> list[BrokerDeal]:
+        """Return settled deals/executions (optionally for an account)."""
 
     # --- Instruments / market data (read-only) ---
 
@@ -169,11 +210,3 @@ class BrokerAdapter(ABC):
     @abstractmethod
     async def get_order(self, order_id: str) -> BrokerOrder:
         """Fetch a single order by broker order id."""
-
-    @abstractmethod
-    async def get_open_positions(self) -> list[BrokerPosition]:
-        """Return currently open positions from the broker."""
-
-    @abstractmethod
-    async def get_deals(self, account_id: str | None = None) -> list[BrokerDeal]:
-        """Return settled deals/executions."""

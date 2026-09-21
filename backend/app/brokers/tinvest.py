@@ -1,9 +1,10 @@
 """TInvestAdapter — read-only integration with T-Invest API.
 
 Implements the broker-agnostic |BrokerAdapter| interface and hides all T-Invest
-specifics: instrument types, trading statuses and candle intervals are mapped to
-our internal domain enums here, and only domain DTOs leave the adapter. No trade
-placement — trading methods deliberately raise NotImplementedError.
+specifics: instrument types, trading statuses, candle intervals, order statuses,
+directions and deal types are mapped to our internal enums here, and only domain
+DTOs leave the adapter. No trade placement — trading methods deliberately raise
+NotImplementedError.
 """
 
 from __future__ import annotations
@@ -32,11 +33,13 @@ from app.brokers.tinvest_errors import (
 from app.core.config import get_settings
 from app.domain.instrument import InstrumentType, TradingStatus
 from app.domain.marketdata import Candle, LastPrice, Timeframe
+from app.models.enums import OrderSide, OrderStatus, OrderType
 
 logger = logging.getLogger(__name__)
 
 _USERS = "tinkoff.public.invest.api.contract.v1.UsersService"
 _OPERATIONS = "tinkoff.public.invest.api.contract.v1.OperationsService"
+_ORDERS = "tinkoff.public.invest.api.contract.v1.OrdersService"
 _INSTRUMENTS = "tinkoff.public.invest.api.contract.v1.InstrumentsService"
 _MARKET = "tinkoff.public.invest.api.contract.v1.MarketDataService"
 
@@ -71,6 +74,32 @@ _TINVEST_TYPE_MAP = {
     "future": InstrumentType.FUTURE,
 }
 
+# T-Invest OrderExecutionReportStatus -> our OrderStatus.
+_ORDER_STATUS_MAP = {
+    "EXECUTION_REPORT_STATUS_FILL": OrderStatus.FILLED,
+    "EXECUTION_REPORT_STATUS_REJECTED": OrderStatus.REJECTED,
+    "EXECUTION_REPORT_STATUS_CANCELLED": OrderStatus.CANCELLED,
+    "EXECUTION_REPORT_STATUS_NEW": OrderStatus.NEW,
+    "EXECUTION_REPORT_STATUS_PARTIALLYFILL": OrderStatus.PARTIALLY_FILLED,
+}
+
+# T-Invest OrderType -> our OrderType.
+_ORDER_TYPE_MAP = {
+    "ORDER_TYPE_LIMIT": OrderType.LIMIT,
+    "ORDER_TYPE_MARKET": OrderType.MARKET,
+    "ORDER_TYPE_BESTPRICE": OrderType.LIMIT,
+}
+
+# T-Invest OrderDirection -> our OrderSide.
+_ORDER_SIDE_MAP = {
+    "ORDER_DIRECTION_BUY": OrderSide.BUY,
+    "ORDER_DIRECTION_SELL": OrderSide.SELL,
+}
+
+# T-Invest OperationType names that represent security trades.
+_DEAL_BUY_TYPES = {"OPERATION_TYPE_BUY", "OPERATION_TYPE_BUY_CARD", "OPERATION_TYPE_BUY_MARGIN"}
+_DEAL_SELL_TYPES = {"OPERATION_TYPE_SELL", "OPERATION_TYPE_SELL_CARD", "OPERATION_TYPE_SELL_MARGIN"}
+
 _NOT_IMPLEMENTED = "Trade execution is not implemented in the read-only integration"
 
 
@@ -104,6 +133,26 @@ def _map_trading_status(api_available: bool) -> TradingStatus:
     return TradingStatus.TRADING_AVAILABLE if api_available else TradingStatus.TRADING_UNAVAILABLE
 
 
+def _map_order_status(value: str | None) -> OrderStatus:
+    return _ORDER_STATUS_MAP.get(value or "", OrderStatus.ERROR)
+
+
+def _map_order_type(value: str | None) -> OrderType | None:
+    return _ORDER_TYPE_MAP.get(value or "")
+
+
+def _map_order_side(value: str | None) -> OrderSide | None:
+    return _ORDER_SIDE_MAP.get(value or "")
+
+
+def _map_deal_side(operation_type: str | None) -> OrderSide | None:
+    if operation_type in _DEAL_BUY_TYPES:
+        return OrderSide.BUY
+    if operation_type in _DEAL_SELL_TYPES:
+        return OrderSide.SELL
+    return None
+
+
 class TInvestAdapter(BrokerAdapter):
     """BrokerAdapter implemented over the T-Invest read-only REST API."""
 
@@ -130,6 +179,12 @@ class TInvestAdapter(BrokerAdapter):
             raise AuthenticationError("T-Invest API token is not configured")
         return self._client
 
+    async def _first_account_id(self) -> str:
+        accounts = await self.get_accounts()
+        if not accounts:
+            raise AccountNotFoundError("No accounts available")
+        return accounts[0].account_id
+
     async def connect(self) -> None:
         """Validate the token by fetching the account list."""
         client = self._require_client()
@@ -148,10 +203,7 @@ class TInvestAdapter(BrokerAdapter):
     async def get_account(self, account_id: str | None = None) -> BrokerAccount:
         client = self._require_client()
         if not account_id:
-            accounts = await self.get_accounts()
-            if not accounts:
-                raise AccountNotFoundError("No accounts available")
-            account_id = accounts[0].account_id
+            account_id = await self._first_account_id()
         data = await client.call(
             f"{_OPERATIONS}/GetPortfolio", {"accountId": account_id, "currency": "RUB"}
         )
@@ -212,35 +264,58 @@ class TInvestAdapter(BrokerAdapter):
         return [self._to_candle(item, figi, timeframe) for item in raw_candles]
 
     async def get_open_positions(self, account_id: str | None = None) -> list[BrokerPosition]:
-        account = await self.get_account(account_id)
         client = self._require_client()
+        if not account_id:
+            account_id = await self._first_account_id()
         data = await client.call(
-            f"{_OPERATIONS}/GetPortfolio", {"accountId": account.account_id, "currency": "RUB"}
+            f"{_OPERATIONS}/GetPortfolio", {"accountId": account_id, "currency": "RUB"}
         )
+        portfolio_currency = (data.get("totalAmountPortfolio") or {}).get("currency") or "RUB"
         positions: list[BrokerPosition] = []
         for item in data.get("positions", []):
-            quantity = _quotation_to_decimal(item.get("quantity")) or Decimal("0")
-            avg = item.get("averagePositionPrice")
-            price = _quotation_to_decimal(avg) or Decimal("0")
-            positions.append(
-                BrokerPosition(
-                    instrument_figi=item.get("figi", ""),
-                    quantity=float(quantity),
-                    average_price=float(price),
-                )
-            )
+            positions.append(self._to_position(item, account_id, portfolio_currency))
         return positions
+
+    async def get_orders(self, account_id: str | None = None) -> list[BrokerOrder]:
+        client = self._require_client()
+        if not account_id:
+            account_id = await self._first_account_id()
+        data = await client.call(f"{_ORDERS}/GetOrders", {"accountId": account_id})
+        raw_orders = data.get("orders", [])
+        return [self._to_order(item, account_id) for item in raw_orders]
+
+    async def get_order(self, order_id: str) -> BrokerOrder:
+        client = self._require_client()
+        account_id = await self._first_account_id()
+        data = await client.call(
+            f"{_ORDERS}/GetOrderState", {"accountId": account_id, "orderId": order_id}
+        )
+        return self._to_order(data, account_id)
+
+    async def get_deals(self, account_id: str | None = None) -> list[BrokerDeal]:
+        client = self._require_client()
+        if not account_id:
+            account_id = await self._first_account_id()
+        deals: list[BrokerDeal] = []
+        cursor: str | None = None
+        while True:
+            body: dict = {"accountId": account_id, "limit": 100}
+            if cursor:
+                body["cursor"] = cursor
+            data = await client.call(f"{_OPERATIONS}/GetOperationsByCursor", body)
+            for item in data.get("items", []):
+                deals.extend(self._operation_to_deals(item, account_id))
+            if not data.get("hasNext"):
+                break
+            cursor = data.get("nextCursor")
+            if not cursor:
+                break
+        return deals
 
     async def place_order(self, request: BrokerOrderRequest) -> BrokerOrder:
         raise NotImplementedError(_NOT_IMPLEMENTED)
 
     async def cancel_order(self, order_id: str) -> None:
-        raise NotImplementedError(_NOT_IMPLEMENTED)
-
-    async def get_order(self, order_id: str) -> BrokerOrder:
-        raise NotImplementedError(_NOT_IMPLEMENTED)
-
-    async def get_deals(self, account_id: str | None = None) -> list[BrokerDeal]:
         raise NotImplementedError(_NOT_IMPLEMENTED)
 
     # --- normalization helpers (T-Invest JSON -> broker DTO / domain DTO) ---
@@ -288,6 +363,78 @@ class TInvestAdapter(BrokerAdapter):
             exchange=raw.get("exchange"),
             is_active=api_available,
         )
+
+    @staticmethod
+    def _to_position(raw: dict, account_id: str, portfolio_currency: str) -> BrokerPosition:
+        quantity = _quotation_to_decimal(raw.get("quantity")) or Decimal("0")
+        average = _quotation_to_decimal(raw.get("averagePositionPrice")) or Decimal("0")
+        current = _quotation_to_decimal(raw.get("currentPrice")) or Decimal("0")
+        current_value = current * quantity
+        unrealized = (current - average) * quantity
+        currency = (raw.get("averagePositionPrice") or {}).get("currency") or portfolio_currency
+        return BrokerPosition(
+            account_id=account_id,
+            instrument_figi=raw.get("figi", ""),
+            ticker=raw.get("ticker"),
+            instrument_type=raw.get("instrumentType"),
+            quantity=quantity,
+            average_price=average,
+            current_price=current,
+            current_value=current_value,
+            unrealized_pnl=unrealized,
+            currency=currency,
+        )
+
+    @staticmethod
+    def _to_order(raw: dict, account_id: str) -> BrokerOrder:
+        requested = raw.get("lotsRequested") or 0
+        executed = raw.get("lotsExecuted") or 0
+        updated_at = None
+        stages = raw.get("stages") or []
+        if stages:
+            updated_at = _timestamp_to_datetime(stages[-1].get("executionTime"))
+        return BrokerOrder(
+            order_id=raw.get("orderId", ""),
+            account_id=account_id,
+            instrument_figi=raw.get("figi"),
+            ticker=raw.get("ticker"),
+            status=_map_order_status(raw.get("executionReportStatus")),
+            type=_map_order_type(raw.get("orderType")),
+            side=_map_order_side(raw.get("direction")),
+            requested_quantity=Decimal(str(requested)),
+            executed_quantity=Decimal(str(executed)),
+            price=_quotation_to_decimal(raw.get("initialSecurityPrice")),
+            currency=raw.get("currency"),
+            created_at=_timestamp_to_datetime(raw.get("orderDate")),
+            updated_at=updated_at,
+        )
+
+    @staticmethod
+    def _operation_to_deals(item: dict, account_id: str) -> list[BrokerDeal]:
+        side = _map_deal_side(item.get("type"))
+        figi = item.get("figi")
+        if side is None or not figi:
+            return []
+        quantity = item.get("quantityDone") or item.get("quantity") or 0
+        price = _quotation_to_decimal(item.get("price")) or Decimal("0")
+        commission = _quotation_to_decimal(item.get("commission")) or Decimal("0")
+        currency = (item.get("commission") or {}).get("currency") or (
+            item.get("payment") or {}
+        ).get("currency")
+        return [
+            BrokerDeal(
+                deal_id=item.get("id", ""),
+                account_id=account_id,
+                order_id=None,
+                instrument_figi=figi,
+                side=side,
+                quantity=Decimal(str(quantity)),
+                price=price,
+                commission=commission,
+                currency=currency,
+                happened_at=_timestamp_to_datetime(item.get("date")),
+            )
+        ]
 
     @staticmethod
     def _to_last_price(raw: dict, default_figi: str) -> LastPrice:

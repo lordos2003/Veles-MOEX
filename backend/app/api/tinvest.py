@@ -13,11 +13,18 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.deps import get_broker_adapter, get_instrument_service, get_market_data_service
+from app.api.deps import (
+    get_broker_adapter,
+    get_broker_data_service,
+    get_instrument_service,
+    get_market_data_service,
+)
 from app.brokers import (
     AccountNotFoundError,
     BrokerAccount,
     BrokerAdapter,
+    BrokerDeal,
+    BrokerOrder,
     BrokerPosition,
     InstrumentNotFoundError,
     InvalidRequestError,
@@ -29,12 +36,15 @@ from app.models.instrument import Instrument
 from app.schemas.invest import (
     AccountInfoResponse,
     CandleResponse,
+    DealResponse,
     InstrumentResponse,
     LastPriceResponse,
+    OrderResponse,
     PositionResponse,
     SyncResponse,
     TInvestStatusResponse,
 )
+from app.services.broker_data import BrokerDataService
 from app.services.instruments import InstrumentService
 from app.services.market_data import MarketDataService
 
@@ -78,6 +88,42 @@ async def account_info(
         raise
     positions = await broker.get_open_positions(account_id)
     return _account_to_schema(account, positions)
+
+
+# --- Broker data (read-only, via internal BrokerDataService) ---
+
+
+@router.get("/positions", response_model=list[PositionResponse])
+async def list_positions(
+    service: Annotated[BrokerDataService, Depends(get_broker_data_service)],
+    account_id: Annotated[str | None, Query()] = None,
+    figi: Annotated[str | None, Query()] = None,
+) -> list[PositionResponse]:
+    """List open positions, optionally filtered by account / FIGI."""
+    positions = await service.get_positions(account_id, figi)
+    return [_position_to_schema(item) for item in positions]
+
+
+@router.get("/orders", response_model=list[OrderResponse])
+async def list_orders(
+    service: Annotated[BrokerDataService, Depends(get_broker_data_service)],
+    account_id: Annotated[str | None, Query()] = None,
+    figi: Annotated[str | None, Query()] = None,
+) -> list[OrderResponse]:
+    """List orders, optionally filtered by account / FIGI."""
+    orders = await service.get_orders(account_id, figi)
+    return [_order_to_schema(item) for item in orders]
+
+
+@router.get("/deals", response_model=list[DealResponse])
+async def list_deals(
+    service: Annotated[BrokerDataService, Depends(get_broker_data_service)],
+    account_id: Annotated[str | None, Query()] = None,
+    figi: Annotated[str | None, Query()] = None,
+) -> list[DealResponse]:
+    """List deals/executions, optionally filtered by account / FIGI."""
+    deals = await service.get_deals(account_id, figi)
+    return [_deal_to_schema(item) for item in deals]
 
 
 # --- Instruments (via internal InstrumentService / PostgreSQL) ---
@@ -153,22 +199,67 @@ def _account_to_schema(
 ) -> AccountInfoResponse:
     return AccountInfoResponse(
         account_id=account.account_id,
+        broker=account.broker,
         currency=account.currency,
         available_cash=account.available_cash,
         equity=account.equity,
+        currencies=account.currencies,
         name=account.name,
         account_type=account.account_type,
         status=account.status,
         opened_at=account.opened_at,
         closed_at=account.closed_at,
-        positions=[
-            PositionResponse(
-                figi=position.instrument_figi,
-                quantity=position.quantity,
-                average_price=position.average_price,
-            )
-            for position in (positions or [])
-        ],
+        positions=[_position_to_schema(position) for position in (positions or [])],
+    )
+
+
+def _position_to_schema(item: BrokerPosition) -> PositionResponse:
+    return PositionResponse(
+        account_id=item.account_id,
+        figi=item.instrument_figi,
+        ticker=item.ticker,
+        instrument_type=item.instrument_type,
+        quantity=item.quantity,
+        average_price=item.average_price,
+        current_price=item.current_price,
+        current_value=item.current_value,
+        unrealized_pnl=item.unrealized_pnl,
+        currency=item.currency,
+        timestamp=item.timestamp,
+    )
+
+
+def _order_to_schema(item: BrokerOrder) -> OrderResponse:
+    return OrderResponse(
+        order_id=item.order_id,
+        account_id=item.account_id,
+        figi=item.instrument_figi,
+        ticker=item.ticker,
+        status=item.status,
+        type=item.type,
+        side=item.side,
+        requested_quantity=item.requested_quantity,
+        executed_quantity=item.executed_quantity,
+        price=item.price,
+        currency=item.currency,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+        reject_info=item.reject_info,
+    )
+
+
+def _deal_to_schema(item: BrokerDeal) -> DealResponse:
+    return DealResponse(
+        deal_id=item.deal_id,
+        account_id=item.account_id,
+        order_id=item.order_id,
+        figi=item.instrument_figi,
+        side=item.side,
+        quantity=item.quantity,
+        price=item.price,
+        commission=item.commission,
+        currency=item.currency,
+        happened_at=item.happened_at,
     )
 
 

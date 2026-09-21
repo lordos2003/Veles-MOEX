@@ -17,7 +17,7 @@ FastAPI backend for Veles-MOEX. Modular monolith, no microservices.
   TradingStatus, Timeframe, Candle, LastPrice)
 - `app/models` — SQLAlchemy ORM domain models
 - `app/schemas` — Pydantic API schemas
-- `app/services` — `InstrumentService` (persistence/sync) + `MarketDataService`
+- `app/services` — `BrokerDataService`, `InstrumentService`, `MarketDataService`
 - `app/brokers` — `BrokerAdapter` abstraction + `TInvestAdapter` (read-only) +
   `TInvestError`s and a thin REST client
 - `app/strategies` — Strategy Engine (Entry / DCA-Grid / Exit)
@@ -61,6 +61,9 @@ Endpoints (all read-only):
 
 - `GET /api/tinvest/status` — connection/authentication probe
 - `GET /api/accounts`, `GET /api/accounts/{id}` — accounts + portfolio
+- `GET /api/positions` — open positions (filter by account_id / figi)
+- `GET /api/orders` — orders (filter by account_id / figi)
+- `GET /api/deals` — deals/executions (filter by account_id / figi)
 - `GET /api/instruments`, `GET /api/instruments/{figi}` — instruments (from
   PostgreSQL, via the internal InstrumentService)
 - `POST /api/instruments/sync?kind=share` — synchronize instruments from the
@@ -69,10 +72,11 @@ Endpoints (all read-only):
 - `GET /api/market-data/{figi}/candles?timeframe=1d&from=...&to=...` — candles
   (normalized, sorted, de-duplicated; long ranges are fetched in chunks)
 
-Instrument & market data are exposed through the internal services so that the
-Strategy/Backtest engines never depend on T-Invest specifics. Prices use
-`Decimal`, timestamps are timezone-aware UTC, and timeframe has its own internal
-enum (`Timeframe`).
+Instrument, market data and account/position/order/deal data are exposed through
+the internal services (`InstrumentService`, `MarketDataService`,
+`BrokerDataService`) so that the Strategy/Backtest engines never depend on
+T-Invest specifics. Prices use `Decimal`, timestamps are timezone-aware UTC, and
+timeframe has its own internal enum (`Timeframe`).
 
 Errors are normalized to HTTP codes (401 auth, 429 rate limit, 400 invalid
 timeframe/range, 404 not found, 502/503 upstream/connection). No trade placement
@@ -110,18 +114,19 @@ alembic revision --autogenerate -m "message"
 pytest
 ```
 
-Current local state: **47 passed**. The tests cover backend startup,
+Current local state: **60 passed**. The tests cover backend startup,
 `/api/health`, configuration loading, domain model import, broker abstraction,
-engine interface availability, the T-Invest adapter + REST endpoints, and the
-Instrument/MarketData services (chunking, sorting, de-duplication, sync) — all
-mocked / in-memory, no real token or running database. A real T-Invest smoke
-test requires a user-provided `TINVEST_TOKEN` (see `docs/tinvest-smoke-test.md`).
+engine interface availability, the T-Invest adapter + REST endpoints, the
+Instrument/MarketData services (chunking, sorting, de-duplication, sync) and the
+broker data layer (account/position/order/deal DTOs, service filtering, REST
+endpoints) — all mocked / in-memory, no real token or running database. A real
+T-Invest smoke test requires a user-provided `TINVEST_TOKEN` (see
+`docs/tinvest-smoke-test.md`).
 
 ## Notes
 
 - No Paper Trading, no direct MOEX API, no ASTS/FIX/TWIME, no microservices, no
   second broker. See the product specification for the MVP roadmap.
 - `TInvestAdapter` implements the **read-only** integration (accounts,
-  instruments, market data, candles). Trade methods (`place_order`,
-  `cancel_order`, `get_order`, `get_deals`) intentionally raise
-  `NotImplementedError`.
+  instruments, market data, candles, orders, deals). Trade methods
+  (`place_order`, `cancel_order`) intentionally raise `NotImplementedError`.
