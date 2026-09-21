@@ -27,8 +27,9 @@ Backtest Engine ──→ Historical Market Data
 ```
 
 `Strategy Engine` (MVP-2) реализован как конфигурационно-управляемый движок
-фильтров/сигналов и входа; `Backtest Engine`, `Trading Engine` и исполнение
-ордеров (`place_order` и т.п.) пока не реализованы.
+фильтров/сигналов и входа. `Backtest Engine` (MVP-3) использует тот же
+Strategy Engine и исполняет сделки через `BacktestBroker`. `Trading Engine`
+(Live) и исполнение ордеров (`place_order` у T-Invest) пока не реализованы.
 
 ## Принципы
 
@@ -100,6 +101,30 @@ Backtest Engine ──→ Historical Market Data
 - **Basic Exit**: только `FixedPercentageTP` (единственный тейк-профит
   от цены входа). DCA/Grid, Multi-Take, Signal TP, Break-Even, Stop Loss,
   Trailing — последующие этапы.
+
+## Реализованный слой Backtest Engine (MVP-3)
+
+- `BacktestBroker` — broker-agnostic интерфейс исполнения поверх исторических
+  свечей: market/limit ордера, отмена, состояния ордера (NEW/SUBMITTED/
+  FILLED/CANCELLED), заполнения, баланс счёта, позиция. Детерминированные
+  правила заполнения (market по цене/слайпеджу, limit по OHLC-правилу).
+- Комиссии (maker/taker) и slippage — часть конфигурации; попадают в
+  исполнение, сделку, realized и Net P&L (Gross P&L без комиссии).
+- Позиция: quantity, average_price, unrealized/realized P&L, fees, opened_at/
+  closed_at; средняя цена пересчитывается при увеличении позиции (совместимо
+  с будущим DCA).
+- Тайминг Veles: только `at_bar_close`; сигнал на закрытии свечи N
+  исполняется на OPEN свечи N+1; `per_minute` в backtest не поддерживается;
+  look-ahead исключён (данные старше текущей свечи).
+- Выход: `FixedPercentageTP` от текущей средней цены; полное закрытие одной
+  сделкой. Multi-Take / Signal TP / Break-Even / Stop Loss / Trailing — нет.
+- Воспроизводимая история `Backtest → Deals → Orders → Executions`, а также
+  `BacktestResult`: initial/final capital, gross/net P&L, ROI, total fees,
+  number of closed trades, winning/losing, win rate, average trade/duration,
+  maximum drawdown. Backtest ссылается на конкретную `StrategyVersion` и
+  полностью детерминирован по конфигурации.
+- `BacktestBroker`/`BacktestEngine` и `Strategy Engine` не импортируют
+  `brokers/tinvest`/`TInvestAdapter`.
 
 ## Remarks
 
