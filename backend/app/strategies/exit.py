@@ -1,22 +1,16 @@
-"""Exit Engine.
+"""Exit Engine (basic).
 
-The Exit Engine is designed around explicit TP types (see the Veles TP
-requirements and Architecture & Product Specification section 6):
-
-- FixedPercentageTP
-- MultiTakeTP
-- SignalTP
-- BreakEvenProtection
-- StopLoss
-- TrailingExit (future/conditional)
-
-Trading mechanics are NOT implemented yet. This module only defines the
-interface those subsystems will implement.
+At MVP-2 only the simplest exit is implemented: ``FixedPercentageTP`` builds a
+single take-profit exit relative to the entry price. Multi-take, signal TP,
+break-even, stop-loss and trailing are later stages (MVP-5).
 """
 
 from __future__ import annotations
 
-from app.strategies.config import ExitConfig
+from decimal import Decimal
+
+from app.models.enums import OrderSide
+from app.strategies.config import Direction, ExitConfig, FixedPercentageTP
 from app.strategies.domain import ExitPlan
 
 
@@ -24,14 +18,22 @@ class ExitEngine:
     """Builds exit orders for a position from an ExitConfig."""
 
     def build_exit_orders(
-        self, config: ExitConfig, average_price: float, position_qty: float
+        self, config: ExitConfig, direction: Direction, entry_price: Decimal, position_qty: float
     ) -> list[ExitPlan]:
-        """Build the initial set of exit orders.
-
-        This covers FixedPercentageTP, MultiTakeTP, SignalTP and trailing logic
-        once implemented (MVP-5).
-        """
-        raise NotImplementedError("Exit mechanics are not implemented yet")
+        tp = config.take_profit
+        if isinstance(tp, FixedPercentageTP):
+            percent = Decimal(str(tp.percent))
+            factor = Decimal("1") + percent / Decimal("100")
+            if direction == Direction.SHORT:
+                factor = Decimal("1") - percent / Decimal("100")
+            target = entry_price * factor
+            side = OrderSide.SELL if direction == Direction.LONG else OrderSide.BUY
+            return [
+                ExitPlan(
+                    side=side, quantity=position_qty, price=target, offset_percent=tp.percent
+                )
+            ]
+        raise NotImplementedError("Only FixedPercentageTP exit is implemented at MVP-2")
 
     def on_average(
         self,
@@ -40,9 +42,4 @@ class ExitEngine:
         position_qty: float,
         old_exits: list[ExitPlan],
     ) -> list[ExitPlan]:
-        """Rebuild exits after an averaging event.
-
-        Implements cancel-and-replace semantics: old TP cancelled, average price
-        recalculated, new TP created. Implemented at MVP-5.
-        """
         raise NotImplementedError("Exit recalculation is not implemented yet")

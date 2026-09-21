@@ -4,17 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 
 from app.models.enums import OrderSide
+from app.strategies.bars import Snapshot
 
 
 @dataclass
 class MarketContext:
-    """Minimal market snapshot handed to the Strategy Engine."""
+    """Market snapshot handed to the Strategy Engine (broker-agnostic)."""
 
     instrument_id: int | None = None
     price: float | None = None
     timestamp: datetime | None = None
+    snapshot: Snapshot | None = None
 
 
 @dataclass
@@ -23,6 +26,7 @@ class EntrySignal:
 
     action: str = "enter"
     direction: OrderSide = OrderSide.BUY
+    reasons: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -41,7 +45,7 @@ class ExitPlan:
 
     side: OrderSide
     quantity: float
-    price: float | None = None
+    price: Decimal | None = None
     offset_percent: float = 0.0
 
 

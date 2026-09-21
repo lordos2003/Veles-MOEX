@@ -16,6 +16,7 @@ from app.models.enums import OrderSide, OrderType
 from app.strategies import (
     DCAGridConfig,
     DCAGridEngine,
+    Direction,
     EntryConfig,
     EntryEngine,
     ExitConfig,
@@ -64,21 +65,27 @@ def test_backtest_engine_constructs_with_trading_engine() -> None:
 
 def test_strategy_methods_not_implemented() -> None:
     entry = EntryEngine()
-    with pytest.raises(NotImplementedError):
-        entry.evaluate(EntryConfig(), MarketContext())
-
     dca = DCAGridEngine()
+    exit_engine = ExitEngine()
+    se = StrategyEngine(entry, dca, exit_engine)
+    cfg = ExitConfig(take_profit=FixedPercentageTP(percent=2.0))
+
+    # Entry without market snapshot -> no signal (not a NotImplementedError).
+    assert entry.evaluate(EntryConfig(), Direction.LONG, MarketContext()) is None
+
+    # DCA/Grid mechanics are still a later stage (MVP-4).
     with pytest.raises(NotImplementedError):
         dca.build_grid(DCAGridConfig(), 100.0)
-
-    exit_engine = ExitEngine()
-    cfg = ExitConfig(take_profit=FixedPercentageTP(percent=2.0))
     with pytest.raises(NotImplementedError):
-        exit_engine.build_exit_orders(cfg, average_price=100.0, position_qty=10.0)
+        dca.recalculate(DCAGridConfig(), 10.0, 100.0)
 
-    se = StrategyEngine(EntryEngine(), DCAGridEngine(), ExitEngine())
+    # Exit recalculation after averaging is a later stage.
     with pytest.raises(NotImplementedError):
-        se.evaluate(StrategyConfig(exit=cfg), MarketContext())
+        exit_engine.on_average(cfg, average_price=100.0, position_qty=10.0, old_exits=[])
+
+    # Strategy without market snapshot -> no entry signal.
+    plan = se.evaluate(StrategyConfig(exit=cfg), MarketContext())
+    assert plan.entry is None
 
 
 def test_async_trading_methods_not_implemented() -> None:

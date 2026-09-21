@@ -26,8 +26,9 @@ Strategy Engine ──→ Market Data Service
 Backtest Engine ──→ Historical Market Data
 ```
 
-Эти движки (`Strategy Engine`, `Backtest Engine`, `Trading Engine`) пока не
-реализованы — существуют только архитектурные каркасы.
+`Strategy Engine` (MVP-2) реализован как конфигурационно-управляемый движок
+фильтров/сигналов и входа; `Backtest Engine`, `Trading Engine` и исполнение
+ордеров (`place_order` и т.п.) пока не реализованы.
 
 ## Принципы
 
@@ -73,6 +74,32 @@ Backtest Engine ──→ Historical Market Data
 - Роуты `/api/instruments`, `/api/market-data/*`, `/api/positions`,
   `/api/orders`, `/api/deals` используют внутренние сервисы; T-Invest
   остаётся только внешним источником внутри `TInvestAdapter`.
+
+## Реализованный слой Strategy Engine (MVP-2)
+
+Стратегия — это данные (Veles-модель), движок broker-agnostic:
+
+- `Strategy` / `StrategyVersion` и `Instrument` — существующие сущности;
+  `Direction` (Long/Short) в конфигурации.
+- **Filters / Signals** по модели Veles: `Аргумент1 + Оператор + Аргумент2`;
+  аргумент — индикатор, свеча (open/high/low/close/volume) или константа.
+- Операторы: `>` / `<` (состояние, активно пока условие выполняется),
+  `crossing upward` / `crossing downward` (событие пересечения).
+- Группы: условия внутри группы = AND, группы между собой = OR
+  (поддерживается вложенность `(A AND B) OR C`).
+- Методы расчёта: `at_bar_close` (по закрытой свече) и `per_minute`
+  (внутри текущей формирующейся свечи).
+- Каждый аргумент несёт свой `timeframe`; higher-timeframe сигнал остаётся
+  активным до конца свечи и сочетается с lower-timeframe условием
+  (multi-timeframe active signal).
+- Индикаторы: RSI, SMA, EMA, MACD, Bollinger Bands, ATR, CCI, Williams %R,
+  CMO, MFI, Stochastic, ADX; конфигурация period / method / shift / серия
+  вывода (MACD histogram, BB upper/lower, Stochastic k/d, ADX +/-DI).
+- **Entry Engine** формирует `EntrySignal` (Long→BUY, Short→SELL),
+  не отправляет ордера.
+- **Basic Exit**: только `FixedPercentageTP` (единственный тейк-профит
+  от цены входа). DCA/Grid, Multi-Take, Signal TP, Break-Even, Stop Loss,
+  Trailing — последующие этапы.
 
 ## Remarks
 

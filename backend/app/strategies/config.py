@@ -14,6 +14,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
+from app.strategies.filters import CalculationMethod, FilterGroup
+
 
 class Direction(StrEnum):
     LONG = "LONG"
@@ -21,11 +23,11 @@ class Direction(StrEnum):
 
 
 class EntryConfig(BaseModel):
-    """Entry conditions. Condition grammar is refined at MVP-2."""
+    """Entry conditions (Veles-style filters/signals)."""
 
-    method: Literal["AT_BAR_CLOSE", "PER_MINUTE"] = "AT_BAR_CLOSE"
-    # Placeholder for AND/OR/NOT nested condition groups.
-    condition_groups: list[dict] = Field(default_factory=list)
+    method: CalculationMethod = CalculationMethod.AT_BAR_CLOSE
+    # Groups are OR-ed; conditions within a group are AND-ed.
+    groups: list[FilterGroup] = Field(default_factory=list)
 
 
 class DCAGridConfig(BaseModel):
@@ -73,7 +75,7 @@ class SignalTP(BaseModel):
     """Exit on an indicator/filter signal, with optional minimum P&L."""
 
     kind: Literal["signal"] = "signal"
-    condition_groups: list[dict] = Field(default_factory=list)
+    groups: list[FilterGroup] = Field(default_factory=list)
     min_pnl_percent: float | None = None
 
 
@@ -95,7 +97,7 @@ class StopLossConfig(BaseModel):
 
     kind: Literal["percent", "signal"] = "percent"
     percent: float | None = None
-    condition_groups: list[dict] = Field(default_factory=list)
+    groups: list[FilterGroup] = Field(default_factory=list)
 
 
 class ExitConfig(BaseModel):
