@@ -80,9 +80,13 @@ def test_strategy_methods_not_implemented() -> None:
     assert state is not None and len(state.levels) == 1
     assert state.active_orders()
 
-    # Exit recalculation after averaging is a later stage.
-    with pytest.raises(NotImplementedError):
-        exit_engine.on_average(cfg, average_price=100.0, position_qty=10.0, old_exits=[])
+    # Exit recalculation after averaging is implemented in MVP-5.
+    from decimal import Decimal
+
+    recalc = exit_engine.on_average(
+        cfg, Direction.LONG, average_price=100.0, position_qty=10.0, old_exits=[]
+    )
+    assert recalc and recalc[0].price == Decimal("102")
 
     # Strategy without market snapshot -> no entry signal.
     plan = se.evaluate(StrategyConfig(exit=cfg), MarketContext())

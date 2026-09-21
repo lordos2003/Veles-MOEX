@@ -31,6 +31,7 @@ class BacktestDeal:
     net_pnl: Decimal
     duration: timedelta
     executed_orders: int
+    reason: str = ""
 
     @property
     def is_win(self) -> bool:

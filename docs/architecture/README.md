@@ -154,9 +154,37 @@ Veles-совместимый DCA/Grid движок, broker-agnostic:
   по существующему детерминированному OHLC-правилу; позиция усредняется,
   TP перевыставляется от новой средней цены. SIGNAL-усреднения реализованы на
   уровне движка (market DCA по сигналу в bar-loop не моделируется).
-- Не реализовано (следующие этапы): Multi-Take, Signal TP, Break-Even, Stop
-  Loss, Trailing, live trading, Order recovery, Risk Manager, optimizer,
-  partial fills, tick engine.
+- Не реализовано (следующие этапы): Trailing, live trading, Order recovery,
+  Risk Manager, optimizer, partial fills, tick engine.
+
+## Реализованный слой Full Exit Engine (MVP-5)
+
+Veles-совместимый полноценный Exit Engine, broker-agnostic (единый для Backtest
+и Live):
+
+- **Fixed TP / Простой**: один лимитный тейк-профит от средней цены позиции
+  (Long выше, Short ниже); после DCA старый TP отменяется и пересоздаётся от
+  новой средней цены на оставшийся объём.
+- **Multi-Take / Свой**: последовательность частичных выходов (offset + % объёма
+  от позиции), лимитные ордера, монотонно возрастающие офсеты, сумма объёмов
+  ≤ 100%; после DCA оставшиеся тейки пересчитываются от новой средней цены,
+  выполненные остаются неизменными.
+- **Signal TP / Сигнал**: market-выход по Veles Filters/Signals (Task №5),
+  с гейтом **Minimum P&L**.
+- **Break-Even Protection** («стоп-лосс в безубыток», НЕ обычный SL): доступен
+  с Multi-Take (≥ 2 тейков), активируется после первого тейка (отменяет
+  DCA/Grid), опорная точка — средняя цена или предыдущий тейк, отклонение
+  положительное/нулевое/отрицательное.
+- **Simple Stop Loss** (перцент) и **Signal Stop Loss** (сигнал + min offset от
+  средней цены или последнего ордера, положительный offset допускается) —
+  независимые market-выходы; срабатывает первый.
+- Доменные модели: `ExitMode`, `ExitDecision`, `ExitState`; детерминированная
+  приоритезация одновременных условий в Backtest; `BacktestDeal` несёт `reason`
+  (fixed_tp / take / signal_tp / breakeven / stop_loss / signal_stop).
+- Переиспользуются Filters/Signals (Task №5), Backtest (Task №6), DCA/Grid
+  (Task №7), Position и BacktestBroker. Второй системы индикаторов/сигналов/
+  позиций не создано.
+- Не реализовано: Trailing, partial fills, tick engine, live trading.
 
 ## Remarks
 

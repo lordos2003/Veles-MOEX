@@ -7,14 +7,12 @@ candles; the Strategy Engine never knows it is a backtest.
 
 Timing (Veles): a signal formed on bar N close executes at bar N+1 open. Only
 ``at_bar_close`` is supported; ``per_minute`` is out of scope. No future data is
-used to compute a signal.
+used.
 
-DCA / Grid (MVP-4): after the initial market entry, SIMPLE and CUSTOM grids are
-armed as deterministic limit orders. A DCA level fills via the existing OHLC
-limit rule, the position is averaged (weighted), grid state advances and the
-take-profit limit is re-armed from the new average price. SIGNAL-mode averaging
-is exercised at the engine level only (market DCA on signals is not simulated
-in the bar loop here).
+Exits (MVP-5): Fixed TP / Multi-Take are placed as deterministic limit orders;
+Signal TP / Simple Stop Loss / Signal Stop Loss / Break-Even are market exits
+evaluated at bar close and executed at the next bar open. Multiple simultaneous
+exits are resolved by the ExitEngine's deterministic priority.
 """
 
 from __future__ import annotations
@@ -30,6 +28,8 @@ from app.strategies.bars import Bar, BarSeries, Snapshot
 from app.strategies.config import Direction, TradingMode
 from app.strategies.dca_grid import DCAGridEngine, GridState
 from app.strategies.domain import MarketContext
+from app.strategies.exit import ExitDecision, ExitEngine, ExitState
+from app.strategies.filters import CalculationMethod, FilterEvaluator
 from app.trading.engine import TradingEngine
 
 
@@ -39,6 +39,8 @@ class BacktestEngine:
     def __init__(self, trading_engine: TradingEngine) -> None:
         self.trading_engine = trading_engine
         self._grid_engine = DCAGridEngine()
+        self._filter_eval = FilterEvaluator()
+        self._exit_engine: ExitEngine = self._strategy.exit_engine
 
     @property
     def _strategy(self):
@@ -65,72 +67,109 @@ class BacktestEngine:
         equity_curve: list[Decimal] = []
 
         pending_entry = None
-        tp_order_id: str | None = None
+        pending_market_exit: ExitDecision | None = None
         grid_state: GridState | None = None
         dca_order_ids: dict[int, str] = {}
+        exit_state = ExitState(
+            mode=self._exit_engine.resolve_mode(config.strategy.exit), direction=direction
+        )
+        limit_orders: dict[str, tuple[str, int]] = {}
 
-        # Position bookkeeping for the current trade.
         entry_fill = None
         pos_qty = Decimal("0")
         pos_avg = Decimal("0")
         pos_entry_time: datetime | None = None
+        pos_gross = Decimal("0")
         pos_fees = Decimal("0")
         pos_fill_count = 0
+        pos_added_qty = Decimal("0")
 
         for candle in candles:
-            # (A) Execute a market entry signalled on the previous bar's close.
+            # (A) Execute pending market entry on this bar's open.
             if pending_entry is not None and not broker.is_open():
                 qty = config.quantity
                 broker.execute_market(
-                    pending_entry.direction,
-                    qty,
-                    price=Decimal(candle.open),
+                    pending_entry.direction, qty, price=Decimal(candle.open),
                     timestamp=candle.timestamp,
                 )
-                entry_fill = broker.deals()[-1] if broker.deals() else None
                 pending_entry = None
+                entry_fill = broker.deals()[-1] if broker.deals() else None
                 pos_qty = qty
                 pos_avg = broker.average_price()
                 pos_entry_time = candle.timestamp
                 pos_fees = entry_fill.commission if entry_fill else Decimal("0")
+                pos_gross = Decimal("0")
                 pos_fill_count = 1
-                tp_order_id = self._place_take_profit(broker, config, direction, candle, None)
-                grid_state, dca_order_ids = self._init_grid(
-                    broker, config, direction, candle
+                pos_added_qty = qty
+                exit_state = ExitState(
+                    mode=self._exit_engine.resolve_mode(config.strategy.exit), direction=direction
+                )
+                limit_orders, grid_state, dca_order_ids = self._after_entry(
+                    broker, config, direction, pos_avg, pos_qty, candle, limit_orders
                 )
 
-            # (C) Fill pending limit orders (DCA levels and take-profit).
+            # (B) Execute a pending market exit on this bar's open.
+            if pending_market_exit is not None and broker.is_open():
+                self._execute_market_exit(
+                    broker, config, pending_market_exit, candle, deals,
+                    direction, pos_avg, pos_qty, pos_entry_time,
+                    pos_gross, pos_fees, pos_fill_count,
+                )
+                pos_qty, pos_avg, pos_entry_time = Decimal("0"), Decimal("0"), None
+                pos_gross, pos_fees, pos_fill_count = Decimal("0"), Decimal("0"), 0
+                entry_fill = None
+                pending_market_exit = None
+                limit_orders = {}
+                grid_state = None
+                dca_order_ids = {}
+                continue
+
+            # (C) Fill pending limit orders (DCA levels, take-profits, takes).
             for deal in broker.on_bar(candle):
-                if deal.order_id == tp_order_id and not broker.is_open() and entry_fill is not None:
-                    deals.append(
-                        self._build_deal(
-                            deal,
-                            direction,
-                            pos_avg,
-                            pos_qty,
-                            pos_entry_time,
-                            pos_fees + deal.commission,
-                            pos_fill_count + 1,
-                            len(deals) + 1,
-                        )
-                    )
-                    entry_fill = None
-                    tp_order_id = None
-                    grid_state = None
-                    dca_order_ids = {}
-                elif grid_state is not None:
-                    idx = self._match_dca_level(dca_order_ids, deal.order_id)
-                    if idx is not None:
-                        self._on_dca_fill(broker, grid_state, idx, dca_order_ids, config, candle)
+                order_id = deal.order_id
+                if order_id in dca_order_ids.values():
+                    idx = self._match_dca_level(dca_order_ids, order_id)
+                    if idx is not None and grid_state is not None:
+                        self._grid_engine.on_fill(grid_state, idx)
+                        grid_state.average_price = broker.average_price()
+                        self._place_dca_orders(broker, grid_state, dca_order_ids, candle)
                         pos_avg = broker.average_price()
                         pos_qty = abs(broker.position_quantity())
                         pos_fees += deal.commission
                         pos_fill_count += 1
-                        tp_order_id = self._place_take_profit(
-                            broker, config, direction, candle, tp_order_id
+                        pos_added_qty += deal.quantity
+                        self._rearm_exits(
+                            broker, config, direction, pos_avg, pos_qty,
+                            exit_state.executed_takes, limit_orders,
                         )
+                elif order_id in limit_orders:
+                    kind, take_index = limit_orders[order_id]
+                    prev_avg = pos_avg
+                    if kind == "take":
+                        self._exit_engine.on_take_executed(
+                            exit_state, config.strategy.exit, take_index, deal.price
+                        )
+                    pos_avg = broker.average_price()
+                    pos_qty = abs(broker.position_quantity())
+                    pos_fees += deal.commission
+                    pos_fill_count += 1
+                    pos_gross += self._realized_gross(direction, prev_avg, deal)
+                    if not broker.is_open():
+                        deals.append(
+                            self._build_deal(
+                                deal, direction, prev_avg, pos_added_qty, pos_entry_time,
+                                pos_gross, pos_fees, pos_fill_count, len(deals) + 1,
+                                reason=("take" if kind == "take" else "fixed_tp"),
+                            )
+                        )
+                        pos_qty, pos_avg, pos_entry_time = Decimal("0"), Decimal("0"), None
+                        pos_gross, pos_fees, pos_fill_count = Decimal("0"), Decimal("0"), 0
+                        pos_added_qty = Decimal("0")
+                        limit_orders = {}
+                        grid_state = None
+                        dca_order_ids = {}
 
-            # (D) Evaluate the strategy at this bar's close (no future data).
+            # (D) Append bar, evaluate strategy + market exits at close.
             bar_series.bars.append(self._to_bar(candle))
             context = MarketContext(
                 snapshot=Snapshot(series={config.timeframe: bar_series}),
@@ -141,14 +180,125 @@ class BacktestEngine:
             if plan.entry is not None and not broker.is_open():
                 pending_entry = plan.entry
 
-            # (E) Mark to market for the equity curve.
+            if broker.is_open():
+                pending_market_exit = self._evaluate_market_exit(
+                    config, direction, pos_avg, pos_qty, exit_state,
+                    bar_series, candle, context,
+                )
+
+            # (E) Mark to market.
             broker.set_price(Decimal(candle.close))
             equity_curve.append(broker.equity())
 
         return self._build_result(config, broker, direction, deals, equity_curve)
 
+    # --- exit integration ---------------------------------------------------------
+
+    def _after_entry(self, broker, config, direction, avg, qty, candle, limit_orders):
+        exit_state = ExitState(
+            mode=self._exit_engine.resolve_mode(config.strategy.exit), direction=direction
+        )
+        exit_state.average_price = avg
+        exit_state.remaining_quantity = qty
+        self._place_limit_exits(broker, config, direction, avg, qty, [], limit_orders)
+        grid_state, dca_order_ids = self._init_grid(broker, config, direction, candle)
+        return limit_orders, grid_state, dca_order_ids
+
+    def _place_limit_exits(
+        self, broker, config, direction, avg, qty, executed_takes, limit_orders
+    ) -> None:
+        exit_cfg = config.strategy.exit
+        is_multi = exit_cfg.take_profit.kind == "multi_take"
+        plans = self._exit_engine.build_remaining_take_plans(
+            exit_cfg, direction, avg, qty, executed_takes
+        )
+        for i, plan in enumerate(plans):
+            if plan.price is None:
+                continue
+            # Use the exact remaining quantity for a full-closure (Fixed TP) exit so
+            # the position closes exactly, avoiding float residual.
+            order_qty = qty if not is_multi else Decimal(str(plan.quantity))
+            order = broker.place_limit(plan.side, order_qty, plan.price, timestamp=None)
+            limit_orders[order.order_id] = ("take" if is_multi else "tp", i)
+
+    def _rearm_exits(
+        self, broker, config, direction, avg, qty, executed_takes, limit_orders
+    ) -> None:
+        self._cancel_limit_orders(broker, limit_orders)
+        limit_orders.clear()
+        self._place_limit_exits(broker, config, direction, avg, qty, executed_takes, limit_orders)
+
+    def _cancel_limit_orders(self, broker, limit_orders) -> None:
+        for oid in list(limit_orders.keys()):
+            broker.cancel(oid)
+
+    def _evaluate_market_exit(
+        self, config, direction, avg, qty, exit_state, bar_series, candle, context
+    ) -> ExitDecision | None:
+        exit_cfg = config.strategy.exit
+        price = Decimal(candle.close)
+        now = candle.timestamp
+        decisions: list[ExitDecision] = []
+        tp = exit_cfg.take_profit
+        if tp.kind == "signal":
+            fired = self._filter_eval.evaluate(
+                tp.groups, CalculationMethod.AT_BAR_CLOSE, context.snapshot, now
+            )
+            decision = self._exit_engine.signal_tp_decision(
+                exit_cfg, direction, avg, qty, price, fired, now
+            )
+            if decision:
+                decisions.append(decision)
+        if exit_cfg.stop_loss is not None:
+            decision = self._exit_engine.simple_stop_decision(
+                exit_cfg, direction, avg, price, qty, now
+            )
+            if decision:
+                decisions.append(decision)
+        if exit_cfg.signal_stop is not None:
+            fired = self._filter_eval.evaluate(
+                exit_cfg.signal_stop.groups, CalculationMethod.AT_BAR_CLOSE, context.snapshot, now
+            )
+            grid_assembled = self._grid_assembled(avg)
+            decision = self._exit_engine.signal_stop_decision(
+                exit_cfg, direction, fired, avg, exit_state.last_take_price,
+                price, qty, grid_assembled, now,
+            )
+            if decision:
+                decisions.append(decision)
+        if exit_state.breakeven_active:
+            decision = self._exit_engine.breakeven_decision(
+                exit_cfg, exit_state, avg, exit_state.last_take_price, price, qty, now
+            )
+            if decision:
+                decisions.append(decision)
+        return self._exit_engine.select(decisions)
+
+    def _grid_assembled(self, avg) -> bool:
+        return True
+
+    def _execute_market_exit(
+        self, broker, config, decision, candle, deals, direction,
+        avg, qty, entry_time, gross, fees, fill_count,
+    ) -> None:
+        broker.execute_market(
+            decision.side, decision.quantity, price=Decimal(candle.open), timestamp=candle.timestamp
+        )
+        exit_fill = broker.deals()[-1] if broker.deals() else None
+        if exit_fill is None:
+            return
+        total_gross = gross + self._realized_gross(direction, avg, exit_fill)
+        total_fees = fees + exit_fill.commission
+        deals.append(
+            self._build_deal(
+                exit_fill, direction, avg, qty, entry_time, total_gross, total_fees,
+                fill_count + 1, len(deals) + 1, reason=decision.exit_type.value,
+            )
+        )
+
+    # --- DCA grid ---------------------------------------------------------------
+
     def _init_grid(self, broker, config, direction, candle):
-        """Build the grid after the initial entry; arm active limit DCA levels."""
         dca = config.strategy.dca_grid
         if dca.mode not in (TradingMode.SIMPLE, TradingMode.CUSTOM):
             return None, {}
@@ -156,7 +306,6 @@ class BacktestEngine:
             return None, {}
         if dca.mode == TradingMode.CUSTOM and not dca.custom_levels:
             return None, {}
-
         reference = broker.average_price()
         base_nominal = abs(broker.position_quantity()) * reference
         state = self._grid_engine.build(dca, reference, direction, base_nominal=base_nominal)
@@ -182,51 +331,35 @@ class BacktestEngine:
                 return idx
         return None
 
-    def _on_dca_fill(
-        self, broker, state: GridState, idx: int, dca_order_ids: dict[int, str], config, candle
-    ) -> None:
-        self._grid_engine.on_fill(state, idx)
-        state.average_price = broker.average_price()
-        self._place_dca_orders(broker, state, dca_order_ids, candle)
+    # --- deal / helpers ---------------------------------------------------------
 
-    def _place_take_profit(self, broker, config, direction, candle, previous_order_id):
-        if previous_order_id is not None:
-            broker.cancel(previous_order_id)
-        avg = broker.average_price()
-        qty = abs(broker.position_quantity())
-        plans = self._strategy.exit_engine.build_exit_orders(
-            config.strategy.exit, direction, avg, qty
-        )
-        if plans and plans[0].price is not None:
-            order = broker.place_limit(
-                plans[0].side, qty, plans[0].price, timestamp=candle.timestamp
-            )
-            return order.order_id
-        return None
+    @staticmethod
+    def _realized_gross(direction, avg, fill) -> Decimal:
+        if fill.quantity <= 0:
+            return Decimal("0")
+        if direction == Direction.SHORT:
+            return (avg - fill.price) * fill.quantity
+        return (fill.price - avg) * fill.quantity
 
     @staticmethod
     def _build_deal(
-        exit_fill, direction, entry_price, quantity, entry_time, fees, executed_orders, seq
+        exit_fill, direction, entry_price, quantity, entry_time, gross, fees,
+        executed_orders, seq, reason: str = "",
     ) -> BacktestDeal:
-        exit_price = exit_fill.price
-        if direction == Direction.SHORT:
-            gross = (entry_price - exit_price) * quantity
-        else:
-            gross = (exit_price - entry_price) * quantity
-        net = gross - fees
         return BacktestDeal(
             deal_id=f"trade-{seq}",
             direction=direction,
             entry_time=entry_time,
             exit_time=exit_fill.happened_at,
             entry_price=entry_price,
-            exit_price=exit_price,
+            exit_price=exit_fill.price,
             quantity=quantity,
             gross_pnl=gross,
             fees=fees,
-            net_pnl=net,
+            net_pnl=gross - fees,
             duration=exit_fill.happened_at - entry_time,
             executed_orders=executed_orders,
+            reason=reason,
         )
 
     @staticmethod

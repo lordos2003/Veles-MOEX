@@ -12,7 +12,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.strategies.filters import CalculationMethod, FilterGroup
 
@@ -31,6 +31,18 @@ class TradingMode(StrEnum):
 class SignalOffsetReference(StrEnum):
     PREVIOUS_ORDER = "previous_order"
     REFERENCE = "reference"
+
+
+class ExitMode(StrEnum):
+    SIMPLE = "simple"
+    CUSTOM = "custom"
+    SIGNAL = "signal"
+
+
+class StopLossReference(StrEnum):
+    AVERAGE_PRICE = "average_price"
+    LAST_ORDER = "last_order"
+
 
 
 class CustomLevel(BaseModel):
@@ -97,15 +109,31 @@ class FixedPercentageTP(BaseModel):
     """Single take-profit expressed as a percentage from average price."""
 
     kind: Literal["fixed_percentage"] = "fixed_percentage"
-    percent: float
+    percent: float = Field(gt=0)
 
 
 class MultiTakeTP(BaseModel):
-    """Partial exits at several profit levels."""
+    """Partial exits at several profit levels (Veles Custom TP mode)."""
 
     kind: Literal["multi_take"] = "multi_take"
     takes: list[TakeItem] = Field(default_factory=list)
     breakeven: BreakEvenConfig | None = None
+
+    @model_validator(mode="after")
+    def _validate_takes(self) -> MultiTakeTP:
+        if not self.takes:
+            raise ValueError("Multi-Take requires at least one take level")
+        offsets = [t.offset_percent for t in self.takes]
+        for prev, curr in zip(offsets, offsets[1:], strict=False):
+            if curr <= prev:
+                raise ValueError("Multi-Take offsets must be strictly increasing")
+        if any(t.volume_percent <= 0 for t in self.takes):
+            raise ValueError("Multi-Take volume percentages must be positive")
+        if sum(t.volume_percent for t in self.takes) > 100.0:
+            raise ValueError("Multi-Take total volume may not exceed 100%")
+        if self.breakeven is not None and len(self.takes) < 2:
+            raise ValueError("Break-Even protection requires Multi-Take with at least two takes")
+        return self
 
 
 class SignalTP(BaseModel):
@@ -130,18 +158,32 @@ TPConfig = Annotated[
 
 
 class StopLossConfig(BaseModel):
-    """Separate protective exit mechanism."""
+    """Simple percentage Stop Loss (market exit)."""
 
-    kind: Literal["percent", "signal"] = "percent"
-    percent: float | None = None
+    kind: Literal["percent"] = "percent"
+    percent: float = Field(gt=0)
+
+
+class SignalStopLossConfig(BaseModel):
+    """Indicator/filter based Stop Loss (market exit)."""
+
+    kind: Literal["signal"] = "signal"
     groups: list[FilterGroup] = Field(default_factory=list)
+    reference: StopLossReference = StopLossReference.AVERAGE_PRICE
+    min_offset_percent: float = 0.0
+    offset_enabled: bool = True
 
 
 class ExitConfig(BaseModel):
-    """Exit block of a strategy."""
+    """Exit block of a strategy.
+
+    Simple and Signal Stop Loss are independent: both may be configured and are
+    evaluated separately (whichever triggers first closes the position).
+    """
 
     take_profit: TPConfig
     stop_loss: StopLossConfig | None = None
+    signal_stop: SignalStopLossConfig | None = None
 
 
 class RiskConfig(BaseModel):

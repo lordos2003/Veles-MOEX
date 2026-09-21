@@ -10,12 +10,15 @@ from app.strategies.config import (
     Direction,
     EntryConfig,
     ExitConfig,
+    ExitMode,
     FixedPercentageTP,
     MultiTakeTP,
     RiskConfig,
     SignalOffsetReference,
+    SignalStopLossConfig,
     SignalTP,
     StopLossConfig,
+    StopLossReference,
     StrategyConfig,
     TakeItem,
     TPConfig,
@@ -34,7 +37,13 @@ from app.strategies.dca_grid import (
 from app.strategies.domain import EntrySignal, ExitPlan, GridOrder, MarketContext, Plan
 from app.strategies.engine import StrategyEngine
 from app.strategies.entry import EntryEngine
-from app.strategies.exit import ExitEngine
+from app.strategies.exit import (
+    ExitDecision,
+    ExitEngine,
+    ExitExecution,
+    ExitState,
+    ExitType,
+)
 from app.strategies.filters import (
     Argument,
     CalculationMethod,
@@ -65,7 +74,12 @@ __all__ = [
     "EntryEngine",
     "EntrySignal",
     "ExitConfig",
+    "ExitDecision",
     "ExitEngine",
+    "ExitExecution",
+    "ExitMode",
+    "ExitState",
+    "ExitType",
     "ExitPlan",
     "FilterCondition",
     "FilterEvaluator",
@@ -84,9 +98,11 @@ __all__ = [
     "Plan",
     "RiskConfig",
     "SignalOffsetReference",
+    "SignalStopLossConfig",
     "SignalTP",
     "Snapshot",
     "StopLossConfig",
+    "StopLossReference",
     "StrategyConfig",
     "StrategyEngine",
     "TakeItem",
