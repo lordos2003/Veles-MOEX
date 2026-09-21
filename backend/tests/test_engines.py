@@ -73,11 +73,12 @@ def test_strategy_methods_not_implemented() -> None:
     # Entry without market snapshot -> no signal (not a NotImplementedError).
     assert entry.evaluate(EntryConfig(), Direction.LONG, MarketContext()) is None
 
-    # DCA/Grid mechanics are still a later stage (MVP-4).
-    with pytest.raises(NotImplementedError):
-        dca.build_grid(DCAGridConfig(), 100.0)
-    with pytest.raises(NotImplementedError):
-        dca.recalculate(DCAGridConfig(), 10.0, 100.0)
+    # DCA/Grid (MVP-4) builds a deterministic grid state.
+    from decimal import Decimal
+
+    state = dca.build(DCAGridConfig(), Decimal("100"), Direction.LONG)
+    assert state is not None and len(state.levels) == 1
+    assert state.active_orders()
 
     # Exit recalculation after averaging is a later stage.
     with pytest.raises(NotImplementedError):

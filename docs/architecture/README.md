@@ -126,6 +126,38 @@ Strategy Engine и исполняет сделки через `BacktestBroker`. 
 - `BacktestBroker`/`BacktestEngine` и `Strategy Engine` не импортируют
   `brokers/tinvest`/`TInvestAdapter`.
 
+## Реализованный слой DCA / Grid (MVP-4)
+
+Veles-совместимый DCA/Grid движок, broker-agnostic:
+
+- **TradingMode**: `SIMPLE` / `CUSTOM` / `SIGNAL`; `Direction` Long/Short.
+- **SIMPLE**: Перекрытие изменения цены (диапазон между первым и последним
+  ордером сетки), Сетка ордеров (число уровней, первый ордер — часть сетки),
+  Отступ первого ордера (Long ниже, Short выше; 0 = market), фиксированное
+  распределение, % Мартингейла (номинал каждого следующего ордера =
+  предыдущий × (1 + percent/100), считается в валюте, не в количестве),
+  логарифмическое распределение (коэффициент 1 = линейно, >1 плотнее у цены
+  входа, <1 плотнее к дальнему краю), частичное выставление (active limit),
+  подтяжка сетки (pull-up; игнорируется для market-первого ордера).
+- **CUSTOM**: явный список уровней (offset + nominal %), валидация монотонности
+  офсетов и положительности номинала; одиночный ордер 100% — валиден.
+- **SIGNAL**: первый ордер market при offset=0, limit при offset>0; последующие
+  усреднения — market, требуют сигнал + минимальный офсет (от предыдущего
+  ордера или от reference). Переиспользуются Filters/Signals из Task №5.
+- Доменные модели: `GridLevel`, `GridOrderPlan`, `DCAOrder`, `GridState`; матем.
+  маппинг цен изолирован в `GridPriceDistribution`.
+- Средняя цена пересчитывается взвешенно: `sum(quantity_i*price_i)/sum(quantity_i)`;
+  после каждого DCA состояние сетки обновляется (выполненный уровень
+  неизменяем, следующий ожидающий становится активным), средняя цена —
+  авторитетная база для тейк-профита (полный Exit Engine — позже).
+- **Backtest-интеграция**: SIMPLE/CUSTOM сетка исполняется лимитными DCA-ордерами
+  по существующему детерминированному OHLC-правилу; позиция усредняется,
+  TP перевыставляется от новой средней цены. SIGNAL-усреднения реализованы на
+  уровне движка (market DCA по сигналу в bar-loop не моделируется).
+- Не реализовано (следующие этапы): Multi-Take, Signal TP, Break-Even, Stop
+  Loss, Trailing, live trading, Order recovery, Risk Manager, optimizer,
+  partial fills, tick engine.
+
 ## Remarks
 
 - Direct MOEX API (ASTS/FIX/TWIME), Paper Trading, a second broker and

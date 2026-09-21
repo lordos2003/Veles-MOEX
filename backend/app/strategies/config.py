@@ -22,6 +22,29 @@ class Direction(StrEnum):
     SHORT = "SHORT"
 
 
+class TradingMode(StrEnum):
+    SIMPLE = "simple"
+    CUSTOM = "custom"
+    SIGNAL = "signal"
+
+
+class SignalOffsetReference(StrEnum):
+    PREVIOUS_ORDER = "previous_order"
+    REFERENCE = "reference"
+
+
+class CustomLevel(BaseModel):
+    """One explicit averaging level in CUSTOM mode.
+
+    ``offset_percent`` is the distance from the reference entry price in the
+    averaging direction; ``nominal_percent`` is the order nominal as a
+    percentage of the base nominal (100 = full-size single order).
+    """
+
+    offset_percent: float
+    nominal_percent: float = Field(gt=0)
+
+
 class EntryConfig(BaseModel):
     """Entry conditions (Veles-style filters/signals)."""
 
@@ -31,8 +54,14 @@ class EntryConfig(BaseModel):
 
 
 class DCAGridConfig(BaseModel):
-    """DCA / Grid configuration (Architecture & Product Specification section 5)."""
+    """DCA / Grid configuration (Architecture & Product Specification section 5).
 
+    SIMPLE mode derives a limit-order grid from the parameters below. CUSTOM
+    mode uses ``custom_levels``. SIGNAL mode uses the first order plus a signal
+    filter for subsequent market averaging orders.
+    """
+
+    mode: TradingMode = TradingMode.SIMPLE
     levels: int = Field(default=1, ge=1)
     overlap_percent: float = 0.0
     spacing_percent: float = 0.0
@@ -40,6 +69,14 @@ class DCAGridConfig(BaseModel):
     logarithmic_factor: float = 1.0
     first_order_offset_percent: float = 0.0
     pull_up_percent: float = 0.0
+    # Partial grid: max simultaneously active/eligible grid orders.
+    active_limit: int | None = None
+    # --- CUSTOM mode ---
+    custom_levels: list[CustomLevel] = Field(default_factory=list)
+    # --- SIGNAL mode ---
+    signal_groups: list[FilterGroup] = Field(default_factory=list)
+    signal_offset_type: SignalOffsetReference = SignalOffsetReference.REFERENCE
+    signal_min_offset_percent: float = 0.0
 
 
 class TakeItem(BaseModel):

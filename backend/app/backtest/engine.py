@@ -6,14 +6,20 @@ Specification section 11). The engine steps through chronological historical
 candles; the Strategy Engine never knows it is a backtest.
 
 Timing (Veles): a signal formed on bar N close executes at bar N+1 open. Only
-``at_bar_close`` is supported; ``per_minute`` is out of scope for MVP-3. No
-future data is used to compute a signal.
+``at_bar_close`` is supported; ``per_minute`` is out of scope. No future data is
+used to compute a signal.
 
-The result is fully deterministic given a |BacktestConfig|.
+DCA / Grid (MVP-4): after the initial market entry, SIMPLE and CUSTOM grids are
+armed as deterministic limit orders. A DCA level fills via the existing OHLC
+limit rule, the position is averaged (weighted), grid state advances and the
+take-profit limit is re-armed from the new average price. SIGNAL-mode averaging
+is exercised at the engine level only (market DCA on signals is not simulated
+in the bar loop here).
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 
 from app.backtest.broker import BacktestBroker
@@ -21,7 +27,8 @@ from app.backtest.config import BacktestConfig
 from app.backtest.models import BacktestDeal, BacktestResult
 from app.domain.marketdata import Candle
 from app.strategies.bars import Bar, BarSeries, Snapshot
-from app.strategies.config import Direction
+from app.strategies.config import Direction, TradingMode
+from app.strategies.dca_grid import DCAGridEngine, GridState
 from app.strategies.domain import MarketContext
 from app.trading.engine import TradingEngine
 
@@ -30,10 +37,8 @@ class BacktestEngine:
     """Runs a strategy over historical data via the shared Strategy Engine."""
 
     def __init__(self, trading_engine: TradingEngine) -> None:
-        # The injected Trading Engine must be wired to a BacktestBroker; only its
-        # factory Strategy Engine is used to produce signals, so Live and
-        # Backtest share the exact same trading logic.
         self.trading_engine = trading_engine
+        self._grid_engine = DCAGridEngine()
 
     @property
     def _strategy(self):
@@ -60,30 +65,70 @@ class BacktestEngine:
         equity_curve: list[Decimal] = []
 
         pending_entry = None
-        entry_fill = None
         tp_order_id: str | None = None
+        grid_state: GridState | None = None
+        dca_order_ids: dict[int, str] = {}
+
+        # Position bookkeeping for the current trade.
+        entry_fill = None
+        pos_qty = Decimal("0")
+        pos_avg = Decimal("0")
+        pos_entry_time: datetime | None = None
+        pos_fees = Decimal("0")
+        pos_fill_count = 0
 
         for candle in candles:
             # (A) Execute a market entry signalled on the previous bar's close.
             if pending_entry is not None and not broker.is_open():
-                side = pending_entry.direction
                 qty = config.quantity
                 broker.execute_market(
-                    side, qty, price=Decimal(candle.open), timestamp=candle.timestamp
+                    pending_entry.direction,
+                    qty,
+                    price=Decimal(candle.open),
+                    timestamp=candle.timestamp,
                 )
-                fills = broker.deals()
-                entry_fill = fills[-1] if fills else None
+                entry_fill = broker.deals()[-1] if broker.deals() else None
                 pending_entry = None
-                # (B) compute TP from the actual average price and arm it as a limit.
-                self._arm_take_profit(broker, config, direction, qty, candle)
-                tp_order_id = self._last_tp_order_id
+                pos_qty = qty
+                pos_avg = broker.average_price()
+                pos_entry_time = candle.timestamp
+                pos_fees = entry_fill.commission if entry_fill else Decimal("0")
+                pos_fill_count = 1
+                tp_order_id = self._place_take_profit(broker, config, direction, candle, None)
+                grid_state, dca_order_ids = self._init_grid(
+                    broker, config, direction, candle
+                )
 
-            # (C) Fill pending limit (the take-profit) using the current bar.
+            # (C) Fill pending limit orders (DCA levels and take-profit).
             for deal in broker.on_bar(candle):
                 if deal.order_id == tp_order_id and not broker.is_open() and entry_fill is not None:
-                    deals.append(self._build_deal(entry_fill, deal, direction, len(deals) + 1))
+                    deals.append(
+                        self._build_deal(
+                            deal,
+                            direction,
+                            pos_avg,
+                            pos_qty,
+                            pos_entry_time,
+                            pos_fees + deal.commission,
+                            pos_fill_count + 1,
+                            len(deals) + 1,
+                        )
+                    )
                     entry_fill = None
                     tp_order_id = None
+                    grid_state = None
+                    dca_order_ids = {}
+                elif grid_state is not None:
+                    idx = self._match_dca_level(dca_order_ids, deal.order_id)
+                    if idx is not None:
+                        self._on_dca_fill(broker, grid_state, idx, dca_order_ids, config, candle)
+                        pos_avg = broker.average_price()
+                        pos_qty = abs(broker.position_quantity())
+                        pos_fees += deal.commission
+                        pos_fill_count += 1
+                        tp_order_id = self._place_take_profit(
+                            broker, config, direction, candle, tp_order_id
+                        )
 
             # (D) Evaluate the strategy at this bar's close (no future data).
             bar_series.bars.append(self._to_bar(candle))
@@ -100,55 +145,88 @@ class BacktestEngine:
             broker.set_price(Decimal(candle.close))
             equity_curve.append(broker.equity())
 
-        return self._build_result(
-            config, broker, direction, deals, equity_curve, entry_fill
-        )
+        return self._build_result(config, broker, direction, deals, equity_curve)
 
-    def _arm_take_profit(
-        self,
-        broker: BacktestBroker,
-        config: BacktestConfig,
-        direction: Direction,
-        qty: Decimal,
-        candle: Candle,
+    def _init_grid(self, broker, config, direction, candle):
+        """Build the grid after the initial entry; arm active limit DCA levels."""
+        dca = config.strategy.dca_grid
+        if dca.mode not in (TradingMode.SIMPLE, TradingMode.CUSTOM):
+            return None, {}
+        if dca.mode == TradingMode.SIMPLE and dca.levels <= 1:
+            return None, {}
+        if dca.mode == TradingMode.CUSTOM and not dca.custom_levels:
+            return None, {}
+
+        reference = broker.average_price()
+        base_nominal = abs(broker.position_quantity()) * reference
+        state = self._grid_engine.build(dca, reference, direction, base_nominal=base_nominal)
+        state.average_price = reference
+        self._grid_engine.on_fill(state, 0)
+        orders: dict[int, str] = {}
+        self._place_dca_orders(broker, state, orders, candle)
+        return state, orders
+
+    def _place_dca_orders(self, broker, state: GridState, orders: dict[int, str], candle) -> None:
+        for plan in state.active_orders():
+            if plan.is_market or plan.level_index in orders or plan.price is None:
+                continue
+            order = broker.place_limit(
+                plan.side, plan.quantity, plan.price, timestamp=candle.timestamp
+            )
+            orders[plan.level_index] = order.order_id
+
+    @staticmethod
+    def _match_dca_level(dca_order_ids: dict[int, str], order_id: str) -> int | None:
+        for idx, oid in dca_order_ids.items():
+            if oid == order_id:
+                return idx
+        return None
+
+    def _on_dca_fill(
+        self, broker, state: GridState, idx: int, dca_order_ids: dict[int, str], config, candle
     ) -> None:
+        self._grid_engine.on_fill(state, idx)
+        state.average_price = broker.average_price()
+        self._place_dca_orders(broker, state, dca_order_ids, candle)
+
+    def _place_take_profit(self, broker, config, direction, candle, previous_order_id):
+        if previous_order_id is not None:
+            broker.cancel(previous_order_id)
         avg = broker.average_price()
+        qty = abs(broker.position_quantity())
         plans = self._strategy.exit_engine.build_exit_orders(
             config.strategy.exit, direction, avg, qty
         )
-        self._last_tp_order_id = None
         if plans and plans[0].price is not None:
             order = broker.place_limit(
                 plans[0].side, qty, plans[0].price, timestamp=candle.timestamp
             )
-            self._last_tp_order_id = order.order_id
+            return order.order_id
+        return None
 
     @staticmethod
-    def _build_deal(entry_fill, exit_fill, direction: Direction, seq: int) -> BacktestDeal:
+    def _build_deal(
+        exit_fill, direction, entry_price, quantity, entry_time, fees, executed_orders, seq
+    ) -> BacktestDeal:
         exit_price = exit_fill.price
-        entry_price = entry_fill.price
-        qty = entry_fill.quantity
         if direction == Direction.SHORT:
-            gross = (entry_price - exit_price) * qty
+            gross = (entry_price - exit_price) * quantity
         else:
-            gross = (exit_price - entry_price) * qty
-        fees = entry_fill.commission + exit_fill.commission
+            gross = (exit_price - entry_price) * quantity
         net = gross - fees
-        exit_time = exit_fill.happened_at
-        entry_time = entry_fill.happened_at
         return BacktestDeal(
             deal_id=f"trade-{seq}",
             direction=direction,
             entry_time=entry_time,
-            exit_time=exit_time,
+            exit_time=exit_fill.happened_at,
             entry_price=entry_price,
             exit_price=exit_price,
-            quantity=qty,
+            quantity=quantity,
             gross_pnl=gross,
             fees=fees,
             net_pnl=net,
-            duration=exit_time - entry_time,
-            executed_orders=2,
+            duration=exit_fill.happened_at - entry_time,
+            executed_orders=executed_orders,
         )
 
     @staticmethod
@@ -182,7 +260,7 @@ class BacktestEngine:
         )
 
     @staticmethod
-    def _build_result(config, broker, direction, deals, equity_curve, entry_fill) -> BacktestResult:
+    def _build_result(config, broker, direction, deals, equity_curve) -> BacktestResult:
         gross = sum((d.gross_pnl for d in deals), Decimal("0"))
         net = sum((d.net_pnl for d in deals), Decimal("0"))
         fees = sum((d.fees for d in deals), Decimal("0"))
