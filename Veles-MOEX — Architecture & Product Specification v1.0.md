@@ -32,22 +32,98 @@ Main blocks:
 - Risk
 - Advanced
 
-Condition logic:
-- AND
-- OR
-- NOT
-- nested groups
+### 3.1 Veles-compatible strategy model
+
+Veles Help Center is the functional and terminology reference. The strategy model must reproduce Veles behavior where the feature exists in Veles; MOEX/T-Invest differences are adapted only where technically necessary.
+
+The user-facing Entry model is based on Veles-style **Filters / Signals**, not on a generic arbitrary expression tree.
+
+A Veles-style comparison Filter has:
+- Argument 1
+- Operator
+- Argument 2
+
+Arguments may represent:
+- templates
+- configurable indicators
+- signals
+- TradingView sources
+- partner signals
+- constants
+
+A Signal Filter is a distinct form of condition and does not have to be represented as a generic left/operator/right comparison.
+
+### 3.2 Operators and signal semantics
+
+Operators must preserve the distinction documented by Veles:
+- greater than
+- less than
+- crossing upward
+- crossing downward
+
+Relational operators such as greater/less remain active while the condition is true.
+
+Crossing operators represent an event at the crossing, rather than a persistent state.
+
+### 3.3 Filter groups
+
+The user-facing Veles grouping model is:
+- conditions inside one group are combined with **AND / И**
+- groups are combined with **OR / ИЛИ**
+
+For example:
+
+(A AND B) OR C
+
+Do not replace this user-facing model with arbitrary nested AND/OR/NOT expression trees.
+
+Internal implementation may use an evaluator abstraction, but the persisted strategy model and UI must preserve the Veles-style Filter/Group structure and semantics.
+
+### 3.4 Timeframe and calculation method
+
+Each indicator/filter argument may have its own timeframe/interval and supported configuration such as period, method and shift.
+
+Entry evaluation must support the Veles-style calculation methods:
+- **At bar close** — evaluate using the closed candle; a condition met at close can trigger action on the next candle.
+- **Once per minute** — evaluate inside the current candle once per minute.
+
+Multi-timeframe signal state must be preserved. A higher-timeframe signal can remain active during its timeframe interval and combine with a lower-timeframe signal when the configured conditions match.
+
+This stateful signal behavior is part of the Strategy Engine and must not be reduced to a stateless evaluation of only the current candle.
+
+### 3.5 Initial indicator modules
 
 Initial indicator modules:
-RSI, SMA, EMA, MACD, Bollinger Bands, ATR, CCI, Williams %R, CMO, MFI, Stochastic, ADX.
+- RSI
+- SMA
+- EMA
+- MACD
+- Bollinger Bands
+- ATR
+- CCI
+- Williams %R
+- CMO
+- MFI
+- Stochastic
+- ADX
 
 The indicator library must be extensible without changing the Strategy Engine.
 
 ## 4. Entry Engine
 
-Entry Engine evaluates opening conditions and produces trading signals.
+Entry Engine evaluates opening Filters / Signals according to the Veles-compatible model above and produces trading signals.
 
 It does not send broker orders.
+
+The Entry Engine must preserve:
+- filter arguments
+- operators
+- filter groups
+- calculation method
+- timeframe
+- shift
+- persistent higher-timeframe signal state
+- Long / Short direction
 
 ## 5. DCA / Grid Engine
 
@@ -314,9 +390,15 @@ Charts:
 - basic Web UI
 
 ### MVP-2 — Strategy Engine
-- Entry
+- Veles-compatible Entry model
+- Veles-style Filters / Signals
+- Filter arguments
+- comparison operators and crossing operators
+- Filter Groups: AND inside group, OR between groups
+- calculation methods: bar close / once per minute
+- timeframe and shift
+- multi-timeframe signal state
 - basic indicators
-- conditions
 - Long / Short
 - basic Exit
 
@@ -383,4 +465,6 @@ Potential later features:
 4. Historical strategy versions must remain reproducible.
 5. Financial parameters are not tuned autonomously by the coding agent.
 6. Architecture decisions are made before implementation tasks are delegated to OpenCode.
-7. Veles Help Center is the functional and terminology reference; MOEX/T-Invest constraints determine the implementation details.
+7. **Veles Help Center is the functional and terminology reference. The Veles user model is reproduced first; MOEX/T-Invest constraints determine only the required adaptations.**
+8. **Do not introduce a generic trading-rule abstraction when Veles already defines the corresponding user-facing behavior.**
+9. **Before implementing any new strategy feature, verify its Veles behavior against the current Veles Help Center.**
