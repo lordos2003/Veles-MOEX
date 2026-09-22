@@ -2,13 +2,15 @@
 
 ## 1. Goal
 
-Create a web platform for algorithmic trading of MOEX instruments through T-Invest API, functionally comparable to Veles, but adapted to the Russian market.
+Create a web platform for algorithmic trading of MOEX instruments through T-Invest, functionally comparable to Veles, but adapted to the Russian market.
+
+T-Invest is the single broker integration in the MVP. The application must support both documented T-Invest connection transports — Open API and T-Invest MCP — as alternative transports for the same broker. Choosing MCP does not introduce a second broker or a second trading model.
 
 Direct MOEX APIs (ASTS/FIX/TWIME) are not used initially.
 
 ## 2. Architecture
 
-Browser/Web UI → REST/WebSocket → FastAPI → Strategy Engine / Backtest Engine / Trading Engine → Order Manager → Position Manager → Risk Manager → Broker Adapter → TInvest Adapter → T-Invest API → MOEX.
+Browser/Web UI → REST/WebSocket → FastAPI → Strategy Engine / Backtest Engine / Trading Engine → Order Manager → Position Manager → Risk Manager → Broker Adapter → selected T-Invest transport (Open API or MCP) → MOEX.
 
 Infrastructure:
 - PostgreSQL — persistent data
@@ -248,20 +250,28 @@ The strategy cannot bypass Risk Manager.
 
 ## 10. Broker Adapter
 
-Use an abstraction:
+T-Invest is the **single broker** in MVP. Open API and MCP are two transports of that one broker connection.
 
-BrokerAdapter → TInvestAdapter
+Use the abstraction:
 
-Strategy Engine must not depend on T-Invest specifics.
+BrokerAdapter
+├── TInvestAdapter      → T-Invest Open API
+└── TInvestMcpAdapter   → T-Invest MCP
 
-This allows additional brokers later without rewriting strategies.
+A transport/factory selected by user configuration chooses one implementation at runtime. Strategy Engine, Backtest Engine, Trading Engine, Order Manager, Position Manager and Risk Manager must not depend on the selected transport.
+
+Both adapters must expose the same broker-agnostic DTOs and order lifecycle. MCP-specific protocol objects must not leave the broker integration layer.
+
+The current read-only implementation remains `TInvestAdapter` over Open API. `TInvestMcpAdapter` is an explicit integration boundary to be implemented before MCP is exposed as an executable user option. This avoids pretending that MCP support is already production-ready while preserving the architecture for both transports.
+
+Official T-Invest MCP endpoint: `https://invest-public-api.tbank.ru/mcp`. T-Bank documents HTTP Streamable transport and Bearer authentication for it.
 
 ## 11. Backtest Engine
 
 Backtest and Live use the same Strategy/Trading Engine.
 
 Live:
-Trading Engine → TInvestAdapter
+Trading Engine → BrokerAdapter → selected T-Invest transport (Open API or MCP)
 
 Backtest:
 Trading Engine → BacktestBroker
@@ -380,7 +390,7 @@ Charts:
 ## 16. MVP Roadmap
 
 ### MVP-1 — Broker & Market Data
-- T-Invest connection
+- T-Invest connection (single broker; user-selectable Open API or MCP transport)
 - account
 - instruments
 - market data
@@ -451,7 +461,7 @@ Potential later features:
 - microservices
 - mobile application
 - HFT
-- multiple brokers
+- multiple brokers (T-Invest remains the single MVP broker)
 - AI strategy generator
 - strategy optimizer
 - huge indicator library
