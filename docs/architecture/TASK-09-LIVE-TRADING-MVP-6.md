@@ -530,4 +530,77 @@ done.
   cannot be produced by the sandbox, so partial-fill and idempotency behaviour is
   covered by deterministic unit tests / a fake client.
 
+## 24. Real Open API transport — MVP-6.2.1
+
+This section records the *real* T-Invest Open API transport wired into the
+broker-neutral execution boundary. It reports factual implementation status and
+does not claim live verification that was not performed.
+
+### Unary calls (real REST gateway)
+
+The existing `TInvestAdapter` issues real HTTP calls through `TInvestClient`
+(httpx) to the REST gateway, using the documented service paths:
+
+- `OrdersService/PostOrder` (`place_order`)
+- `OrdersService/CancelOrder` (`cancel_order`)
+- `OrdersService/GetOrderState` (`get_order`)
+- `OrdersService/GetOrders` (`get_orders`)
+- `OperationsService/GetPortfolio` (`get_open_positions`, used for reconciliation;
+  it carries the average price required by the Position Manager)
+
+Request bodies use the real API JSON names (`accountId`, `instrumentId`,
+`quantity` in lots, `direction`, `orderType`, `orderId` = UUID idempotency key,
+`price` as `Quotation` for LIMIT). Domain quantity stays in units; the adapter
+converts `units / lot_size -> integer lots` and validates lot/tick constraints.
+
+### Streams (real JSON WebSocket)
+
+The official T-Invest WebSocket service exposes the gRPC streaming methods over
+JSON: `wss://invest-public-api.tbank.ru/ws/` (sandbox host alias resolvable via
+config). The concrete `TInvestWebSocketStreamTransport` implements the existing
+`TInvestStreamTransport` boundary:
+
+1. opens the WebSocket connection with `Authorization: Bearer <token>` and the
+   `Web-Socket-Protocol: json-proto` header;
+2. subscribes to `OrderStateStream` and `TradesStream` by sending the documented
+   requests (`{"accounts": [...], "pingDelayMs": ...}`);
+3. reads JSON frames (server `ping` frames count as keep-alive);
+4. normalizes the real camelCase field names (`orderState`,
+   `executionReportStatus`, `tradeId`, `dateTime`, `lotsRequested`, ...) to the
+   broker-neutral snake_case shape;
+5. yields normalized dicts to the existing `TInvestStreamManager`, which decodes
+   them into `OrderUpdate` / `TradeFill` and hands them to the `OrderManager`.
+
+If no frame is received within a configured timeout the connection is considered
+dead and an error is raised so the manager's exponential-backoff reconnect kicks
+in. After reconnect the manager performs unary recovery (`GetOrders`,
+`GetOrderState`-ish via order refresh, `GetOpenPositions`).
+
+### Authentication
+
+The token is read from configuration/environment (`VELES_TINVEST_TOKEN`), never
+from source. The WebSocket endpoint and the sandbox REST/WS hosts are selected by
+configuration (`tinvest_sandbox`, `tinvest_base_url`, `tinvest_stream_url`),
+not hardcoded.
+
+### Integration-test status
+
+- A live sandbox integration test is opt-in via the `integration` marker and is
+  **skipped** when no sandbox token is configured. It does not fake a pass.
+- As of this writing no T-Invest credentials/network token are available in the
+  environment, so the live sandbox verification was **not performed**. All
+  behaviour is covered by deterministic tests backed by the official documented
+  request/response contract (camelCase JSON fields) and a fake WebSocket source.
+
+### Verified quality gates
+
+- No T-Invest imports in `app/trading` (only broker-neutral `app.brokers.base`);
+- no `float` in the execution path (`Decimal` only, including `units <-> lots`
+  and Decimal `-> Quotation`);
+- `BESTPRICE` is not downgraded to `LIMIT`;
+- `_first_account_id()` is not used for live order operations;
+- one `trade_id` is applied exactly once (deduplication across
+  `OrderStateStream.trades` and `TradesStream`).
+
+
 

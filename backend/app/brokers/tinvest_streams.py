@@ -219,12 +219,14 @@ def _decode_order_state(order_state: dict) -> list[OrderUpdate | TradeFill]:
     order_id = order_state.get("order_id", "")
     idempotency_key = _uuid_or_none(order_state.get("order_request_id"))
     status = _stream_status_to_state(order_state.get("execution_report_status"))
+    status_info = order_state.get("status_info")
+    reject_info = status_info if isinstance(status_info, str) else None
     events.append(
         OrderUpdate(
             broker_order_id=order_id,
             status=status,
             idempotency_key=idempotency_key,
-            reject_info=order_state.get("status_info", {}).get("message"),
+            reject_info=reject_info,
             timestamp=_timestamp_to_datetime(order_state.get("completion_time"))
             or _timestamp_to_datetime(order_state.get("created_at")),
         )
