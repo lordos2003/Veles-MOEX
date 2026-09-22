@@ -599,8 +599,23 @@ not hardcoded.
   and Decimal `-> Quotation`);
 - `BESTPRICE` is not downgraded to `LIMIT`;
 - `_first_account_id()` is not used for live order operations;
-- one `trade_id` is applied exactly once (deduplication across
-  `OrderStateStream.trades` and `TradesStream`).
+- one `trade_id` is applied exactly once (deduplication across repeated
+  `OrderStateStream` messages).
+
+### Stream choice — OrderStateStream only
+
+> Для live execution MVP-6.2 используется T-Invest **OrderStateStream**.
+> Individual executions берутся из `orderState.trades[]`. **TradesStream не
+> используется**, поскольку T-Bank Dev Portal помечает его deprecated, а
+> OrderStateStream уже содержит необходимые execution events.
+
+This removes the need for an unconfirmed multiplexing of two stream operations
+on one WebSocket connection: the transport opens one connection and sends a
+single OrderStateStream subscription request (`{"accounts": [...],
+"pingDelayMs": ...}`). Executions come from `orderState.trades[]`. It is not
+claimed that TradesStream is technically impossible to use — it is simply not
+used, and the single OrderStateStream subscription is the documented,
+non-deprecated live source for order states and executions.
 
 
 

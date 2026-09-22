@@ -1,19 +1,21 @@
 """T-Invest streaming execution events (MVP-6.2).
 
-The T-Invest Open API exposes two server-side streams used for live execution:
+Live order/execution events are produced by the T-Invest **OrderStateStream**.
+Its ``order_state`` payload carries both the order state changes and the
+individual executions in ``order_state.trades[]``. TradesStream is not used for
+live execution (T-Bank Dev Portal marks it deprecated and points to
+OrderStateStream; and it is not documented how both streams share one WebSocket
+connection).
 
-- OrderStateStream  -> order-state changes (plus a list of trades on each state).
-- TradesStream      -> individual executions.
-
-This module turns their messages into broker-neutral events
+This module turns the stream messages into broker-neutral events
 (``OrderUpdate``, ``TradeFill``, ``PositionUpdate``) and delivers them to a
 broker-neutral handler (the OrderManager). It never leaks T-Invest message
 types above this layer.
 
 The transport (how bytes/JSON frames are read) is abstracted behind
 |TInvestStreamTransport| so that the manager can be driven deterministically in
-tests and a real WebSocket/gRPC transport can be plugged in later. Recovery
-after a reconnect is performed through the unary `BrokerAdapter` methods.
+tests and the real WebSocket transport can be plugged in. Recovery after a
+reconnect is performed through the unary `BrokerAdapter` methods.
 """
 
 from __future__ import annotations
@@ -68,9 +70,9 @@ class TInvestStreamTransport(ABC):
     """Transport seam: connects, (re)subscribes and yields parsed messages.
 
     Messages are returned as plain ``dict`` with the documented T-Invest JSON
-    structure (``order_state`` / ``order_trades`` / ``position`` / ``ping`` /
-    ``subscription``). A production transport maps the wire/payload format into
-    these dictionaries; tests inject a scripted transport.
+    structure (``order_state`` / ``position`` / ``ping`` / ``subscription``).
+    A production transport maps the wire/payload format into these dictionaries;
+    tests inject a scripted transport.
     """
 
     @abstractmethod
@@ -155,9 +157,6 @@ class TInvestStreamManager:
         if "order_state" in message:
             for event in _decode_order_state(message["order_state"]):
                 await self._deliver(event)
-        elif "order_trades" in message:
-            for event in _decode_trades(message["order_trades"]):
-                await self._deliver(event)
         elif "position" in message:
             event = _decode_position(message["position"])
             if event is not None:
@@ -234,15 +233,6 @@ def _decode_order_state(order_state: dict) -> list[OrderUpdate | TradeFill]:
     for trade in order_state.get("trades") or []:
         events.append(_trade_to_fill(trade, order_id, idempotency_key))
     return events
-
-
-def _decode_trades(order_trades: dict) -> list[TradeFill]:
-    """Decode a TradesStream ``order_trades`` message into individual fills."""
-    order_id = order_trades.get("order_id", "")
-    return [
-        _trade_to_fill(trade, order_id, None)
-        for trade in order_trades.get("trades") or []
-    ]
 
 
 def _trade_to_fill(trade: dict, broker_order_id: str, idempotency_key: str | None) -> TradeFill:

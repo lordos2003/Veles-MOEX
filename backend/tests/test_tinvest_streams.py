@@ -1,8 +1,8 @@
 """T-Invest stream manager (MVP-6.2) tests.
 
 Covers stream decoding into broker-neutral events, partial fills, deduplication
-of trades arriving from both OrderStateStream and TradesStream, manager
-dispatch, reconnect and unary recovery. No real network is used.
+of trades arriving in repeated OrderStateStream messages, manager dispatch,
+reconnect and unary recovery. No real network is used.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from app.brokers.tinvest_streams import (
     TInvestStreamTransport,
     _decode_order_state,
     _decode_position,
-    _decode_trades,
 )
 from app.models.enums import OrderSide, OrderStatus, OrderType
 from app.trading import OrderManager, OrderState, PositionManager
@@ -142,17 +141,22 @@ def test_decode_order_state_produces_update_and_fills() -> None:
     assert fills[0].price == Decimal("100")
 
 
-def test_decode_trades_produces_fills() -> None:
+def test_decode_trades_in_order_state() -> None:
+    """orderState.trades[] drives individual fills (the live execution source)."""
     msg = {
         "order_id": "broker-1",
+        "order_request_id": "8f4b2e0a-1f3e-4c7b-9a11-6c4d2e0a53b1",
+        "execution_report_status": "EXECUTION_REPORT_STATUS_FILL",
         "trades": [
             {"trade_id": "t1", "price": {"units": "101", "nano": 0}, "quantity": 15},
             {"trade_id": "t2", "price": {"units": "102", "nano": 0}, "quantity": 10},
         ],
     }
-    fills = _decode_trades(msg)
+    events = _decode_order_state(msg)
+    fills = [e for e in events if hasattr(e, "execution_id")]
     assert [f.execution_id for f in fills] == ["t1", "t2"]
     assert fills[0].quantity == Decimal("15")
+    assert fills[0].price == Decimal("101")
 
 
 def test_decode_position() -> None:
@@ -176,12 +180,28 @@ async def test_partial_fills_build_position() -> None:
     assert om.positions().get(FIGI).quantity == D("25")
 
 
-async def test_same_trade_from_two_streams_applied_once() -> None:
+async def test_same_trade_in_two_order_state_messages_applied_once() -> None:
     om = OrderManager(PlaceBroker(), PositionManager())
     order = await submit(om, quantity="25")
-    # The same trade_id arrives via TradesStream and OrderStateStream.trades.
-    om.on_trade_fill(_trade("t1", order.broker_order_id, 10, "100"))
-    om.on_trade_fill(_trade("t1", order.broker_order_id, 10, "100"))
+    # The same trade_id is delivered in two consecutive OrderStateStream messages.
+    mgr = TInvestStreamManager(RecoveryAdapter(), FakeStreamTransport([]), om, "acc-1")
+    for _ in range(2):
+        await mgr._dispatch(
+            {
+                "order_state": {
+                    "order_id": order.broker_order_id,
+                    "execution_report_status": "EXECUTION_REPORT_STATUS_PARTIALLYFILL",
+                    "trades": [
+                        {
+                            "trade_id": "t1",
+                            "price": {"units": "100", "nano": 0},
+                            "quantity": 10,
+                            "date_time": "2025-01-01T10:00:00Z",
+                        },
+                    ],
+                }
+            }
+        )
     assert order.filled_quantity == D("10")
     assert om.positions().get(FIGI).quantity == D("10")
 
@@ -200,7 +220,7 @@ def _trade(execution_id, broker_order_id, qty, price):
 # --- Stream manager dispatch ---
 
 
-async def test_stream_manager_dispatches_order_state_and_trades() -> None:
+async def test_stream_manager_dispatches_order_state() -> None:
     om = OrderManager(PlaceBroker(), PositionManager())
     order = await submit(om, quantity="25")
     transport = FakeStreamTransport(
@@ -215,8 +235,9 @@ async def test_stream_manager_dispatches_order_state_and_trades() -> None:
                 }
             },
             {
-                "order_trades": {
+                "order_state": {
                     "order_id": order.broker_order_id,
+                    "execution_report_status": "EXECUTION_REPORT_STATUS_FILL",
                     "trades": [
                         {"trade_id": "t2", "price": {"units": "102", "nano": 0}, "quantity": 15},
                     ],

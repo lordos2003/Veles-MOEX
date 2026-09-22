@@ -10,11 +10,19 @@ selected with the ``Web-Socket-Protocol: json`` header (use ``json-proto`` to
 get field names identical to the proto contracts). JSON can be sent in both
 camelCase and snake_case.
 
+Live order/execution events are taken from a single subscription:
+**OrderStateStream**. Its ``orderState`` payload carries both the order state
+and the individual executions in ``orderState.trades[]``, so it is the only
+live source used for execution accounting. TradesStream is not used here
+(T-Bank Dev Portal marks it deprecated and points to OrderStateStream; and it is
+not documented how both streams would be multiplexed on one connection).
+
 This module implements the real |TInvestStreamTransport| over that WebSocket
-service. It opens the connection, sends the subscription requests, decodes the
-JSON frames into the broker-neutral ``dict`` message shape consumed by
-|TInvestStreamManager|, and keeps the connection alive (server pings) while
-surfacing timeouts / disconnects so the stream manager can reconnect.
+service. It opens the connection, sends a single OrderStateStream subscription
+request, decodes the JSON frames into the broker-neutral ``dict`` message shape
+consumed by |TInvestStreamManager|, and keeps the connection alive (server
+pings) while surfacing timeouts, disconnects and ``rpcStatus`` errors so the
+stream manager can reconnect.
 
 No T-Invest types cross this boundary: only plain dictionaries are produced.
 """
@@ -28,6 +36,7 @@ import re
 from collections.abc import AsyncIterator
 from urllib.parse import urlparse
 
+from app.brokers.tinvest_errors import BrokerConnectionError
 from app.brokers.tinvest_streams import TInvestStreamTransport
 
 logger = logging.getLogger(__name__)
@@ -66,13 +75,14 @@ def build_stream_transport(url: str | None, token: str | None) -> TInvestWebSock
 
 
 class TInvestWebSocketStreamTransport(TInvestStreamTransport):
-    """Real T-Invest Open API WebSocket transport for order/trade streams.
+    """Real T-Invest Open API WebSocket transport (OrderStateStream only).
 
-    Connects to the WebSocket service, subscribes to OrderStateStream and
-    TradesStream for the given accounts, and yields normalized (snake_case)
-    message dicts. The server sends periodic ``ping`` frames; if no frame is
-    received within ``receive_timeout`` seconds the connection is considered
-    dead and an error is raised so the stream manager can reconnect.
+    Connects to the WebSocket service, subscribes to OrderStateStream for the
+    given account(s), and yields normalized (snake_case) message dicts. The
+    server sends periodic ``ping`` frames; if no frame is received within
+    ``receive_timeout`` seconds the connection is considered dead and an error
+    is raised so the stream manager can reconnect. ``rpcStatus`` error frames
+    are surfaced as broker connection errors.
     """
 
     def __init__(
@@ -105,8 +115,8 @@ class TInvestWebSocketStreamTransport(TInvestStreamTransport):
         )
         self._conn = conn
         request = json.dumps({"accounts": list(accounts), "pingDelayMs": self._ping_delay_ms})
-        # One subscription request per stream (order state + trades).
-        await conn.send(request)
+        # Single OrderStateStream subscription. The executions are carried in
+        # orderState.trades[], so no TradesStream subscription is needed.
         await conn.send(request)
 
     async def messages(self) -> AsyncIterator[dict]:
@@ -125,7 +135,15 @@ class TInvestWebSocketStreamTransport(TInvestStreamTransport):
             except json.JSONDecodeError:
                 logger.debug("ignoring non-JSON stream frame")
                 continue
-            yield normalize_json_keys(message)
+            message = normalize_json_keys(message)
+            if "rpc_status" in message:
+                status = message["rpc_status"]
+                code = status.get("code")
+                detail = status.get("message")
+                raise BrokerConnectionError(
+                    f"T-Invest stream error: {detail or code or 'unknown'}"
+                )
+            yield message
 
     async def close(self) -> None:
         conn = self._conn

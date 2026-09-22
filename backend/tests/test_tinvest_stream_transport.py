@@ -14,6 +14,8 @@ import json
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from app.brokers.tinvest_stream_transport import (
     TInvestWebSocketStreamTransport,
     normalize_json_keys,
@@ -103,13 +105,13 @@ def test_ws_url_from_base_url() -> None:
     )
 
 
-async def test_transport_sends_subscription_request() -> None:
+async def test_transport_sends_single_subscription_request() -> None:
     sent: list[str] = []
     conn = FakeWsConn([], sent=sent)
     transport = TInvestWebSocketStreamTransport(url="wss://x/ws/", token="tok")
     with patch("websockets.connect", new=AsyncMock(return_value=conn)):
         await transport.connect(["acc-1"])
-    assert len(sent) == 2
+    assert len(sent) == 1
     body = json.loads(sent[0])
     assert body["accounts"] == ["acc-1"]
     assert body["pingDelayMs"] == 10000
@@ -118,10 +120,36 @@ async def test_transport_sends_subscription_request() -> None:
 async def test_transport_requires_token() -> None:
     transport = TInvestWebSocketStreamTransport(url="wss://x/ws/")
     with patch("websockets.connect", new=AsyncMock(return_value=FakeWsConn([]))):
-        import pytest
-
         with pytest.raises(ValueError):
             await transport.connect(["acc-1"])
+
+
+async def test_transport_uses_bearer_auth_header() -> None:
+    sent: list[str] = []
+    conn = FakeWsConn([], sent=sent)
+    transport = TInvestWebSocketStreamTransport(url="wss://x/ws/", token="tok")
+    captured: dict = {}
+
+    async def fake_connect(url, **kwargs):
+        captured.update(kwargs)
+        return conn
+
+    with patch("websockets.connect", new=fake_connect):
+        await transport.connect(["acc-1"])
+    assert captured["additional_headers"]["Authorization"] == "Bearer tok"
+    assert captured["additional_headers"]["Web-Socket-Protocol"] == "json-proto"
+
+
+async def test_transport_raises_on_rpc_status_error() -> None:
+    from app.brokers.tinvest_errors import BrokerConnectionError
+
+    conn = FakeWsConn([json.dumps({"rpcStatus": {"code": 3, "message": "permission denied"}})])
+    transport = TInvestWebSocketStreamTransport(url="wss://x/ws/", token="tok")
+    with patch("websockets.connect", new=AsyncMock(return_value=conn)):
+        await transport.connect(["acc-1"])
+        with pytest.raises(BrokerConnectionError):
+            async for _message in transport.messages():
+                pass
 
 
 # --- real stream frame -> broker-neutral mapping ---
