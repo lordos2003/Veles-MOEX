@@ -192,122 +192,100 @@ If history diverges unexpectedly, stop and report it.
 
 ## REPORT
 
-Task MVP-6.3 — live synchronization, durable execution-state persistence,
-startup/reconnect reconciliation, and safe recovery.
+MVP-6.3 — CORRECTION applied. Implemented and committed on `master` over
+`3720b7c`; correction commit `b9869d9`.
 
-### 1. What was implemented
-- Added a broker-neutral `LiveStateStore` boundary (Protocol) plus
-  `LiveStateSnapshot` in `app.trading.state`, so durability never leaks
-  SQLAlchemy into the trading domain.
-- Added `SqlAlchemyLiveStateStore` in `app.persistence.execution_state`, mapping
-  the domain dataclasses (`ExecutionIntent`, `InternalOrder`, `Fill`,
-  `Position`) to new ORM tables.
-- Added ORM models in `app.models.live_execution`
-  (`live_intents`, `live_orders`, `live_fills`, `live_positions`) and Alembic
-  migration `0003_live_execution_state`.
-- Added `LiveRecoveryCoordinator` in `app.trading.recovery` that loads durable
-  state, reconciles active orders/positions against broker facts, persists the
-  reconciled snapshot, and returns `SAFE`/`BLOCKED`.
-- `OrderManager` gained `snapshot()`, `load_snapshot()`, `list_intents()` and
-  `_max_order_seq()`; `PositionManager` gained `load_state()`/`clear()`;
-  in-memory repositories gained `clear()`.
-- `ALLOWED_TRANSITIONS[UNKNOWN]` now permits resolving an unknown submission
-  outcome to a real broker state (strictly necessary for lost-response
-  recovery).
-- `BrokerOrder` gained `idempotency_key` and `TInvestAdapter._to_order`
-  populates it from `orderRequestId`, enabling lost-response resolution by
-  idempotency.
+### Correction changes (addresses all 5 review points)
+1. Startup recovery wired to the production composition/startup path: new
+   `LiveExecutionService` + `build_live_service()` composition, wired into
+   `app/main.py` lifespan behind `settings.live_trading_enabled`. `start()` runs
+   `LiveRecoveryCoordinator.recover()`; `submit()` is refused
+   (`LiveExecutionBlocked`) until recovery returns SAFE.
+2. Reconnect recovery wired into OrderStateStream: `TInvestStreamManager` gained
+   an optional `recovery` async hook invoked after connect + unary `_recover()`,
+   before any live event is dispatched (resubscribe -> unary reconciliation ->
+   full recovery -> resume). TradesStream remains unused.
+3. Reconciliation uses broker fill facts: `OrderUpdate` now carries
+   `filled_quantity = broker_order.executed_quantity` and
+   `average_fill_price = broker_order.price`, replacing stale local values.
+4. Positions are broker-authoritative: after applying broker open positions, any
+   local position the broker no longer reports is removed (`PositionManager.remove`),
+   so stale local positions do not survive.
+5. Missing executions are recovered from broker `get_deals()` and recorded into
+   the fill repository via `OrderManager.record_fill` (dedup by `deal_id`), so
+   executions between the last snapshot and recovery are not lost and are not
+   applied twice by later stream events.
 
-### 2. Files changed
-- backend/app/brokers/base.py (`BrokerOrder.idempotency_key`)
-- backend/app/brokers/tinvest.py (`_to_order` idempotency_key)
-- backend/app/models/__init__.py (export live models)
-- backend/app/models/live_execution.py (new)
-- backend/app/persistence/__init__.py (new)
-- backend/app/persistence/execution_state.py (new)
+### Files changed in the correction
+- backend/app/trading/live_execution.py (new: LiveExecutionService + build_live_service)
+- backend/app/main.py (lifespan startup recovery behind flag)
+- backend/app/core/config.py (`live_trading_enabled` flag)
+- backend/app/brokers/tinvest_streams.py (recovery hook on reconnect)
+- backend/app/trading/recovery.py (broker fill facts, stale-position removal,
+  `get_deals` fill recovery, blocked reason)
+- backend/app/trading/order_manager.py (`record_fill`, `find_by_broker`)
+- backend/app/trading/position_manager.py (`remove`)
 - backend/app/trading/__init__.py (exports)
-- backend/app/trading/domain.py (UNKNOWN transitions)
-- backend/app/trading/order_manager.py (snapshot / load_snapshot)
-- backend/app/trading/position_manager.py (load_state / clear)
-- backend/app/trading/recovery.py (new)
-- backend/app/trading/repository.py (Protocols + clear)
-- backend/app/trading/state.py (new)
-- backend/alembic/versions/0003_live_execution_state.py (new migration)
-- backend/tests/test_live_recovery.py (new, 13 tests)
+- backend/tests/test_live_recovery.py (5 new correction tests)
+- backend/tests/test_tinvest_streams.py (1 reconnect-recovery test)
 
-### 3. Persistence / repository design
-- Trading domain sits behind a `LiveStateStore` Protocol
-  (`save_snapshot`/`load_snapshot`). Default is `InMemoryLiveStateStore`;
-  production uses `SqlAlchemyLiveStateStore` (async session on the existing
-  PostgreSQL/ORM infra). No second persistence technology.
-- ORM tables are self-contained: canonical instrument identifier stored as a
-  string, no FK join to `accounts`/`instruments`, so the live state reloads
-  independently of the wider product ORM graph.
-- Money/quantity stays `Decimal` (`Numeric(20,8)`); enum fields persisted as
-  strings. `OrderManager`/`PositionManager` remain synchronous and
-  broker-neutral; durability is an explicit checkpoint
-  (`LiveRecoveryCoordinator.persist_snapshot`) rather than per-event async IO.
+### Persistence / repository design
+Unchanged from MVP-6.3: broker-neutral `LiveStateStore` boundary, in-memory
+default, `SqlAlchemyLiveStateStore` on the existing PostgreSQL/ORM infrastructure.
+No second persistence technology; trading domain stays SQLA-free; Decimal kept.
 
-### 4. Startup and reconnect reconciliation flow
-- `recover(account_id)` = load durable snapshot -> rebuild managers
-  (`load_snapshot`) -> query `get_orders`/`get_order` -> reconcile order status
-  (broker facts win) -> reconcile positions via `get_open_positions` -> persist
-  reconciled snapshot -> report `SAFE`/`BLOCKED`.
-- The same `recover()` path is used after a stream reconnect; the
-  OrderStateStream-only transport and its unary recovery are preserved
-  (no TradesStream reintroduced).
+### Startup and reconnect reconciliation flow
+- Startup: `main.py` lifespan (flag-guarded) builds the service and runs
+  `recover()`; if BLOCKED, `can_execute` is False and `submit()` raises. On
+  failure the service is disabled (the app still boots).
+- Reconnect: stream `_run_session()` = connect -> unary `_recover()` -> full
+  `recovery` hook -> dispatch live events.
+- `recover(account_id)`: load durable snapshot -> reconcile active orders using
+  broker facts (status + filled_quantity + average_fill_price) -> set positions
+  from broker open positions (dropping stale ones) -> recover fills from
+  `get_deals()` (dedup by `deal_id`) -> persist snapshot -> report SAFE/BLOCKED.
 
-### 5. Idempotency / lost-response handling
-- UUID idempotency key is preserved on every intent/order; `_find_duplicate` is
-  unchanged, so a lost response cannot trigger a blind duplicate submission.
-- If an order is `UNKNOWN`, recovery resolves it by matching broker orders on
-  `broker_order_id` or `idempotency_key`. If it cannot be resolved it is kept
-  `UNKNOWN` and recovery returns `BLOCKED`, blocking unsafe continuation.
+### Idempotency / lost-response handling
+UUID idempotency key preserved; `_find_duplicate` unchanged (no blind duplicate
+submission). An UNKNOWN order is resolved via broker order/idempotency match; if
+unresolved it stays UNKNOWN and recovery returns BLOCKED (submit gated).
 
-### 6. Tests and exact results
-New `tests/test_live_recovery.py` (13 deterministic tests) cover: persist and
-reload an active internal order; persist and reload fills; restart recovery that
-reconciles order+position to broker; broker order differs from stale local;
-broker position differs from stale local; duplicate trade applied exactly once;
-lost response resolved via broker query; unresolved order stays UNKNOWN and
-blocks; successful reconciliation allows resume; failed reconciliation blocks
-new execution; recovered DCA position keeps correct weighted average;
-persistence does not leak broker-specific objects and reloads into domain types.
-Uses fakes plus an in-memory SQLite store (aiosqlite, StaticPool); no real-money
-orders.
+### Tests and exact results
+New deterministic tests cover all 5 correction points:
+- `test_broker_fill_facts_replace_stale_local_values` (point 3)
+- `test_stale_local_position_removed_when_broker_closes` (point 4)
+- `test_missing_execution_recovered_and_not_double_applied` (point 5)
+- `test_startup_recovery_blocks_until_safe` / `test_startup_recovery_safe_allows_execution` (point 1)
+- `test_reconnect_runs_recovery_before_resume` (point 2)
 
-Full backend suite: `248 passed, 1 skipped` (baseline was `235 passed,
-1 skipped`; +13 new). The single skip is the opt-in live sandbox integration
-test (skipped because no credentials).
+Full backend suite: `254 passed, 1 skipped` (was `248 passed, 1 skipped`; +6).
+The single skip is the opt-in live sandbox integration test (no credentials).
 
-### 7. ruff result
+### ruff result
 `All checks passed!` (app + tests).
 
-### 8. npm build result
-`✓ built in 2.22s` (vite, 32 modules).
+### npm build result
+`✓ built in 2.18s` (vite, 32 modules).
 
-### 9. commit SHA
-`3720b7ca3548ae6339a5c7597c59923634f5ee77` — `feat: implement live state
-reconciliation and recovery` (branch `master`, NOT pushed).
+### commit SHA
+Correction commit `b9869d9a0998b47829513a038e309a6bb05e533a` —
+`fix: complete MVP-6.3 recovery wiring and broker-fact reconciliation`
+(branch `master`, NOT pushed), on top of `3720b7c`.
 
-### 10. Known limitations
-- `LiveRecoveryCoordinator` / `SqlAlchemyLiveStateStore` are implemented and
-  tested but NOT yet wired into a production composition root / app startup
-  (the app currently has no live-execution startup path; `app.api.deps` returns
-  a per-request `TInvestAdapter`). Wiring (DB session + store + coordinator and
-  checking `result.safe` before resuming) is left to a subsequent integration
-  step and is recorded here as a limitation, not a task failure.
-- Fill reconciliation on recovery relies on persisted fills plus stream
-  deduplication by `trade_id`, not a separate broker "get trades" query; T-Invest
-  executions arrive via OrderStateStream.
-- No live/real-sandbox verification was performed (no credentials/network),
-  consistent with earlier MVP-6.x reports.
+### Known limitations
+- `live_trading_enabled` defaults False; startup recovery wiring runs only when
+  enabled (preserves app boot without credentials/DB).
+- `BrokerOrder.executed_quantity`/`price` are used as the authoritative broker
+  facts provided by the adapter; note the documented unit representation of
+  `BrokerOrder` quantities (broker-native lots for T-Invest) vs the canonical
+  instrument units in the trading domain. Recovery treats the adapter DTO as the
+  source of truth; the adapter remains responsible for unit normalization.
+- No live/real-sandbox verification (no credentials/network), consistent with
+  earlier MVP-6.x reports.
 
-### 11. Divergence / blocked conditions
-- None. Implemented on top of the accepted baseline `8529bc0`; no merge or
-  rebase performed; `master` NOT pushed (ahead of `origin/master` by 1).
-- This report is published on `agent/control`; `## CHATGPT REVIEW` was not
-  modified.
+### Divergence / blocked conditions
+- None. No merge/rebase performed; `master` NOT pushed (ahead of
+  `origin/master` by 2). `## CHATGPT REVIEW` was not modified.
 ## CHATGPT REVIEW
 
 ### Результат независимой проверки
