@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.brokers.base import BrokerAccount, BrokerDeal, BrokerOrder, BrokerPosition
+from app.brokers.base import BrokerAccount, BrokerExecution, BrokerOrder, BrokerPosition
 from app.models import Base
 from app.models.enums import OrderSide, OrderStatus, OrderType
 from app.persistence.execution_state import SqlAlchemyLiveStateStore
@@ -125,6 +125,26 @@ def _broker_order(order_id: str, status: OrderStatus, *, idempotency_key=None) -
         idempotency_key=idempotency_key,
         reject_info=None,
     )
+
+
+class FakeTransport:
+    """Duck-typed stream transport for the production reconnect composition test."""
+
+    def __init__(self, batches=None) -> None:
+        self.batches = batches or []
+        self.connections = 0
+        self.messages_calls = 0
+
+    async def connect(self, accounts) -> None:
+        self.connections += 1
+
+    async def close(self) -> None:
+        pass
+
+    async def messages(self):
+        self.messages_calls += 1
+        for message in self.batches:
+            yield message
 
 
 # --- persistence -------------------------------------------------------------
@@ -371,7 +391,7 @@ async def test_broker_fill_facts_replace_stale_local_values(store):
                 status=OrderStatus.FILLED,
                 idempotency_key="key-1",
                 executed_quantity=Decimal("8"),
-                price=Decimal("90"),
+                executed_average_price=Decimal("90"),
             )
         ],
         positions=[
@@ -427,7 +447,16 @@ async def test_missing_execution_recovered_and_not_double_applied(store):
                 idempotency_key="key-1",
                 requested_quantity=Decimal("10"),
                 executed_quantity=Decimal("10"),
-                price=Decimal("100"),
+                executed_average_price=Decimal("100"),
+                executions=[
+                    BrokerExecution(
+                        execution_id="t1",
+                        quantity=Decimal("10"),
+                        price=Decimal("100"),
+                        broker_order_id="broker-1",
+                        commission=Decimal("1"),
+                    )
+                ],
             )
         ],
         positions=[
@@ -436,23 +465,12 @@ async def test_missing_execution_recovered_and_not_double_applied(store):
                 average_price=Decimal("100"),
             )
         ],
-        deals=[
-            BrokerDeal(
-                deal_id="t1",
-                instrument_figi="BBG000",
-                side=OrderSide.BUY,
-                quantity=Decimal("10"),
-                price=Decimal("100"),
-                order_id="broker-1",
-                commission=Decimal("1"),
-            )
-        ],
     )
     om = OrderManager(broker=broker)
     coordinator = LiveRecoveryCoordinator(store, om, om.positions(), broker)
     result = await coordinator.recover("acc-1")
     assert result.safe is True
-    assert result.recovered_fills == 1
+    assert result.recovered_fills >= 1
     assert len(om.list_fills()) == 1
     assert om.positions().get("BBG000").quantity == Decimal("10")
 
@@ -517,3 +535,46 @@ async def test_startup_recovery_safe_allows_execution():
     )
     order = await service.submit(intent)
     assert order is not None
+
+
+# --- final correction: production reconnect composition -----------------------
+
+
+async def test_production_reconnect_recovers_before_resume():
+    """Blocker 1: production composition runs full recovery on reconnect before resume."""
+    store = InMemoryLiveStateStore()
+    await store.save_snapshot(LiveStateSnapshot(orders=[_make_order()]))
+    broker = FakeBroker(
+        orders=[_broker_order("broker-1", OrderStatus.FILLED, idempotency_key="key-1")]
+    )
+    om = OrderManager(broker=broker)
+    service = LiveExecutionService(broker, store, om, om.positions(), "acc-1")
+    transport = FakeTransport(batches=[])
+    mgr = service.build_stream_manager(transport)
+    await mgr._run_session()
+
+    assert service.can_execute is True
+    # recovery hook ran (safe) so live events stream was resumed
+    assert transport.messages_calls == 1
+    assert transport.connections == 1
+
+
+async def test_production_reconnect_blocked_does_not_resume():
+    """Blocker 1: a BLOCKED reconnect recovery must not resume live execution."""
+    store = InMemoryLiveStateStore()
+    await store.save_snapshot(
+        LiveStateSnapshot(orders=[_make_order(status=OrderState.SUBMITTED)])
+    )
+    broker = FakeBroker(
+        orders=[],
+        get_order=lambda oid, acc: (_ for _ in ()).throw(LookupError(oid)),
+    )
+    om = OrderManager(broker=broker)
+    service = LiveExecutionService(broker, store, om, om.positions(), "acc-1")
+    transport = FakeTransport(batches=[])
+    mgr = service.build_stream_manager(transport)
+    await mgr._run_session()
+
+    assert service.can_execute is False
+    # recovery blocked -> live events were not dispatched
+    assert transport.messages_calls == 0

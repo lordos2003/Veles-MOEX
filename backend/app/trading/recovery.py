@@ -97,10 +97,11 @@ class LiveRecoveryCoordinator:
         }
 
         resolved_orders: list[InternalOrder] = []
+        recovered_fills = 0
         for order in list(self._order_manager.list_orders()):
             if order.status in TERMINAL_STATES:
                 continue
-            await self._reconcile_order(
+            recovered_fills += await self._reconcile_order(
                 order, account_id, by_broker_id, by_idempotency, resolved_orders
             )
         recovered_orders = 0
@@ -134,11 +135,12 @@ class LiveRecoveryCoordinator:
             )
             recovered_positions += 1
 
-        recovered_fills = 0
         for deal in await self._broker.get_deals(account_id):
             order = self._order_manager.find_by_broker(deal.order_id)
-            if order is None:
+            if order is None or order.status in TERMINAL_STATES:
                 continue
+            # Deals are recorded for dedup; order/position facts are already
+            # brought to broker state from the order executions above.
             self._order_manager.record_fill(
                 Fill(
                     fill_id=deal.deal_id,
@@ -170,7 +172,7 @@ class LiveRecoveryCoordinator:
         by_broker_id: dict,
         by_idempotency: dict,
         resolved_orders: list[InternalOrder],
-    ) -> None:
+    ) -> int:
         broker_order = self._match(order, by_broker_id, by_idempotency)
         if broker_order is None and order.broker_order_id:
             try:
@@ -187,22 +189,42 @@ class LiveRecoveryCoordinator:
                 )
             )
             resolved_orders.append(order)
-            return
+            return 0
         if order.broker_order_id is None and broker_order.order_id:
             order.broker_order_id = broker_order.order_id
         try:
+            # Recover executions missed between the last snapshot and recovery.
+            # apply_fill de-duplicates by execution id and updates the position.
+            recovered = 0
+            for execution in broker_order.executions:
+                ordered = self._order_manager.find_by_broker(broker_order.order_id)
+                if ordered is None:
+                    ordered = order
+                self._order_manager.apply_fill(
+                    Fill(
+                        fill_id=execution.execution_id,
+                        internal_order_id=ordered.order_id,
+                        quantity=execution.quantity,
+                        price=execution.price,
+                        fee=execution.commission,
+                        broker_execution_id=execution.execution_id,
+                        timestamp=execution.timestamp or datetime.now(UTC),
+                    )
+                )
+                recovered += 1
+            # Broker facts are authoritative for order fill/avg values.
             self._order_manager.on_order_update(
                 OrderUpdate(
                     broker_order_id=broker_order.order_id,
                     status=_ORDER_STATUS_TO_STATE.get(broker_order.status, OrderState.UNKNOWN),
                     idempotency_key=order.idempotency_key,
                     reject_info=broker_order.reject_info,
-                    # Broker facts replace stale local fill/avg values.
                     filled_quantity=broker_order.executed_quantity,
-                    average_fill_price=broker_order.price,
+                    average_fill_price=broker_order.executed_average_price,
                 )
             )
             resolved_orders.append(order)
+            return recovered
         except Exception:
             self._order_manager.on_order_update(
                 OrderUpdate(
@@ -212,6 +234,7 @@ class LiveRecoveryCoordinator:
                 )
             )
             resolved_orders.append(order)
+            return 0
 
     def _match(self, order, by_broker_id, by_idempotency):
         if order.broker_order_id and order.broker_order_id in by_broker_id:

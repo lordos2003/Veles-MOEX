@@ -57,6 +57,7 @@ class LiveExecutionService:
             if not accounts:
                 raise LiveExecutionBlocked("no broker account available for recovery")
             account_id = accounts[0].account_id
+        self._account_id = account_id
         result = await self._coordinator.recover(account_id)
         self._safe = result.safe
         return result
@@ -66,6 +67,33 @@ class LiveExecutionService:
         if not self._safe:
             raise LiveExecutionBlocked("live execution blocked until recovery succeeds")
         return await self._order_manager.submit(intent)
+
+    def build_stream_manager(self, transport):
+        """Compose an OrderStateStream manager whose reconnect runs full recovery.
+
+        On reconnect the stream manager runs unary recovery, then this recovery
+        hook (durable reconciliation); live events are dispatched only when it is
+        SAFE, otherwise they are paused.
+        """
+        from app.brokers.tinvest_streams import TInvestStreamManager
+
+        return TInvestStreamManager(
+            self._broker,
+            transport,
+            self._order_manager,
+            self._account_id,
+            recovery=self._stream_recovery,
+        )
+
+    async def _stream_recovery(self) -> bool:
+        """Full recovery used as the reconnect gate. Returns True when SAFE."""
+        account_id = self._account_id
+        if account_id is None:
+            accounts = await self._broker.get_accounts()
+            account_id = accounts[0].account_id if accounts else None
+        result = await self._coordinator.recover(account_id)
+        self._safe = result.safe
+        return result.safe
 
 
 def build_live_service() -> LiveExecutionService:

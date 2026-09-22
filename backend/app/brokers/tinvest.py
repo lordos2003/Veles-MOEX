@@ -18,6 +18,7 @@ from app.brokers.base import (
     BrokerAccount,
     BrokerAdapter,
     BrokerDeal,
+    BrokerExecution,
     BrokerInstrument,
     BrokerOrder,
     BrokerOrderRequest,
@@ -181,6 +182,50 @@ def _map_deal_side(operation_type: str | None) -> OrderSide | None:
     return None
 
 
+def _executed_average_price(raw: dict) -> Decimal | None:
+    """Volume-weighted average execution price per unit from official ``stages``.
+
+    Derived from the real ``stages[].price`` x ``stages[].quantity`` facts. The
+    quantity unit cancels in the ratio, so this is valid with lots or units.
+    Returns None when there are no execution facts.
+    """
+    total = Decimal("0")
+    total_qty = Decimal("0")
+    for stage in raw.get("stages") or []:
+        price = _quotation_to_decimal(stage.get("price"))
+        qty = Decimal(str(stage.get("quantity") or 0))
+        if price is None or qty == 0:
+            continue
+        total += price * qty
+        total_qty += qty
+    if total_qty == 0:
+        return None
+    return total / total_qty
+
+
+def _stages_to_executions(raw: dict, order_id: str, factor: Decimal) -> list[BrokerExecution]:
+    """Map T-Invest ``stages`` to canonical-unit broker executions."""
+    executions: list[BrokerExecution] = []
+    for stage in raw.get("stages") or []:
+        price = _quotation_to_decimal(stage.get("price"))
+        if price is None:
+            continue
+        qty = Decimal(str(stage.get("quantity") or 0)) * factor
+        executions.append(
+            BrokerExecution(
+                execution_id=stage.get("tradeId", stage.get("trade_id", "")),
+                quantity=qty,
+                price=price,
+                broker_order_id=order_id,
+                commission=_quotation_to_decimal(stage.get("commission")) or Decimal("0"),
+                timestamp=_timestamp_to_datetime(
+                    stage.get("executionTime") or stage.get("date_time")
+                ),
+            )
+        )
+    return executions
+
+
 class TInvestAdapter(BrokerAdapter):
     """BrokerAdapter implemented over the T-Invest read-only REST API."""
 
@@ -310,7 +355,7 @@ class TInvestAdapter(BrokerAdapter):
             account_id = await self._first_account_id()
         data = await client.call(f"{_ORDERS}/GetOrders", {"accountId": account_id})
         raw_orders = data.get("orders", [])
-        return [self._to_order(item, account_id) for item in raw_orders]
+        return [await self._to_order(item, account_id) for item in raw_orders]
 
     async def get_deals(self, account_id: str | None = None) -> list[BrokerDeal]:
         client = self._require_client()
@@ -382,7 +427,7 @@ class TInvestAdapter(BrokerAdapter):
             body["price"] = _decimal_to_quotation(request.price)
 
         data = await client.call(f"{_ORDERS}/PostOrder", body)
-        return self._to_order(data, request.account_id)
+        return await self._to_order(data, request.account_id, lot_size=lot_size)
 
     async def cancel_order(self, order_id: str, account_id: str | None = None) -> None:
         client = self._require_client()
@@ -412,7 +457,7 @@ class TInvestAdapter(BrokerAdapter):
             )
         except ResourceNotFoundError as exc:
             raise ResourceNotFoundError(f"Order not found: {order_id}") from exc
-        return self._to_order(data, account_id)
+        return await self._to_order(data, account_id)
 
     @staticmethod
     def _resolve_idempotency_key(idempotency_key: str) -> str:
@@ -499,31 +544,52 @@ class TInvestAdapter(BrokerAdapter):
             currency=currency,
         )
 
-    @staticmethod
-    def _to_order(raw: dict, account_id: str) -> BrokerOrder:
+    async def _to_order(
+        self, raw: dict, account_id: str, lot_size: int | None = None
+    ) -> BrokerOrder:
+        """Map a T-Invest order payload to a broker-neutral BrokerOrder.
+
+        ``lotsRequested``/``lotsExecuted`` are converted to canonical instrument
+        units using the instrument lot size. The executed average price and the
+        individual executions are derived from the official ``stages`` facts
+        (``price`` x ``quantity``), never from ``initialSecurityPrice``.
+        """
+        if lot_size is None and raw.get("figi"):
+            lot_size = await self._lot_size_for(raw["figi"])
+        factor = Decimal(lot_size) if lot_size else Decimal("1")
         requested = raw.get("lotsRequested") or 0
         executed = raw.get("lotsExecuted") or 0
-        updated_at = None
         stages = raw.get("stages") or []
+        order_id = raw.get("orderId", "")
+        updated_at = None
         if stages:
             updated_at = _timestamp_to_datetime(stages[-1].get("executionTime"))
         return BrokerOrder(
-            order_id=raw.get("orderId", ""),
+            order_id=order_id,
             account_id=account_id,
             instrument_figi=raw.get("figi"),
             ticker=raw.get("ticker"),
             status=_map_order_status(raw.get("executionReportStatus")),
             type=_map_order_type(raw.get("orderType")),
             side=_map_order_side(raw.get("direction")),
-            requested_quantity=Decimal(str(requested)),
-            executed_quantity=Decimal(str(executed)),
+            requested_quantity=Decimal(str(requested)) * factor,
+            executed_quantity=Decimal(str(executed)) * factor,
             price=_quotation_to_decimal(raw.get("initialSecurityPrice")),
+            executed_average_price=_executed_average_price(raw),
+            executions=_stages_to_executions(raw, order_id, factor),
             idempotency_key=raw.get("orderRequestId") or raw.get("order_request_id"),
             currency=raw.get("currency"),
             created_at=_timestamp_to_datetime(raw.get("orderDate")),
             updated_at=updated_at,
             reject_info=raw.get("message"),
         )
+
+    async def _lot_size_for(self, figi: str) -> int | None:
+        try:
+            instrument = await self.get_instrument(figi)
+            return instrument.lot_size
+        except Exception:  # noqa: BLE001 - best-effort normalization
+            return None
 
     @staticmethod
     def _operation_to_deals(item: dict, account_id: str) -> list[BrokerDeal]:
@@ -537,11 +603,18 @@ class TInvestAdapter(BrokerAdapter):
         currency = (item.get("commission") or {}).get("currency") or (
             item.get("payment") or {}
         ).get("currency")
+        order_id = (
+            item.get("orderId")
+            or item.get("order_id")
+            or item.get("orderRequestId")
+            or item.get("order_request_id")
+            or item.get("parentOrderId")
+        )
         return [
             BrokerDeal(
                 deal_id=item.get("id", ""),
                 account_id=account_id,
-                order_id=None,
+                order_id=order_id,
                 instrument_figi=figi,
                 side=side,
                 quantity=Decimal(str(quantity)),

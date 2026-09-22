@@ -308,8 +308,9 @@ async def test_reconnect_runs_recovery_before_resume() -> None:
     om = OrderManager(PlaceBroker(), PositionManager())
     recovery_calls: list[str] = []
 
-    async def recovery_hook() -> None:
+    async def recovery_hook() -> bool:
         recovery_calls.append("recovered")
+        return True
 
     adapter = RecoveryAdapter()
     transport = FakeStreamTransport(batches=[])

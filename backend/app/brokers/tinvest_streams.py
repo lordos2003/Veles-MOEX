@@ -105,7 +105,7 @@ class TInvestStreamManager:
         *,
         backoff: tuple[float, ...] = (1.0, 10.0, 60.0),
         max_backoff: float = 60.0,
-        recovery: Callable[[], Awaitable[None]] | None = None,
+        recovery: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
         self._adapter = adapter
         self._transport = transport
@@ -151,9 +151,14 @@ class TInvestStreamManager:
         logger.debug("stream connected for account %s", self._account_id)
         await self._recover()
         if self._recovery is not None:
-            # Full durable reconciliation (store -> broker facts -> resume gate)
-            # must complete before any live event is processed.
-            await self._recovery()
+            # Full durable reconciliation (store -> broker facts -> resume gate).
+            # Live events are only processed after a SAFE reconciliation.
+            safe = await self._recovery()
+            if not safe:
+                logger.warning(
+                    "recovery blocked; live events paused for account %s", self._account_id
+                )
+                return
         async for message in self._transport.messages():
             await self._dispatch(message)
 

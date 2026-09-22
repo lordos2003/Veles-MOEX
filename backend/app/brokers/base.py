@@ -82,12 +82,28 @@ class BrokerPosition:
 
 
 @dataclass
+class BrokerExecution:
+    """A single execution/fill associated with a broker order (canonical units)."""
+
+    execution_id: str
+    quantity: Decimal
+    price: Decimal
+    broker_order_id: str | None = None
+    commission: Decimal = Decimal("0")
+    timestamp: datetime | None = None
+
+
+@dataclass
 class BrokerOrder:
     """Broker-agnostic order (read-only).
 
-    ``requested_quantity`` / ``executed_quantity`` are expressed in the
-    broker's native unit (lots for T-Invest); live fill/position accounting
-    uses the canonical unit (units) via fill/position events instead.
+    ``requested_quantity`` / ``executed_quantity`` are expressed in **canonical
+    instrument units** (not broker lots). The adapter is responsible for
+    normalizing the broker's native representation (e.g. T-Invest lots) to units
+    before handing the DTO to the trading domain. ``executed_average_price`` is
+    the volume-weighted average execution price per unit (None when no
+    execution facts are available); ``price`` remains the order limit/initial
+    price.
     """
 
     order_id: str
@@ -100,6 +116,8 @@ class BrokerOrder:
     requested_quantity: Decimal = Decimal("0")
     executed_quantity: Decimal = Decimal("0")
     price: Decimal | None = None
+    executed_average_price: Decimal | None = None
+    executions: list[BrokerExecution] = field(default_factory=list)
     idempotency_key: str | None = None
     currency: str | None = None
     created_at: datetime | None = None

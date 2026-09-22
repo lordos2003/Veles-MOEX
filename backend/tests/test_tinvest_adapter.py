@@ -235,6 +235,9 @@ async def test_get_orders_normalized() -> None:
     fake = TInvestFakeClient(
         responses={
             _GET_ACCOUNTS: {"accounts": [{"id": "acc-1", "type": "ACCOUNT_TYPE_TINKOFF"}]},
+            _GET_INSTRUMENT: {
+                "instrument": {"figi": "BBG004730N88", "lot": 10, "instrumentType": "share"}
+            },
             _GET_ORDERS: {
                 "orders": [
                     {
@@ -249,7 +252,14 @@ async def test_get_orders_normalized() -> None:
                         "initialSecurityPrice": {"currency": "RUB", "units": "300", "nano": 0},
                         "currency": "RUB",
                         "orderDate": "2025-01-01T10:00:00Z",
-                        "stages": [{"executionTime": "2025-01-01T10:05:00Z"}],
+                        "stages": [
+                            {
+                                "executionTime": "2025-01-01T10:05:00Z",
+                                "tradeId": "trade-1",
+                                "quantity": 10,
+                                "price": {"currency": "RUB", "units": "300", "nano": 0},
+                            }
+                        ],
                     }
                 ]
             },
@@ -263,9 +273,14 @@ async def test_get_orders_normalized() -> None:
     assert order.status == OrderStatus.FILLED
     assert order.type == OrderType.LIMIT
     assert order.side == OrderSide.BUY
-    assert order.requested_quantity == Decimal("10")
-    assert order.executed_quantity == Decimal("10")
+    # lots are normalized to canonical units (10 lots * lot_size 10 = 100 units)
+    assert order.requested_quantity == Decimal("100")
+    assert order.executed_quantity == Decimal("100")
     assert order.price == Decimal("300")
+    assert order.executed_average_price == Decimal("300")
+    assert len(order.executions) == 1
+    assert order.executions[0].execution_id == "trade-1"
+    assert order.executions[0].quantity == Decimal("100")
     assert order.created_at is not None
     assert order.updated_at is not None
 
@@ -324,3 +339,61 @@ async def test_get_orders_maps_unknown_status_to_unknown() -> None:
     adapter = TInvestAdapter(client=fake)
     orders = await adapter.get_orders()
     assert orders[0].status == OrderStatus.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_executed_average_price_from_stages_not_initial() -> None:
+    """Blocker 2: executed average price comes from stages, not initial order price."""
+    fake = TInvestFakeClient(
+        responses={
+            _GET_ACCOUNTS: {"accounts": [{"id": "acc-1"}]},
+            _GET_INSTRUMENT: {
+                "instrument": {"figi": "BBG004730N88", "lot": 1, "instrumentType": "share"}
+            },
+            _GET_ORDERS: {
+                "orders": [
+                    {
+                        "orderId": "o1",
+                        "executionReportStatus": "EXECUTION_REPORT_STATUS_FILL",
+                        "lotsRequested": 10,
+                        "lotsExecuted": 10,
+                        "figi": "BBG004730N88",
+                        "direction": "ORDER_DIRECTION_BUY",
+                        "orderType": "ORDER_TYPE_LIMIT",
+                        "initialSecurityPrice": {"units": "100", "nano": 0},
+                        "currency": "RUB",
+                        "stages": [
+                            {"tradeId": "t1", "quantity": 6, "price": {"units": "110", "nano": 0}},
+                            {"tradeId": "t2", "quantity": 4, "price": {"units": "130", "nano": 0}},
+                        ],
+                    }
+                ]
+            },
+        }
+    )
+    adapter = TInvestAdapter(client=fake)
+    order = (await adapter.get_orders())[0]
+    assert order.price == Decimal("100")  # initial/limit order price
+    assert order.executed_average_price == Decimal("118")  # (110*6 + 130*4)/10
+    assert len(order.executions) == 2
+    assert order.executions[0].execution_id == "t1"
+
+
+@pytest.mark.asyncio
+async def test_operation_to_deals_correlates_broker_order() -> None:
+    """Blocker 3: BrokerDeal carries the real broker order id when available."""
+    item = {
+        "id": "op-1",
+        "figi": "BBG004730N88",
+        "type": "OPERATION_TYPE_BUY",
+        "quantity": 10,
+        "quantityDone": 10,
+        "price": {"units": "300", "nano": 0},
+        "commission": {"units": "0", "nano": 100000000},
+        "orderId": "order-9",
+    }
+    deals = TInvestAdapter._operation_to_deals(item, "acc-1")
+    assert len(deals) == 1
+    assert deals[0].deal_id == "op-1"
+    assert deals[0].order_id == "order-9"
+    assert deals[0].instrument_figi == "BBG004730N88"

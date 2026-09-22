@@ -236,8 +236,9 @@ async def test_get_order_maps_state() -> None:
     adapter = TInvestAdapter(client=fake)
     order = await adapter.get_order("broker-1", account_id="acc-1")
     assert order.status == OrderStatus.FILLED
-    assert order.requested_quantity == Decimal("10")
-    assert order.executed_quantity == Decimal("10")
+    # 10 lots * lot_size 10 (from _instrument_response) = 100 canonical units
+    assert order.requested_quantity == Decimal("100")
+    assert order.executed_quantity == Decimal("100")
 
 
 @pytest.mark.asyncio
