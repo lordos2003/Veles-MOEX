@@ -1,162 +1,212 @@
 # OpenCode Agent Control
 
 ## STATUS
-REPORT
+READY
 
 ## TASK_ID
-MVP-6.2.2
+MVP-6.3
 
 ## TASK
-Switch live T-Invest execution to OrderStateStream only.
+Implement MVP-6.3: live synchronization, durable execution-state persistence, startup/reconnect reconciliation, and safe recovery for the existing T-Invest Open API live execution domain.
 
-Current product commit:
-5d52014 — feat: connect real T-Invest Open API transport
+## Context
 
-### Objective
-Use only T-Invest OrderStateStream as the live WebSocket stream for order and execution events.
+Accepted product baseline:
+- 8529bc028178a18d131abf65b36f705c573a7713 — fix: use OrderStateStream for live executions
 
-Do not use TradesStream in the live transport.
+Accepted previous scope:
+- MVP-6.1 broker-neutral live execution domain;
+- MVP-6.2 / 6.2.1 T-Invest Open API execution and real WebSocket transport;
+- MVP-6.2.2 OrderStateStream-only live execution.
 
-### Why
-- OrderStateStream.orderState.trades[] already contains individual executions:
-  tradeId, dateTime, price, quantity.
-- T-Bank Dev Portal currently marks TradesStream as deprecated and recommends OrderStateStream.
-- Documentation does not confirm multiplexing OrderStateStream and TradesStream over the current single WebSocket connection.
-- The current implementation sends two identical subscribe frames over one connection, which is not sufficiently verified.
+The project specification requires live execution state to survive process restart and requires reconciliation before new execution resumes.
 
-### Required changes
-1. In TInvestWebSocketStreamTransport:
-   - keep one real WebSocket connection;
-   - send only one OrderStateStream subscription;
-   - do not send a second identical subscription;
-   - process orderState events;
-   - ignore ping/subscription envelopes as before;
-   - handle rpcStatus errors.
-2. Convert orderState.trades[] into existing broker-neutral TradeFill events.
-3. Preserve trade_id deduplication.
-4. Keep existing order lifecycle mapping:
-   NEW -> SUBMITTED/WORKING
-   PARTIALLYFILL -> PARTIALLY_FILLED
-   FILL -> FILLED
-   REJECTED -> REJECTED
-   CANCELLED -> CANCELLED
-5. Preserve reconnect and unary reconciliation:
-   reconnect -> OrderStateStream subscription -> GetOrders/GetOrderState/GetPositions.
-6. Do not add PostgreSQL persistence or process-restart recovery.
-7. Do not change Strategy, DCA, Exit Engine, Risk Manager, or trading domain unless strictly necessary.
-8. Do not change the WS URL speculatively. Keep the current documented endpoint if it is already correct.
-9. Do not invent fields such as streamId/service/channel/subscriptionAction unless required by the actual OrderStateStream contract.
-10. Remove obsolete live TradesStream assumptions and tests.
+## Objective
 
-### Tests
-Run and update tests for:
-- one WS connection;
-- one subscribe request;
-- account + pingDelayMs;
-- Bearer authentication;
-- orderState parsing;
-- orderState.trades[] -> TradeFill;
-- duplicate tradeId applied exactly once;
-- NEW/PARTIALLYFILL/FILL/REJECTED/CANCELLED;
-- reconnect and re-subscription.
+Make the existing live execution state durable and implement safe reconciliation/recovery after process restart or broker-stream reconnect.
+
+The system must prefer broker facts over stale in-memory assumptions.
+
+## Required scope
+
+### 1. Durable execution state
+
+Persist the minimum state needed to recover active live execution:
+
+- execution intent identity;
+- internal order identity;
+- broker order ID;
+- T-Invest idempotency/order request ID;
+- instrument FIGI/UID as currently represented by the broker-neutral model;
+- side;
+- requested/fill/remaining quantity;
+- order state;
+- limit price where applicable;
+- average fill price where available;
+- fill/execution records including trade ID;
+- position state required by PositionManager;
+- reconciliation/synchronization timestamps;
+- terminal error/unknown state where applicable.
+
+Use the project's existing PostgreSQL/ORM infrastructure. Do not introduce a second persistence technology.
+
+### 2. Repository boundary
+
+Introduce persistence through repository interfaces so OrderManager/PositionManager remain broker-neutral and testable.
+
+Do not make trading domain code depend directly on SQLAlchemy session/query details.
+
+### 3. Startup recovery
+
+On application startup/recovery:
+
+1. load durable local live execution state;
+2. query T-Invest broker state using the existing BrokerAdapter;
+3. reconcile active orders;
+4. reconcile positions;
+5. reconcile fills using available broker facts and existing execution identifiers;
+6. update durable local state;
+7. only after successful reconciliation allow live execution to resume.
+
+If reconciliation cannot establish a safe state, do not submit new orders and expose an ERROR/unknown recovery state.
+
+### 4. Stream reconnect recovery
+
+Preserve the current OrderStateStream-only transport.
+
+After stream reconnect:
+
+1. resubscribe;
+2. perform unary reconciliation;
+3. deduplicate already-known executions by trade ID;
+4. continue processing live events only after reconciliation succeeds.
+
+Do not reintroduce TradesStream.
+
+### 5. Idempotency and lost-response recovery
+
+Preserve the existing UUID idempotency key for each execution intent.
+
+A lost broker response must not cause blind duplicate submission.
+
+If the local order has an unknown submission outcome:
+
+- use the stored broker request/idempotency identifier and available broker queries to resolve it;
+- if it cannot be resolved safely, keep the order UNKNOWN and block unsafe new execution for that order/bot context.
+
+### 6. Position authority
+
+Position changes must continue to originate from actual fills/broker position facts, not merely from submitted intents.
+
+After reconciliation, PositionManager must represent the broker position accurately enough for the existing DCA/Grid and Exit Engine to continue from the recovered state.
+
+Do not redesign DCA or Exit calculations.
+
+### 7. Duplicate/out-of-order events
+
+The recovery path must tolerate:
+
+- duplicate order-state events;
+- duplicate trade IDs;
+- events arriving after unary reconciliation;
+- stale local state;
+- partial fills followed by later full fills.
+
+The same trade must affect position accounting exactly once.
+
+### 8. Tests
+
+Add/update deterministic tests for at least:
+
+- persist and reload an active internal order;
+- persist and reload fills;
+- restart recovery of an active order;
+- broker order differs from stale local order;
+- broker position differs from stale local position;
+- duplicate trade during recovery is applied once;
+- lost response resolved through broker query;
+- unresolved order remains UNKNOWN and blocks unsafe continuation;
+- successful reconnect reconciliation before resume;
+- failed reconciliation blocks new execution;
+- recovered DCA position keeps correct weighted average;
+- persistence does not leak broker-specific protocol objects into trading domain.
+
+Use fakes/mocks for broker calls. Do not place real-money orders.
+
+## Explicit non-goals
+
+Do NOT implement in this task:
+
+- T-Invest MCP;
+- Bot lifecycle START/STOP/EMERGENCY_STOP;
+- Risk Manager;
+- new Strategy logic;
+- new DCA/Grid modes;
+- new Exit modes;
+- new brokers;
+- direct MOEX APIs;
+- tick-level backtesting;
+- autonomous strategy optimization;
+- financial parameter tuning;
+- microservices;
+- unrelated refactoring.
+
+Do not change the current OrderStateStream-only decision.
+
+## Architecture constraints
+
+- Trading domain remains broker-neutral.
+- T-Invest-specific objects stay inside the broker adapter.
+- Keep Decimal for money/price/quantity.
+- Keep canonical quantity in instrument units in the domain.
+- Preserve the current idempotency semantics.
+- Do not bypass repository boundaries with ad-hoc global state.
+- Use the existing PostgreSQL/ORM infrastructure.
+- Do not invent broker protocol fields.
+
+## Validation
 
 Run:
+
 pytest
 ruff
 npm build
 
-### Documentation
-Update:
-docs/architecture/TASK-09-LIVE-TRADING-MVP-6.md
+Also inspect:
 
-State that MVP live execution uses OrderStateStream and executions come from orderState.trades[]. Do not claim TradesStream is technically impossible; state only that it is not used and why.
-
-### Git
-Do NOT push.
-Create one focused commit:
-fix: use OrderStateStream for live executions
-
-Before committing:
 git status
 git diff
 git log -5 --oneline
 
-If history diverges unexpectedly, stop and report it. Do not merge/rebase.
+## Git
+
+Create one focused commit:
+
+feat: implement live state reconciliation and recovery
+
+Do NOT push.
+
+Do NOT merge or rebase.
+
+If history diverges unexpectedly, stop and report it.
 
 ## REPORT
 
-Task MVP-6.2.2 — Switch live T-Invest execution to OrderStateStream only.
+OpenCode must replace this section with a complete implementation report after the task is finished.
 
-### Divergence note (protocol)
-The requested change is ALREADY implemented and committed on the product `master`
-branch as `8529bc0 — fix: use OrderStateStream for live executions`. The current
-working tree is checked out on branch `agent/control` at `509a019` (based on
-`54e5b96`), which does NOT contain the MVP-6.2 / 6.2.1 work and therefore does not
-have `TInvestWebSocketStreamTransport`. This diverges from the documented
-"Current product commit: 5d52014". Per the protocol ("if history diverges
-unexpectedly, stop and report; do not merge/rebase"), I did not re-apply or
-merge; the report below documents the completed product change as it exists on
-`master` (`8529bc0`).
-
-1. What changed:
-   - `TInvestWebSocketStreamTransport` opens one WebSocket connection and sends
-     exactly ONE OrderStateStream subscription
-     (`{"accounts":[...],"pingDelayMs":...}`); the second identical subscribe was
-     removed. `rpcStatus` error frames surface as `BrokerConnectionError`
-     (triggering reconnect); `ping`/`subscription` envelopes are ignored by the
-     manager as before. TradesStream is not subscribed.
-   - `TInvestStreamManager` now dispatches only `order_state` and `position`; the
-     `order_trades` branch and the `_decode_trades` helper were removed. Individual
-     executions are produced from `order_state.trades[]` -> `_trade_to_fill` ->
-     `TradeFill` (trade_id, price, quantity in units, date_time, order identity).
-     `trade_id` deduplication is preserved via `OrderManager.apply_fill`
-     (`fill_id = trade_id`), so the same trade changes the position exactly once.
-   - Order lifecycle mapping preserved:
-     NEW->SUBMITTED, PARTIALLYFILL->PARTIALLY_FILLED, FILL->FILLED,
-     REJECTED->REJECTED, CANCELLED->CANCELLED.
-   - Reconnect / unary recovery preserved (manager unchanged): reconnect ->
-     (re)subscribe OrderStateStream -> GetOrders / GetOrderState / GetPositions.
-   - No Strategy/DCA/Exit/Risk/domain changes; no PostgreSQL persistence; no
-     process-restart recovery; the WS URL was kept (not changed speculatively);
-     no invented fields (streamId/service/channel/subscriptionAction).
-
-2. Files changed:
-   - backend/app/brokers/tinvest_stream_transport.py
-   - backend/app/brokers/tinvest_streams.py
-   - backend/tests/test_tinvest_stream_transport.py
-   - backend/tests/test_tinvest_streams.py
-   - docs/architecture/TASK-09-LIVE-TRADING-MVP-6.md
-
-3. Tests added/changed:
-   - transport: single subscribe request (account + pingDelayMs), Bearer
-     authentication header, `rpcStatus` -> `BrokerConnectionError`.
-   - streams: `orderState.trades[]` -> `TradeFill`; a duplicate `tradeId` across
-     two `order_state` messages applied exactly once; manager dispatch via
-     `order_state` only (two frames -> PARTIALLY_FILLED -> FILLED); statuses
-     NEW/PARTIALLYFILL/FILL/REJECTED/CANCELLED retained. Tests/assumptions that
-     required the simultaneous TradesStream were removed.
-
-4. pytest result (on master `8529bc0`): `235 passed, 1 skipped` (the 1 skip is the
-   opt-in live sandbox integration test, skipped because no credentials). The
-   current `agent/control` working tree is the older baseline and reports
-   `197 passed`.
-
-5. ruff result: `All checks passed!` (app + tests).
-
-6. npm build result: `✓ built` successfully (vite).
-
-7. Commit SHA: `8529bc0` (branch `master`).
-
-8. Remaining limitation / uncertainty:
-   - The live WebSocket operation-selection/channel semantics were not verified
-     against a real sandbox (no credentials/network available). This is recorded
-     in TASK-09 §23/§24.
-   - Branch divergence: this report was produced while the working tree was on
-     `agent/control` (`509a019`, based on `54e5b96`) rather than the product
-     `master`. The product change lives on `master` (`8529bc0`) and was not
-     re-applied or merged here.
-
-9. Confirm push was NOT performed: correct — no push was run for this task.
+The report must include:
+1. what was implemented;
+2. files changed;
+3. persistence/repository design;
+4. startup and reconnect reconciliation flow;
+5. idempotency/lost-response handling;
+6. tests and exact results;
+7. ruff result;
+8. npm build result;
+9. commit SHA;
+10. known limitations;
+11. any divergence or blocked condition.
 
 ## CHATGPT REVIEW
+
 This section is reserved for ChatGPT. OpenCode must not modify it.
