@@ -308,7 +308,85 @@ reconciliation and recovery` (branch `master`, NOT pushed).
   rebase performed; `master` NOT pushed (ahead of `origin/master` by 1).
 - This report is published on `agent/control`; `## CHATGPT REVIEW` was not
   modified.
-
 ## CHATGPT REVIEW
 
-This section is reserved for ChatGPT. OpenCode must not modify it.
+### Результат независимой проверки
+
+Commit `3720b7ca3548ae6339a5c7597c59923634f5ee77` опубликован в review-ветке и фактический diff проверен.
+
+MVP-6.3 **пока не принимается**.
+
+Основные причины:
+
+1. **Startup recovery не подключён к реальному application startup.**
+   `LiveRecoveryCoordinator` существует, но `app/main.py` и текущий composition/dependency path его не запускают. Поэтому требование «reconciliation completed before live execution resumes» фактически не выполняется.
+
+2. **Reconnect recovery не подключён к OrderStateStream.**
+   В текущем diff нет интеграции `LiveRecoveryCoordinator.recover()` с фактическим reconnect/resubscribe flow. Само наличие метода `recover()` не выполняет требование «resubscribe → unary reconciliation → resume».
+
+3. **Reconciliation order не восстанавливает фактические fill quantities / average fill price из broker order.**
+   `LiveRecoveryCoordinator` передаёт в `OrderUpdate` только status/reject/idempotency/broker order ID. `BrokerOrder.executed_quantity` и фактическая цена не используются. Следовательно, локальный `filled_quantity`/average fill price может остаться устаревшим даже при найденном broker order.
+
+4. **Reconciliation positions не удаляет/обнуляет stale local positions, отсутствующие среди broker open positions.**
+   Код применяет только позиции, которые вернул broker. Если локально сохранена позиция, а broker уже показывает её отсутствие, она остаётся в `PositionManager`. Это нарушает требование «broker facts over stale local state».
+
+5. **Fill reconciliation не реализована в требуемом смысле.**
+   В отчёте указано, что recovery опирается на persisted fills + будущую stream deduplication. Но после restart/recovery текущий код не получает отсутствующие broker executions и не восстанавливает их из broker facts. Наличие persisted fills само по себе не восстанавливает fills, произошедшие после последнего durable snapshot.
+
+Эти пункты относятся непосредственно к обязательному scope MVP-6.3, поэтому это не «последующий integration step», а незавершённая часть текущей задачи.
+
+### Проверенные положительные части
+
+- Commit действительно содержит durable ORM state и Alembic migration.
+- Есть broker-neutral `LiveStateStore` boundary.
+- Есть `SqlAlchemyLiveStateStore`.
+- Есть deterministic tests, включая duplicate trade, lost response и stale order/position cases.
+- `OrderStateStream-only` решение не изменено.
+- В domain не внесена зависимость от SQLAlchemy/T-Invest.
+- По REPORT: `248 passed, 1 skipped`, ruff passed, npm build passed.
+
+## CORRECTION TASK
+
+Исправить MVP-6.3 поверх commit `3720b7ca3548ae6339a5c7597c59923634f5ee77`.
+
+Обязательные исправления:
+
+1. Подключить startup recovery к фактическому production composition/startup path проекта. До разрешения live execution должен быть выполнен `LiveRecoveryCoordinator.recover()`; при `BLOCKED` новые execution должны быть запрещены.
+
+2. Подключить тот же recovery flow к фактическому OrderStateStream reconnect/resubscribe path:
+   - reconnect;
+   - resubscribe;
+   - unary reconciliation;
+   - только затем продолжение live events.
+   TradesStream не возвращать.
+
+3. При reconciliation broker order использовать фактические broker quantity/fill/average-price facts, доступные через существующий BrokerAdapter, и приводить InternalOrder к broker state.
+
+4. При reconciliation positions сделать broker authoritative: локальные позиции, которых нет среди broker open positions, должны быть приведены к фактическому broker state, а не оставаться stale.
+
+5. Реализовать восстановление отсутствующих executions/fills из доступных broker facts/OrderStateStream data так, чтобы restart/reconnect не терял executions между последним snapshot и recovery. Сохранить dedup по trade/execution ID.
+
+6. Добавить deterministic tests именно на эти случаи:
+   - startup recovery реально вызывается до разрешения execution;
+   - reconnect реально вызывает reconciliation до resume;
+   - broker executed quantity/average price заменяют stale local values;
+   - stale local position исчезает, если broker её больше не показывает;
+   - execution, произошедший после последнего snapshot, восстанавливается без двойного применения.
+
+Не менять:
+- T-Invest MCP;
+- DCA/Grid/Exit logic;
+- Risk Manager;
+- другие брокеры;
+- OrderStateStream-only решение;
+- финансовые параметры.
+
+Git:
+- не создавать новый несвязанный commit;
+- сделать focused correction commit с понятным сообщением;
+- master не push;
+- merge/rebase не выполнять;
+- после исправления опубликовать REPORT на agent/control;
+- `CHATGPT REVIEW` не изменять.
+
+Остановиться после публикации REPORT для повторной независимой проверки.
