@@ -11,6 +11,7 @@ from app.brokers import (
     AccountNotFoundError,
     AuthenticationError,
     InstrumentNotFoundError,
+    InvalidRequestError,
     ResourceNotFoundError,
     TInvestAdapter,
 )
@@ -180,12 +181,12 @@ async def test_authentication_failure_propagates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_trading_methods_still_not_implemented() -> None:
+async def test_place_order_requires_account_context() -> None:
     adapter = TInvestAdapter(client=TInvestFakeClient())
     request = BrokerOrderRequest(
         instrument_figi="BBG004730N88", side=OrderSide.BUY, quantity=1, type=OrderType.MARKET
     )
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(InvalidRequestError):
         await adapter.place_order(request)
 
 
@@ -306,7 +307,7 @@ async def test_get_deals_normalized() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_orders_maps_unknown_status_to_error() -> None:
+async def test_get_orders_maps_unknown_status_to_unknown() -> None:
     fake = TInvestFakeClient(
         responses={
             _GET_ACCOUNTS: {"accounts": [{"id": "acc-1"}]},
@@ -322,4 +323,4 @@ async def test_get_orders_maps_unknown_status_to_error() -> None:
     )
     adapter = TInvestAdapter(client=fake)
     orders = await adapter.get_orders()
-    assert orders[0].status == OrderStatus.ERROR
+    assert orders[0].status == OrderStatus.UNKNOWN

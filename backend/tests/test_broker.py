@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from app.backtest import BacktestBroker
@@ -32,9 +34,9 @@ def test_order_request_dataclass() -> None:
     request = BrokerOrderRequest(
         instrument_figi="BBG004730N88",
         side=OrderSide.BUY,
-        quantity=10,
+        quantity=Decimal("10"),
         type=OrderType.LIMIT,
-        price=300.0,
+        price=Decimal("300"),
     )
-    assert request.quantity == 10
+    assert request.quantity == Decimal("10")
     assert request.side == OrderSide.BUY

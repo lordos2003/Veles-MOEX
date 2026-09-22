@@ -435,3 +435,99 @@ T-Invest:
 - instrument trading status and instrument constraints.
 - official T-Invest MCP documentation.
 
+## 23. Implemented scope — MVP-6.2 (T-Invest Open API execution)
+
+This section records what is actually implemented for real order execution
+through T-Invest Open API. It is additive to the broker-neutral live execution
+domain (MVP-6.1). Things that are not yet implemented must not be treated as
+done.
+
+### Canonical quantity unit
+
+- The canonical quantity unit inside Veles-MOEX is **instrument units**
+  (pieces/shares). `Position.quantity`, `Fill.quantity`,
+  `ExecutionIntent.quantity` and `BrokerOrderRequest.quantity` are units.
+- T-Invest `PostOrder.quantity` accepts **lots**.
+- Conversion `units / lot_size -> lots` happens **only inside `TInvestAdapter`**
+  using the instrument `lot_size`. Units that are not an exact multiple of the
+  lot size are rejected **before** any broker call (raises an invalid-request
+  error). No float is used; all computation is `Decimal`.
+- `BrokerOrder.requested_quantity` / `executed_quantity` remain in the broker's
+  native unit (lots) as a read-only snapshot; live fill/position accounting uses
+  units via fills/position events.
+
+### Decimal and price
+
+- All money/price/quantity values are `Decimal`. `BrokerOrderRequest.quantity`
+  is `Decimal` and `BrokerOrderRequest.price` is `Decimal | None`.
+- `Decimal <-> Quotation` conversion happens at the adapter boundary; domain
+  never sees `Quotation`.
+- For shares/ETF a currency price representation is used. The price is validated
+  against `tick_size` / `min_price_increment` (the price must be a multiple of
+  the tick); an invalid price is rejected before submission.
+- `BESTPRICE` is **not** silently downgraded to `LIMIT`: it is unsupported in
+  MVP-6.2 and surfaces as an unknown/unsupported type.
+
+### Account context
+
+- Execution requires an explicit `account_id`. `BrokerOrderRequest.account_id`
+  must be set; `cancel_order` and `get_order` take `account_id` explicitly and
+  reject `None`.
+- `_first_account_id()` is not used for live order operations; it remains only
+  for read-only endpoints. `order_id_type` (`ORDER_ID_TYPE_EXCHANGE`) is passed
+  on the broker boundary.
+
+### Idempotency
+
+- One execution intent = one UUID idempotency key. The key is created once and
+  stored on the internal order; the same key is reused on retry and is never
+  regenerated for the same order.
+- A missing key is generated as UUID4; a supplied non-UUID key is rejected (the
+  broker would otherwise substitute a generated id and correlation would be
+  lost). The key is sent as `PostOrder.order_id` and echoed back as
+  `order_request_id`.
+
+### Order lifecycle
+
+- `NEW -> SUBMITTED/WORKING`, `PARTIALLYFILL -> PARTIALLY_FILLED`,
+  `FILL -> FILLED`, `REJECTED -> REJECTED`, `CANCELLED -> CANCELLED`.
+- `UNSPECIFIED` / unknown status maps to `UNKNOWN`, never to `FAILED`.
+- `PARTIALLY_FILLED` stays a live order while a positive quantity remains.
+- T-Invest stream behaviour (a partially filled order may stay
+  `PARTIALLY_FILLED` instead of returning to `CANCELLED`) is accommodated without
+  weakening the domain transition rules.
+
+### Fills and position accounting
+
+- The authoritative source of fills is the individual executions from
+  `TradesStream` and `OrderStateStream.trades` (each `trade_id`, price,
+  quantity in units, timestamp) -> broker-neutral `TradeFill`.
+- `lots_executed` is used for status/reconciliation, not to fabricate fills.
+- Live fill accounting no longer depends on `GetDeals`/operations
+  (`_sync_broker_fills` was removed). Operations/GetDeals remain an audit source
+  only.
+- **Deduplication**: the same execution may arrive via both `TradesStream` and
+  `OrderStateStream.trades`; it is applied once by `trade_id` (`fill_id`), so the
+  position changes exactly once regardless of arrival order.
+
+### Stream manager and recovery
+
+- `TInvestStreamManager` subscribes to the order/trade streams for one account,
+  dispatches broker-neutral events into the `OrderManager`, and performs
+  exponential-backoff reconnect.
+- After a (re)connect it reconciles via unary `GetOrders` / `GetOrderState` /
+  `GetPositions` (order status and position state) before resuming streaming.
+- The wire/stream transport is abstracted behind `TInvestStreamTransport`.
+  Process-restart durable recovery is out of scope for MVP-6.2.
+
+### Scope and sandbox limitations
+
+- MVP-6.2 covers **shares and ETF** (currency price representation).
+  Bonds (`PRICE_TYPE_POINT` + accrued interest) and futures (points, GO) are not
+  supported.
+- Sandbox is configurable (`tinvest_sandbox`). Lifecycle integration is covered
+  deterministically with a mocked client. Realistic multi-step partial fills
+  cannot be produced by the sandbox, so partial-fill and idempotency behaviour is
+  covered by deterministic unit tests / a fake client.
+
+

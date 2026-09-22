@@ -10,6 +10,7 @@ NotImplementedError.
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -42,6 +43,8 @@ _OPERATIONS = "tinkoff.public.invest.api.contract.v1.OperationsService"
 _ORDERS = "tinkoff.public.invest.api.contract.v1.OrdersService"
 _INSTRUMENTS = "tinkoff.public.invest.api.contract.v1.InstrumentsService"
 _MARKET = "tinkoff.public.invest.api.contract.v1.MarketDataService"
+
+_SANDBOX_BASE = "https://sandbox-invest-public-api.tbank.ru/rest"
 
 # kind -> InstrumentsService list method (returns {"instruments": [...]}).
 _KIND_TO_LIST_METHOD = {
@@ -83,11 +86,17 @@ _ORDER_STATUS_MAP = {
     "EXECUTION_REPORT_STATUS_PARTIALLYFILL": OrderStatus.PARTIALLY_FILLED,
 }
 
-# T-Invest OrderType -> our OrderType.
+# T-Invest OrderType -> our OrderType. BESTPRICE is intentionally NOT mapped to
+# LIMIT: unsupported order types surface as None, never silently downgraded.
 _ORDER_TYPE_MAP = {
     "ORDER_TYPE_LIMIT": OrderType.LIMIT,
     "ORDER_TYPE_MARKET": OrderType.MARKET,
-    "ORDER_TYPE_BESTPRICE": OrderType.LIMIT,
+}
+
+# Our OrderType -> T-Invest OrderType (only the supported set for MVP-6.2).
+_ORDER_TYPE_TO_TINVEST = {
+    OrderType.LIMIT: "ORDER_TYPE_LIMIT",
+    OrderType.MARKET: "ORDER_TYPE_MARKET",
 }
 
 # T-Invest OrderDirection -> our OrderSide.
@@ -96,11 +105,22 @@ _ORDER_SIDE_MAP = {
     "ORDER_DIRECTION_SELL": OrderSide.SELL,
 }
 
+# Our OrderSide -> T-Invest OrderDirection.
+_ORDER_SIDE_TO_TINVEST = {
+    OrderSide.BUY: "ORDER_DIRECTION_BUY",
+    OrderSide.SELL: "ORDER_DIRECTION_SELL",
+}
+
 # T-Invest OperationType names that represent security trades.
 _DEAL_BUY_TYPES = {"OPERATION_TYPE_BUY", "OPERATION_TYPE_BUY_CARD", "OPERATION_TYPE_BUY_MARGIN"}
 _DEAL_SELL_TYPES = {"OPERATION_TYPE_SELL", "OPERATION_TYPE_SELL_CARD", "OPERATION_TYPE_SELL_MARGIN"}
 
-_NOT_IMPLEMENTED = "Trade execution is not implemented in the read-only integration"
+
+def _resolve_base_url(settings) -> str:
+    """Select the REST base url, honoring the sandbox toggle."""
+    if settings.tinvest_sandbox:
+        return _SANDBOX_BASE
+    return settings.tinvest_base_url
 
 
 def _quotation_to_decimal(quotation: dict | None) -> Decimal | None:
@@ -110,6 +130,14 @@ def _quotation_to_decimal(quotation: dict | None) -> Decimal | None:
     units = quotation.get("units") or 0
     nano = quotation.get("nano") or 0
     return Decimal(str(units)) + Decimal(str(nano)) / Decimal(1_000_000_000)
+
+
+def _decimal_to_quotation(value: Decimal) -> dict:
+    """Convert a Decimal to a T-Invest Quotation object (units + nano)."""
+    value = value.quantize(Decimal("0.000000001"))
+    units = int(value)
+    nano = int((value - Decimal(units)) * Decimal(1_000_000_000))
+    return {"units": str(units), "nano": nano}
 
 
 def _timestamp_to_datetime(value: str | None) -> datetime | None:
@@ -134,7 +162,7 @@ def _map_trading_status(api_available: bool) -> TradingStatus:
 
 
 def _map_order_status(value: str | None) -> OrderStatus:
-    return _ORDER_STATUS_MAP.get(value or "", OrderStatus.ERROR)
+    return _ORDER_STATUS_MAP.get(value or "", OrderStatus.UNKNOWN)
 
 
 def _map_order_type(value: str | None) -> OrderType | None:
@@ -166,7 +194,7 @@ class TInvestAdapter(BrokerAdapter):
         if self._client is None:
             settings = get_settings()
             effective_token = token if token is not None else settings.tinvest_token
-            effective_base = base_url if base_url is not None else settings.tinvest_base_url
+            effective_base = base_url if base_url is not None else _resolve_base_url(settings)
             if effective_token:
                 self._client = TInvestClient(token=effective_token, base_url=effective_base)
 
@@ -284,14 +312,6 @@ class TInvestAdapter(BrokerAdapter):
         raw_orders = data.get("orders", [])
         return [self._to_order(item, account_id) for item in raw_orders]
 
-    async def get_order(self, order_id: str) -> BrokerOrder:
-        client = self._require_client()
-        account_id = await self._first_account_id()
-        data = await client.call(
-            f"{_ORDERS}/GetOrderState", {"accountId": account_id, "orderId": order_id}
-        )
-        return self._to_order(data, account_id)
-
     async def get_deals(self, account_id: str | None = None) -> list[BrokerDeal]:
         client = self._require_client()
         if not account_id:
@@ -313,10 +333,104 @@ class TInvestAdapter(BrokerAdapter):
         return deals
 
     async def place_order(self, request: BrokerOrderRequest) -> BrokerOrder:
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        """Place a market/limit order for a share/ETF via PostOrder.
 
-    async def cancel_order(self, order_id: str) -> None:
-        raise NotImplementedError(_NOT_IMPLEMENTED)
+        Converts the canonical unit quantity (units) into T-Invest lots using
+        the instrument lot size, validates lot & price-tick constraints, and
+        uses the (UUID) idempotency key verbatim. BestPrice is not supported in
+        MVP-6.2 and is rejected rather than silently downgraded to LIMIT.
+        """
+        client = self._require_client()
+        if not request.account_id:
+            raise InvalidRequestError("account_id is required for T-Invest order placement")
+        if request.quantity <= 0:
+            raise InvalidRequestError("quantity must be positive")
+
+        type_enum = _ORDER_TYPE_TO_TINVEST.get(request.type)
+        if type_enum is None:
+            raise InvalidRequestError(f"Unsupported order type for MVP-6.2: {request.type}")
+
+        instrument = await self.get_instrument(request.instrument_figi)
+        lot_size = instrument.lot_size
+        if not lot_size or lot_size <= 0:
+            raise InvalidRequestError(
+                f"Unknown lot size for instrument {request.instrument_figi}"
+            )
+        if request.quantity % lot_size != 0:
+            raise InvalidRequestError(
+                f"quantity {request.quantity} is not a multiple of lot size {lot_size}"
+            )
+        lots = int(request.quantity // lot_size)
+
+        body: dict = {
+            "instrumentId": request.instrument_figi,
+            "quantity": lots,
+            "direction": _ORDER_SIDE_TO_TINVEST[request.side],
+            "accountId": request.account_id,
+            "orderType": type_enum,
+            "orderId": self._resolve_idempotency_key(request.idempotency_key),
+        }
+
+        if request.type == OrderType.LIMIT:
+            if request.price is None or request.price <= 0:
+                raise InvalidRequestError("limit price is required and must be positive")
+            tick_size = instrument.tick_size
+            if tick_size and request.price % tick_size != 0:
+                raise InvalidRequestError(
+                    f"price {request.price} is not a multiple of tick size {tick_size}"
+                )
+            body["price"] = _decimal_to_quotation(request.price)
+
+        data = await client.call(f"{_ORDERS}/PostOrder", body)
+        return self._to_order(data, request.account_id)
+
+    async def cancel_order(self, order_id: str, account_id: str | None = None) -> None:
+        client = self._require_client()
+        if not account_id:
+            raise InvalidRequestError("account_id is required to cancel a T-Invest order")
+        await client.call(
+            f"{_ORDERS}/CancelOrder",
+            {
+                "accountId": account_id,
+                "orderId": order_id,
+                "orderIdType": "ORDER_ID_TYPE_EXCHANGE",
+            },
+        )
+
+    async def get_order(self, order_id: str, account_id: str | None = None) -> BrokerOrder:
+        client = self._require_client()
+        if not account_id:
+            raise InvalidRequestError("account_id is required to read a T-Invest order")
+        try:
+            data = await client.call(
+                f"{_ORDERS}/GetOrderState",
+                {
+                    "accountId": account_id,
+                    "orderId": order_id,
+                    "orderIdType": "ORDER_ID_TYPE_EXCHANGE",
+                },
+            )
+        except ResourceNotFoundError as exc:
+            raise ResourceNotFoundError(f"Order not found: {order_id}") from exc
+        return self._to_order(data, account_id)
+
+    @staticmethod
+    def _resolve_idempotency_key(idempotency_key: str) -> str:
+        """Return a valid UUID idempotency key, or reject an invalid one.
+
+        T-Invest requires the idempotency key to be in UUID format; a non-UUID
+        key must not be sent (the broker would substitute a generated one and
+        correlation would be lost). A missing key is generated once (UUID4).
+        """
+        key = (idempotency_key or "").strip()
+        if not key:
+            return str(uuid.uuid4())
+        try:
+            return str(uuid.UUID(key))
+        except ValueError as exc:
+            raise InvalidRequestError(
+                "T-Invest idempotency key must be a valid UUID"
+            ) from exc
 
     # --- normalization helpers (T-Invest JSON -> broker DTO / domain DTO) ---
 
@@ -407,6 +521,7 @@ class TInvestAdapter(BrokerAdapter):
             currency=raw.get("currency"),
             created_at=_timestamp_to_datetime(raw.get("orderDate")),
             updated_at=updated_at,
+            reject_info=raw.get("message"),
         )
 
     @staticmethod

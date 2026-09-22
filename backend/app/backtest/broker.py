@@ -365,10 +365,10 @@ class BacktestBroker(BrokerAdapter):
             request.side, qty, price if price is not None else Decimal("0")
         )
 
-    async def cancel_order(self, order_id: str) -> None:
+    async def cancel_order(self, order_id: str, account_id: str | None = None) -> None:
         self.cancel(order_id)
 
-    async def get_order(self, order_id: str) -> BrokerOrder:
+    async def get_order(self, order_id: str, account_id: str | None = None) -> BrokerOrder:
         return self._orders[order_id]
 
     async def get_open_positions(self, account_id: str | None = None) -> list[BrokerPosition]:

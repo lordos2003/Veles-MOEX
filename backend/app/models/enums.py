@@ -26,3 +26,4 @@ class OrderStatus(StrEnum):
     REJECTED = "REJECTED"
     EXPIRED = "EXPIRED"
     ERROR = "ERROR"
+    UNKNOWN = "UNKNOWN"

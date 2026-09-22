@@ -26,14 +26,21 @@ from app.models.enums import OrderSide, OrderStatus, OrderType
 
 @dataclass
 class BrokerOrderRequest:
-    """Broker-agnostic order request sent by the Order Manager."""
+    """Broker-agnostic order request sent by the Order Manager.
+
+    ``quantity`` and ``price`` are measured in the canonical domain units: the
+    number of instrument units (pieces/shares) and the price per one unit. The
+    broker adapter converts to the broker's native representation (e.g. lots /
+    ``Quotation``) and must not leak that conversion outside the adapter.
+    """
 
     instrument_figi: str
     side: OrderSide
-    quantity: float
+    quantity: Decimal
     type: OrderType
-    price: float | None = None
+    price: Decimal | None = None
     account_id: str | None = None
+    idempotency_key: str = ""
 
 
 @dataclass
@@ -79,7 +86,8 @@ class BrokerOrder:
     """Broker-agnostic order (read-only).
 
     ``requested_quantity`` / ``executed_quantity`` are expressed in the
-    broker's native unit (lots for T-Invest).
+    broker's native unit (lots for T-Invest); live fill/position accounting
+    uses the canonical unit (units) via fill/position events instead.
     """
 
     order_id: str
@@ -197,16 +205,22 @@ class BrokerAdapter(ABC):
     ) -> list[Candle]:
         """Return historical OHLCV candles for an instrument and timeframe."""
 
-    # --- Trading (not implemented in this phase) ---
+    # --- Trading ---
 
     @abstractmethod
     async def place_order(self, request: BrokerOrderRequest) -> BrokerOrder:
         """Place an order and return the broker order."""
 
     @abstractmethod
-    async def cancel_order(self, order_id: str) -> None:
-        """Cancel an order by broker order id."""
+    async def cancel_order(self, order_id: str, account_id: str | None = None) -> None:
+        """Cancel an order by broker order id.
+
+        ``account_id`` is required by brokers that scope orders per account.
+        """
 
     @abstractmethod
-    async def get_order(self, order_id: str) -> BrokerOrder:
-        """Fetch a single order by broker order id."""
+    async def get_order(self, order_id: str, account_id: str | None = None) -> BrokerOrder:
+        """Fetch a single order by broker order id.
+
+        ``account_id`` is required by brokers that scope orders per account.
+        """

@@ -102,6 +102,7 @@ class ExecutionIntent:
     quantity: Decimal
     limit_price: Decimal | None = None
     reason: str = ""
+    account_id: str | None = None
     created_at: datetime = field(default_factory=_utcnow)
     idempotency_key: str = ""
 
@@ -118,6 +119,7 @@ class InternalOrder:
     requested_quantity: Decimal
     limit_price: Decimal | None = None
     idempotency_key: str = ""
+    account_id: str | None = None
     broker_order_id: str | None = None
     filled_quantity: Decimal = Decimal("0")
     average_fill_price: Decimal = Decimal("0")
@@ -151,6 +153,7 @@ class OrderUpdate:
     broker_order_id: str
     status: OrderState
     internal_order_id: str | None = None
+    idempotency_key: str | None = None
     filled_quantity: Decimal | None = None
     average_fill_price: Decimal | None = None
     reject_info: str | None = None
@@ -167,6 +170,7 @@ class TradeFill:
     price: Decimal
     fee: Decimal = Decimal("0")
     internal_order_id: str | None = None
+    idempotency_key: str | None = None
     timestamp: datetime = field(default_factory=_utcnow)
 
 
@@ -176,7 +180,7 @@ class PositionUpdate:
 
     instrument_figi: str
     quantity: Decimal
-    average_price: Decimal
+    average_price: Decimal | None = None
     current_price: Decimal | None = None
     unrealized_pnl: Decimal | None = None
     timestamp: datetime = field(default_factory=_utcnow)

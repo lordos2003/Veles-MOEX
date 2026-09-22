@@ -62,13 +62,13 @@ class FakeExecutionBroker:
         self.orders[oid] = order
         return order
 
-    async def cancel_order(self, order_id: str) -> None:
+    async def cancel_order(self, order_id: str, account_id: str | None = None) -> None:
         if self.raise_on_cancel is not None:
             raise self.raise_on_cancel
         if order_id in self.orders:
             self.orders[order_id].status = OrderStatus.CANCELLED
 
-    async def get_order(self, order_id: str) -> BrokerOrder:
+    async def get_order(self, order_id: str, account_id: str | None = None) -> BrokerOrder:
         return self.orders[order_id]
 
     async def get_deals(self) -> list[BrokerDeal]:

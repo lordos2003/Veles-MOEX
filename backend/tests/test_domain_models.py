@@ -53,6 +53,7 @@ def test_order_status_enum_matches_spec() -> None:
         "REJECTED",
         "EXPIRED",
         "ERROR",
+        "UNKNOWN",
     }
     assert {s.value for s in OrderStatus} == expected
 

@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     tinvest_token: str | None = None
     # Official prod REST endpoint. Sandbox is available for testing.
     tinvest_base_url: str = "https://invest-public-api.tbank.ru/rest"
+    # When True the adapter targets the T-Invest sandbox (no real money).
+    tinvest_sandbox: bool = False
+    # Optional WebSocket stream endpoint. Defaults to wss://.../ws derived from
+    # the REST base url when unset.
+    tinvest_stream_url: str | None = None
 
 
 @lru_cache

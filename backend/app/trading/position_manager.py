@@ -99,8 +99,10 @@ class PositionManager:
             pos = Position(instrument_figi=update.instrument_figi)
             self._positions[update.instrument_figi] = pos
         pos.quantity = update.quantity
-        pos.average_price = update.average_price
-        pos.current_price = update.current_price
+        if update.average_price is not None:
+            pos.average_price = update.average_price
+        if update.current_price is not None:
+            pos.current_price = update.current_price
         if update.unrealized_pnl is not None:
             pos.unrealized_pnl = update.unrealized_pnl
         pos.updated_at = update.timestamp

@@ -12,7 +12,7 @@ T-Invest is never imported here; the broker is the broker-neutral BrokerAdapter.
 
 from __future__ import annotations
 
-from decimal import Decimal
+import uuid
 
 from app.brokers.base import BrokerAdapter, BrokerOrder, BrokerOrderRequest
 from app.models.enums import OrderStatus
@@ -44,6 +44,19 @@ _BROKER_STATUS_MAP = {
     OrderStatus.EXPIRED: OrderState.CANCELLED,
     OrderStatus.ERROR: OrderState.FAILED,
 }
+
+
+def _ensure_idempotency(intent: ExecutionIntent) -> str:
+    """Return a stable idempotency key for a given execution intent.
+
+    A key supplied on the intent is preserved (it must be reused verbatim on
+    retry); an absent key is generated once as a UUID4. The key must never be
+    regenerated for the same intent — that would break idempotent retry.
+    """
+    key = (intent.idempotency_key or "").strip()
+    if key:
+        return key
+    return str(uuid.uuid4())
 
 
 class OrderStateError(RuntimeError):
@@ -94,7 +107,7 @@ class OrderManager:
         # legitimately transition to UNKNOWN (await reconciliation).
         self._transition(order, OrderState.SUBMITTED)
 
-        request = self._build_request(intent)
+        request = self._build_request(order)
         try:
             broker_order = await self._broker.place_order(request)
         except Exception:
@@ -108,8 +121,6 @@ class OrderManager:
         order.broker_order_id = broker_order.order_id
         self._orders.save(order)
         self._apply_broker_status(order, broker_order)
-        if order.status == OrderState.FILLED or order.broker_order_id:
-            await self._sync_broker_fills(order)
         return order
 
     def _find_duplicate(self, intent: ExecutionIntent) -> InternalOrder | None:
@@ -130,7 +141,8 @@ class OrderManager:
             order_type=intent.order_type,
             requested_quantity=intent.quantity,
             limit_price=intent.limit_price,
-            idempotency_key=intent.idempotency_key,
+            idempotency_key=_ensure_idempotency(intent),
+            account_id=intent.account_id,
             created_at=_utcnow(),
         )
 
@@ -144,7 +156,8 @@ class OrderManager:
             order_type=intent.order_type,
             requested_quantity=intent.quantity,
             limit_price=intent.limit_price,
-            idempotency_key=intent.idempotency_key,
+            idempotency_key=_ensure_idempotency(intent),
+            account_id=intent.account_id,
             status=OrderState.REJECTED,
             reject_info=reason,
             created_at=_utcnow(),
@@ -153,13 +166,15 @@ class OrderManager:
         return order
 
     @staticmethod
-    def _build_request(intent: ExecutionIntent) -> BrokerOrderRequest:
+    def _build_request(order: InternalOrder) -> BrokerOrderRequest:
         return BrokerOrderRequest(
-            instrument_figi=intent.instrument_figi,
-            side=intent.side,
-            quantity=float(intent.quantity),
-            type=intent.order_type,
-            price=float(intent.limit_price) if intent.limit_price is not None else None,
+            instrument_figi=order.instrument_figi,
+            side=order.side,
+            quantity=order.requested_quantity,
+            type=order.order_type,
+            price=order.limit_price,
+            account_id=order.account_id,
+            idempotency_key=order.idempotency_key,
         )
 
     def _apply_broker_status(self, order: InternalOrder, broker_order: BrokerOrder) -> None:
@@ -176,27 +191,6 @@ class OrderManager:
             self._transition(order, OrderState.UNKNOWN)
             return
         self._transition(order, target)
-
-    async def _sync_broker_fills(self, order: InternalOrder) -> None:
-        if order.broker_order_id is None:
-            return
-        try:
-            deals = await self._broker.get_deals()
-        except Exception:
-            return
-        for deal in deals:
-            if deal.order_id != order.broker_order_id:
-                continue
-            fill = Fill(
-                fill_id=deal.deal_id,
-                internal_order_id=order.order_id,
-                quantity=Decimal(str(deal.quantity)),
-                price=deal.price,
-                fee=deal.commission,
-                broker_execution_id=deal.deal_id,
-                timestamp=deal.happened_at or _utcnow(),
-            )
-            self.apply_fill(fill)
 
     # --- fill / event handling ----------------------------------------------------
 
@@ -236,11 +230,16 @@ class OrderManager:
 
     def on_order_update(self, update: OrderUpdate) -> None:
         """Apply a broker order-state event idempotently."""
-        order = self._orders.get_by_broker(update.broker_order_id)
-        if order is None and update.internal_order_id is not None:
-            order = self._orders.get(update.internal_order_id)
+        order = self._resolve_order(
+            update.broker_order_id, update.internal_order_id, update.idempotency_key
+        )
         if order is None:
             return
+        # The stream may deliver the exchange order id only after submission; adopt
+        # it so subsequent events/operations can be correlated to this order.
+        if update.broker_order_id and not order.broker_order_id:
+            order.broker_order_id = update.broker_order_id
+            self._orders.save(order)
         if update.status != order.status:
             self._transition(order, update.status)
         if update.filled_quantity is not None:
@@ -252,9 +251,9 @@ class OrderManager:
         order.updated_at = update.timestamp
 
     def on_trade_fill(self, trade: TradeFill) -> None:
-        order = self._orders.get_by_broker(trade.broker_order_id)
-        if order is None and trade.internal_order_id is not None:
-            order = self._orders.get(trade.internal_order_id)
+        order = self._resolve_order(
+            trade.broker_order_id, trade.internal_order_id, trade.idempotency_key
+        )
         if order is None:
             return
         fill = Fill(
@@ -267,6 +266,19 @@ class OrderManager:
             timestamp=trade.timestamp,
         )
         self.apply_fill(fill)
+
+    def _resolve_order(
+        self,
+        broker_order_id: str | None,
+        internal_order_id: str | None,
+        idempotency_key: str | None = None,
+    ) -> InternalOrder | None:
+        order = self._orders.get_by_broker(broker_order_id) if broker_order_id else None
+        if order is None and idempotency_key:
+            order = self._orders.get_by_idempotency(idempotency_key)
+        if order is None and internal_order_id:
+            order = self._orders.get(internal_order_id)
+        return order
 
     def on_position_update(self, update: PositionUpdate) -> None:
         if self._positions is not None:
@@ -288,7 +300,7 @@ class OrderManager:
         self._transition(order, OrderState.CANCEL_REQUESTED)
         if order.broker_order_id is not None:
             try:
-                await self._broker.cancel_order(order.broker_order_id)
+                await self._broker.cancel_order(order.broker_order_id, order.account_id)
                 self._transition(order, OrderState.CANCELLED)
             except Exception:
                 self._transition(order, OrderState.UNKNOWN)
@@ -303,12 +315,11 @@ class OrderManager:
         if order.broker_order_id is None:
             return order
         try:
-            broker_order = await self._broker.get_order(order.broker_order_id)
+            broker_order = await self._broker.get_order(order.broker_order_id, order.account_id)
         except Exception:
             self._transition(order, OrderState.UNKNOWN)
             return order
         self._apply_broker_status(order, broker_order)
-        await self._sync_broker_fills(order)
         return order
 
     def get_order(self, order_id: str) -> InternalOrder | None:
