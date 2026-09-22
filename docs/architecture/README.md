@@ -214,6 +214,36 @@ For the current MVP, the existing Open API adapter remains the implemented read-
 path. MCP is explicitly part of the target integration boundary and must be
 implemented before the UI exposes MCP as an executable transport.
 
+## Реализованный слой Live Execution Domain (MVP-6.1)
+
+Broker-neutral слой исполнения (инфраструктура, не новая торговая механика):
+
+- **ExecutionIntent** — immutable намерение выполнить действие (intent_id,
+  trade_id, instrument, side, order type MARKET/LIMIT, quantity Decimal, limit
+  price, reason, created_at, idempotency_key). Не зависит от протокола брокера.
+- **InternalOrder** — связывает ExecutionIntent → broker order id; хранит
+  requested/filled/remaining, среднюю цену исполнения, статус, reject/error.
+- **Order lifecycle**: CREATED / SUBMITTED / WORKING / PARTIALLY_FILLED / FILLED /
+  CANCEL_REQUESTED / CANCELLED / REJECTED / FAILED / UNKNOWN; переходы заданы
+  явно (частичный fill ≠ FILLED; SUBMITTED → UNKNOWN допустимо при потере
+  ответа).
+- **Fill / Deal** — immutable, агрегирование нескольких fills
+  (requested 100; 30+40+30 → FILLED), idempotent по fill id.
+- **PositionManager** — signed quantity, weighted-average price (Decimal),
+  realized/unrealized P&L, fees; позиция меняется **только** фактическими
+  fills; корректно обрабатываются увеличение/уменьшение/реверс позиции.
+- **OrderManager** — принимает ExecutionIntent, делает базовую валидацию,
+  создаёт InternalOrder, guard идемпотентности (intent_id / idempotency_key),
+  вызывает `BrokerAdapter.place_order`, хранит broker order id, обновляет
+  lifecycle, принимает fills (OrderUpdate / TradeFill / PositionUpdate) и
+  передаёт фактические fills в PositionManager. Не принимает стратегических
+  решений.
+- **Repositories** — in-memory (Intent/Order/Fill); архитектура позволяет позже
+  подключить PostgreSQL без изменения domain models.
+- BrokerAdapter не изменён; используется его существующая терминология
+  (`place_order`, `cancel_order`, `get_order`, `get_orders`, `get_open_positions`,
+  `get_deals`). T-Invest imports отсутствуют в execution domain.
+
 ## Remarks
 
 - Direct MOEX API (ASTS/FIX/TWIME), Paper Trading, a second broker and

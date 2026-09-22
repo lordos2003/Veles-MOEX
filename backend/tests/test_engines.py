@@ -6,12 +6,8 @@ implemented yet (they raise NotImplementedError). No fake trading results.
 
 from __future__ import annotations
 
-import asyncio
-
-import pytest
-
 from app.backtest import BacktestBroker, BacktestEngine
-from app.brokers import BrokerOrderRequest, TInvestAdapter
+from app.brokers import TInvestAdapter
 from app.models.enums import OrderSide, OrderType
 from app.strategies import (
     DCAGridConfig,
@@ -97,14 +93,20 @@ def test_async_trading_methods_not_implemented() -> None:
     broker = TInvestAdapter()
     order_manager = OrderManager(broker)
 
-    async def _run() -> None:
-        request = BrokerOrderRequest(
-            instrument_figi="BBG004730N88",
-            side=OrderSide.BUY,
-            quantity=1,
-            type=OrderType.MARKET,
-        )
-        await order_manager.create(request)
+    # MVP-6.1: Order Manager is a broker-neutral execution domain. It can create
+    # an ExecutionIntent and is wired to a broker; live broker submission is not
+    # triggered here (no real T-Invest connectivity).
+    from decimal import Decimal
 
-    with pytest.raises(NotImplementedError):
-        asyncio.run(_run())
+
+    intent = order_manager.create_intent(
+        intent_id="i-1",
+        trade_id="bot-1",
+        instrument_figi="BBG004730N88",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("1"),
+        idempotency_key="idem-1",
+    )
+    assert intent.intent_id == "i-1"
+    assert order_manager.get_intent("i-1") is intent
