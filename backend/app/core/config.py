@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     # Optional WebSocket stream endpoint. Defaults to wss://.../ws derived from
     # the REST base url when unset.
     tinvest_stream_url: str | None = None
+    # When True the app runs live-execution recovery at startup and gates live
+    # execution on it (reconciliation must be SAFE before new orders).
+    live_trading_enabled: bool = False
 
 
 @lru_cache

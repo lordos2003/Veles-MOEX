@@ -14,7 +14,14 @@ from enum import StrEnum
 
 from app.brokers.base import BrokerAdapter
 from app.models.enums import OrderStatus
-from app.trading.domain import TERMINAL_STATES, OrderState, OrderUpdate, PositionUpdate
+from app.trading.domain import (
+    TERMINAL_STATES,
+    Fill,
+    InternalOrder,
+    OrderState,
+    OrderUpdate,
+    PositionUpdate,
+)
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
 from app.trading.state import LiveStateStore
@@ -43,6 +50,7 @@ class RecoveryResult:
     reason: str | None = None
     recovered_orders: int = 0
     recovered_positions: int = 0
+    recovered_fills: int = 0
 
     @property
     def safe(self) -> bool:
@@ -63,6 +71,7 @@ class LiveRecoveryCoordinator:
         self._order_manager = order_manager
         self._position_manager = position_manager
         self._broker = broker
+        self._blocked_reason: str | None = None
 
     async def persist_snapshot(self) -> None:
         """Persist the current in-memory live state to the durable store."""
@@ -77,6 +86,7 @@ class LiveRecoveryCoordinator:
         """
         snapshot = await self._store.load_snapshot()
         self._order_manager.load_snapshot(snapshot)
+        self._blocked_reason = None
 
         broker_orders = await self._broker.get_orders(account_id)
         by_broker_id = {order.order_id: order for order in broker_orders}
@@ -86,44 +96,32 @@ class LiveRecoveryCoordinator:
             if order.idempotency_key
         }
 
-        recovered_orders = 0
-        unresolved: list[str] = []
+        resolved_orders: list[InternalOrder] = []
         for order in list(self._order_manager.list_orders()):
             if order.status in TERMINAL_STATES:
                 continue
-            broker_order = self._match(order, by_broker_id, by_idempotency)
-            if broker_order is None and order.broker_order_id:
-                try:
-                    broker_order = await self._broker.get_order(order.broker_order_id, account_id)
-                except Exception:
-                    broker_order = None
-            if broker_order is None:
+            await self._reconcile_order(
+                order, account_id, by_broker_id, by_idempotency, resolved_orders
+            )
+        recovered_orders = 0
+        unresolved: list[str] = []
+        for order in resolved_orders:
+            if order.status == OrderState.UNKNOWN:
                 unresolved.append(order.order_id)
-                self._order_manager.on_order_update(
-                    OrderUpdate(
-                        broker_order_id=order.broker_order_id,
-                        status=OrderState.UNKNOWN,
-                        idempotency_key=order.idempotency_key,
-                    )
-                )
-                continue
-            if order.broker_order_id is None and broker_order.order_id:
-                order.broker_order_id = broker_order.order_id
-            try:
-                self._order_manager.on_order_update(
-                    OrderUpdate(
-                        broker_order_id=broker_order.order_id,
-                        status=_ORDER_STATUS_TO_STATE.get(broker_order.status, OrderState.UNKNOWN),
-                        idempotency_key=order.idempotency_key,
-                        reject_info=broker_order.reject_info,
-                    )
-                )
+            else:
                 recovered_orders += 1
-            except Exception:
-                unresolved.append(order.order_id)
+        if unresolved:
+            self._blocked_reason = f"unresolved active orders: {', '.join(unresolved)}"
+
+        broker_positions = await self._broker.get_open_positions(account_id)
+        broker_figis = {position.instrument_figi for position in broker_positions}
+        for position in list(self._order_manager.positions().list()):
+            # Broker facts win: a local position the broker no longer reports is stale.
+            if position.instrument_figi not in broker_figis:
+                self._order_manager.positions().remove(position.instrument_figi)
 
         recovered_positions = 0
-        for position in await self._broker.get_open_positions(account_id):
+        for position in broker_positions:
             self._order_manager.on_position_update(
                 PositionUpdate(
                     instrument_figi=position.instrument_figi,
@@ -136,17 +134,84 @@ class LiveRecoveryCoordinator:
             )
             recovered_positions += 1
 
-        blocked = bool(unresolved)
-        reason = f"unresolved active orders: {', '.join(unresolved)}" if blocked else None
+        recovered_fills = 0
+        for deal in await self._broker.get_deals(account_id):
+            order = self._order_manager.find_by_broker(deal.order_id)
+            if order is None:
+                continue
+            self._order_manager.record_fill(
+                Fill(
+                    fill_id=deal.deal_id,
+                    internal_order_id=order.order_id,
+                    quantity=deal.quantity,
+                    price=deal.price,
+                    fee=deal.commission,
+                    broker_execution_id=deal.deal_id,
+                    timestamp=deal.happened_at or datetime.now(UTC),
+                )
+            )
+            recovered_fills += 1
 
+        blocked = bool(unresolved)
         await self.persist_snapshot()
 
         return RecoveryResult(
             status=RecoveryStatus.BLOCKED if blocked else RecoveryStatus.SAFE,
-            reason=reason,
+            reason=self._blocked_reason,
             recovered_orders=recovered_orders,
             recovered_positions=recovered_positions,
+            recovered_fills=recovered_fills,
         )
+
+    async def _reconcile_order(
+        self,
+        order: InternalOrder,
+        account_id: str,
+        by_broker_id: dict,
+        by_idempotency: dict,
+        resolved_orders: list[InternalOrder],
+    ) -> None:
+        broker_order = self._match(order, by_broker_id, by_idempotency)
+        if broker_order is None and order.broker_order_id:
+            try:
+                broker_order = await self._broker.get_order(order.broker_order_id, account_id)
+            except Exception:
+                broker_order = None
+        if broker_order is None:
+            # Cannot resolve safely: keep UNKNOWN so unsafe execution stays blocked.
+            self._order_manager.on_order_update(
+                OrderUpdate(
+                    broker_order_id=order.broker_order_id,
+                    status=OrderState.UNKNOWN,
+                    idempotency_key=order.idempotency_key,
+                )
+            )
+            resolved_orders.append(order)
+            return
+        if order.broker_order_id is None and broker_order.order_id:
+            order.broker_order_id = broker_order.order_id
+        try:
+            self._order_manager.on_order_update(
+                OrderUpdate(
+                    broker_order_id=broker_order.order_id,
+                    status=_ORDER_STATUS_TO_STATE.get(broker_order.status, OrderState.UNKNOWN),
+                    idempotency_key=order.idempotency_key,
+                    reject_info=broker_order.reject_info,
+                    # Broker facts replace stale local fill/avg values.
+                    filled_quantity=broker_order.executed_quantity,
+                    average_fill_price=broker_order.price,
+                )
+            )
+            resolved_orders.append(order)
+        except Exception:
+            self._order_manager.on_order_update(
+                OrderUpdate(
+                    broker_order_id=order.broker_order_id,
+                    status=OrderState.UNKNOWN,
+                    idempotency_key=order.idempotency_key,
+                )
+            )
+            resolved_orders.append(order)
 
     def _match(self, order, by_broker_id, by_idempotency):
         if order.broker_order_id and order.broker_order_id in by_broker_id:

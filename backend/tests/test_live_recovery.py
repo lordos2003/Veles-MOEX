@@ -14,11 +14,13 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from app.brokers.base import BrokerOrder, BrokerPosition
+from app.brokers.base import BrokerAccount, BrokerDeal, BrokerOrder, BrokerPosition
 from app.models import Base
 from app.models.enums import OrderSide, OrderStatus, OrderType
 from app.persistence.execution_state import SqlAlchemyLiveStateStore
 from app.trading import (
+    LiveExecutionBlocked,
+    LiveExecutionService,
     LiveRecoveryCoordinator,
     LiveStateSnapshot,
     OrderManager,
@@ -26,6 +28,7 @@ from app.trading import (
 )
 from app.trading.domain import Fill, InternalOrder, OrderState, TradeFill
 from app.trading.position_manager import Position, PositionManager
+from app.trading.state import InMemoryLiveStateStore
 
 
 def _make_order(
@@ -77,16 +80,34 @@ async def store():
 class FakeBroker:
     """Duck-typed broker used by the recovery coordinator."""
 
-    def __init__(self, orders=None, positions=None, get_order=None) -> None:
+    def __init__(self, orders=None, positions=None, get_order=None, deals=None) -> None:
         self._orders = orders or []
         self._positions = positions or []
         self._get_order = get_order
+        self._deals = deals or []
 
     async def get_orders(self, account_id: str | None = None) -> list:
         return self._orders
 
     async def get_open_positions(self, account_id: str | None = None) -> list:
         return self._positions
+
+    async def get_deals(self, account_id: str | None = None) -> list:
+        return self._deals
+
+    async def get_accounts(self) -> list:
+        return [BrokerAccount(account_id="acc-1")]
+
+    async def place_order(self, request) -> BrokerOrder:
+        return BrokerOrder(
+            order_id=request.idempotency_key or "broker-1",
+            status=OrderStatus.SUBMITTED,
+            account_id=request.account_id,
+            instrument_figi=request.instrument_figi,
+            type=request.type,
+            side=request.side,
+            requested_quantity=request.quantity,
+        )
 
     async def get_order(self, order_id: str, account_id: str | None = None) -> BrokerOrder:
         if self._get_order is not None:
@@ -335,3 +356,164 @@ def test_persistence_reloads_into_domain_types():
     assert "InternalOrder" in store_src
     assert "Position" in store_src
     assert "BrokerOrder" not in store_src
+
+
+# --- MVP-6.3 corrections (review) ---------------------------------------------
+
+
+async def test_broker_fill_facts_replace_stale_local_values(store):
+    """Point 3: reconciliation uses broker executed quantity / average price."""
+    await store.save_snapshot(LiveStateSnapshot(orders=[_make_order(filled="0", avg="0")]))
+    broker = FakeBroker(
+        orders=[
+            BrokerOrder(
+                order_id="broker-1",
+                status=OrderStatus.FILLED,
+                idempotency_key="key-1",
+                executed_quantity=Decimal("8"),
+                price=Decimal("90"),
+            )
+        ],
+        positions=[
+            BrokerPosition(
+                account_id="acc-1", instrument_figi="BBG000", quantity=Decimal("8"),
+                average_price=Decimal("90"),
+            )
+        ],
+    )
+    om = OrderManager(broker=broker)
+    coordinator = LiveRecoveryCoordinator(store, om, om.positions(), broker)
+    result = await coordinator.recover("acc-1")
+    assert result.safe is True
+    order = om.get_order("order-1")
+    assert order.filled_quantity == Decimal("8")
+    assert order.average_fill_price == Decimal("90")
+
+
+async def test_stale_local_position_removed_when_broker_closes(store):
+    """Point 4: broker is position-authoritative; stale local positions are dropped."""
+    await store.save_snapshot(
+        LiveStateSnapshot(
+            positions=[
+                Position(
+                    instrument_figi="BBG000",
+                    quantity=Decimal("5"),
+                    average_price=Decimal("50"),
+                )
+            ]
+        )
+    )
+    broker = FakeBroker(positions=[])
+    om = OrderManager(broker=broker)
+    coordinator = LiveRecoveryCoordinator(store, om, om.positions(), broker)
+    result = await coordinator.recover("acc-1")
+    assert result.safe is True
+    assert om.positions().get("BBG000") is None
+    assert om.positions().list() == []
+
+
+async def test_missing_execution_recovered_and_not_double_applied(store):
+    """Point 5: executions after the last snapshot are recovered and deduped."""
+    await store.save_snapshot(
+        LiveStateSnapshot(
+            orders=[_make_order(status=OrderState.SUBMITTED, quantity="10")],
+        )
+    )
+    broker = FakeBroker(
+        orders=[
+            BrokerOrder(
+                order_id="broker-1",
+                status=OrderStatus.FILLED,
+                idempotency_key="key-1",
+                requested_quantity=Decimal("10"),
+                executed_quantity=Decimal("10"),
+                price=Decimal("100"),
+            )
+        ],
+        positions=[
+            BrokerPosition(
+                account_id="acc-1", instrument_figi="BBG000", quantity=Decimal("10"),
+                average_price=Decimal("100"),
+            )
+        ],
+        deals=[
+            BrokerDeal(
+                deal_id="t1",
+                instrument_figi="BBG000",
+                side=OrderSide.BUY,
+                quantity=Decimal("10"),
+                price=Decimal("100"),
+                order_id="broker-1",
+                commission=Decimal("1"),
+            )
+        ],
+    )
+    om = OrderManager(broker=broker)
+    coordinator = LiveRecoveryCoordinator(store, om, om.positions(), broker)
+    result = await coordinator.recover("acc-1")
+    assert result.safe is True
+    assert result.recovered_fills == 1
+    assert len(om.list_fills()) == 1
+    assert om.positions().get("BBG000").quantity == Decimal("10")
+
+    # A duplicate stream fill must not be applied twice.
+    om.on_trade_fill(
+        TradeFill(
+            execution_id="t1",
+            broker_order_id="broker-1",
+            quantity=Decimal("10"),
+            price=Decimal("100"),
+        )
+    )
+    assert len(om.list_fills()) == 1
+    assert om.positions().get("BBG000").quantity == Decimal("10")
+
+
+async def test_startup_recovery_blocks_until_safe():
+    """Point 1: startup recovery runs before execution and BLOCKED gates it."""
+    store = InMemoryLiveStateStore()
+    await store.save_snapshot(LiveStateSnapshot(orders=[_make_order(status=OrderState.SUBMITTED)]))
+    broker = FakeBroker(
+        orders=[], get_order=lambda oid, acc: (_ for _ in ()).throw(LookupError(oid))
+    )
+    om = OrderManager(broker=broker)
+    service = LiveExecutionService(broker, store, om, om.positions(), "acc-1")
+    result = await service.start()
+    assert result.safe is False
+    assert service.can_execute is False
+    intent = om.create_intent(
+        intent_id="i-2",
+        trade_id="bot-1",
+        instrument_figi="BBG000",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("10"),
+        account_id="acc-1",
+    )
+    with pytest.raises(LiveExecutionBlocked):
+        await service.submit(intent)
+
+
+async def test_startup_recovery_safe_allows_execution():
+    """Point 1: a SAFE startup recovery lets new execution proceed."""
+    store = InMemoryLiveStateStore()
+    await store.save_snapshot(LiveStateSnapshot(orders=[_make_order()]))
+    broker = FakeBroker(
+        orders=[_broker_order("broker-1", OrderStatus.FILLED, idempotency_key="key-1")]
+    )
+    om = OrderManager(broker=broker)
+    service = LiveExecutionService(broker, store, om, om.positions(), "acc-1")
+    result = await service.start()
+    assert result.safe is True
+    assert service.can_execute is True
+    intent = om.create_intent(
+        intent_id="i-3",
+        trade_id="bot-1",
+        instrument_figi="BBG000",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("10"),
+        account_id="acc-1",
+    )
+    order = await service.submit(intent)
+    assert order is not None

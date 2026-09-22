@@ -62,6 +62,10 @@ class PositionManager:
     def clear(self) -> None:
         self._positions.clear()
 
+    def remove(self, instrument_figi: str) -> Position | None:
+        """Drop a position so broker facts are authoritative (no stale state)."""
+        return self._positions.pop(instrument_figi, None)
+
     def load_state(self, positions: list[Position]) -> None:
         """Replace the manager state with a recovered set of positions."""
         self._positions.clear()

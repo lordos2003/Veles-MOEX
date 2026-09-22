@@ -301,3 +301,21 @@ async def test_reconnect_after_disconnect() -> None:
     await task
     assert transport.connections >= 2
     assert transport.closed >= 2
+
+
+async def test_reconnect_runs_recovery_before_resume() -> None:
+    """Point 2: the full recovery hook runs on reconnect before live events."""
+    om = OrderManager(PlaceBroker(), PositionManager())
+    recovery_calls: list[str] = []
+
+    async def recovery_hook() -> None:
+        recovery_calls.append("recovered")
+
+    adapter = RecoveryAdapter()
+    transport = FakeStreamTransport(batches=[])
+    mgr = TInvestStreamManager(adapter, transport, om, "acc-1", recovery=recovery_hook)
+    await mgr._run_session()
+
+    assert recovery_calls == ["recovered"]
+    assert transport.connections == 1
+    assert transport.messages_calls == 1

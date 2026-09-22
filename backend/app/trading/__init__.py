@@ -14,6 +14,7 @@ from app.trading.domain import (
     can_transition,
 )
 from app.trading.engine import TradingEngine
+from app.trading.live_execution import LiveExecutionBlocked, LiveExecutionService
 from app.trading.order_manager import OrderManager, OrderStateError
 from app.trading.position_manager import Position, PositionManager
 from app.trading.recovery import LiveRecoveryCoordinator, RecoveryResult, RecoveryStatus
@@ -36,6 +37,8 @@ __all__ = [
     "InMemoryOrderRepository",
     "InMemoryPositionRepository",
     "InternalOrder",
+    "LiveExecutionBlocked",
+    "LiveExecutionService",
     "LiveRecoveryCoordinator",
     "LiveStateSnapshot",
     "LiveStateStore",

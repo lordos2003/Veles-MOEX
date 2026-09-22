@@ -368,6 +368,20 @@ class OrderManager:
     def list_fills(self) -> list[Fill]:
         return self._fills.list()
 
+    def record_fill(self, fill: Fill) -> None:
+        """Record a fill for deduplication without re-applying it to order/position.
+
+        Used by reconciliation so already-known executions (from broker facts)
+        are never applied twice by later stream events. Duplicate fill ids are
+        ignored.
+        """
+        if self._fills.has(fill.fill_id):
+            return
+        self._fills.save(fill)
+
+    def find_by_broker(self, broker_order_id: str) -> InternalOrder | None:
+        return self._orders.get_by_broker(broker_order_id)
+
     def positions(self) -> PositionManager:
         return self._positions
 
