@@ -16,7 +16,12 @@ FastAPI (Python)
 BrokerAdapter (абстракция)
    │
    ├── TInvestAdapter ──→ TInvestClient ──→ T-Invest API ──→ MOEX   (Live)
+   ├── TInvestMcpAdapter ──→ MCP Client ──→ T-Invest MCP ──→ MOEX   (Live)
    └── BacktestBroker                                              (Backtest, та же логика)
+
+TInvestAdapter и TInvestMcpAdapter — два транспорта одного брокера T-Invest,
+а не два разных Broker. Выбранный пользователем транспорт определяется на
+уровне конфигурации/фабрики и не должен просачиваться в Strategy/Backtest/Trading Engine.
 ```
 
 В будущем:
@@ -36,8 +41,10 @@ Strategy Engine и исполняет сделки через `BacktestBroker`. 
 1. **Один движок.** Live и Backtest используют один и тот же
    Strategy/Trading Engine; отличаются только адаптеры исполнения
    (`TInvestAdapter` vs `BacktestBroker`).
-2. **Изоляция брокера.** Strategy Engine не знает о T-Invest. Вся
-   брокерская специфика — внутри слоя `BrokerAdapter`.
+2. **Изоляция брокера и транспорта.** Strategy/Backtest/Trading Engine не знают
+   ни о T-Invest, ни о способе подключения к нему. Вся брокерская и транспортная
+   специфика — внутри слоя `BrokerAdapter`. Open API и MCP являются двумя
+   реализациями одного брокерского подключения.
 3. **Стратегия — это данные.** Стратегия описывается конфигурацией (например,
    условиями входа, сеткой DCA, типами тейк-профита), а не пользовательским
    Python-кодом.
@@ -56,7 +63,9 @@ Strategy Engine и исполняет сделки через `BacktestBroker`. 
 | Market Data Service | Normalized last price / candles, chunking, sort, de-duplication |
 | Broker Data Service | Accounts / positions / orders / deals (read-only, filtering) |
 | BrokerAdapter | Abstract broker contract (read + trade) |
-| TInvestAdapter | T-Invest read-only integration (Live) |
+| TInvestAdapter | T-Invest Open API read-only integration (Live) |
+| TInvestMcpAdapter | T-Invest MCP integration boundary (Live) |
+| TInvestTransport/Factory | User-selectable transport for the single T-Invest broker |
 | BacktestBroker | Historical-data implementation (Backtest) |
 | PostgreSQL | Persistence (instruments, market candles) |
 | Redis | Cache/queue/events |
@@ -185,6 +194,25 @@ Veles-совместимый полноценный Exit Engine, broker-agnostic
   (Task №7), Position и BacktestBroker. Второй системы индикаторов/сигналов/
   позиций не создано.
 - Не реализовано: Trailing, partial fills, tick engine, live trading.
+
+## T-Invest connection transport
+
+T-Invest remains the **single broker** in MVP. The application supports two
+connection transports as an architectural choice:
+
+- **Open API** — direct T-Invest API integration used by the current `TInvestAdapter`.
+- **T-Invest MCP** — MCP/HTTP Streamable integration represented by `TInvestMcpAdapter`.
+
+The user may select the transport in the broker connection settings. The selected
+transport is an implementation detail of `BrokerAdapter`; it must not change
+strategy semantics, backtest behavior, position models, or order manager contracts.
+
+The official T-Invest MCP endpoint is `https://invest-public-api.tbank.ru/mcp`.
+T-Bank documents Bearer-token authentication and HTTP Streamable transport for MCP.
+
+For the current MVP, the existing Open API adapter remains the implemented read-only
+path. MCP is explicitly part of the target integration boundary and must be
+implemented before the UI exposes MCP as an executable transport.
 
 ## Remarks
 
