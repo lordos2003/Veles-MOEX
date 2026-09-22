@@ -16,12 +16,15 @@ from app.trading.domain import (
 from app.trading.engine import TradingEngine
 from app.trading.order_manager import OrderManager, OrderStateError
 from app.trading.position_manager import Position, PositionManager
+from app.trading.recovery import LiveRecoveryCoordinator, RecoveryResult, RecoveryStatus
 from app.trading.repository import (
     InMemoryFillRepository,
     InMemoryIntentRepository,
     InMemoryOrderRepository,
+    InMemoryPositionRepository,
 )
 from app.trading.risk_manager import RiskManager
+from app.trading.state import InMemoryLiveStateStore, LiveStateSnapshot, LiveStateStore
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
@@ -29,8 +32,13 @@ __all__ = [
     "Fill",
     "InMemoryFillRepository",
     "InMemoryIntentRepository",
+    "InMemoryLiveStateStore",
     "InMemoryOrderRepository",
+    "InMemoryPositionRepository",
     "InternalOrder",
+    "LiveRecoveryCoordinator",
+    "LiveStateSnapshot",
+    "LiveStateStore",
     "OrderManager",
     "OrderState",
     "OrderStateError",
@@ -38,6 +46,8 @@ __all__ = [
     "Position",
     "PositionManager",
     "PositionUpdate",
+    "RecoveryResult",
+    "RecoveryStatus",
     "RiskManager",
     "TradeFill",
     "TradingEngine",

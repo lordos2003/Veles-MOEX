@@ -100,6 +100,7 @@ class BrokerOrder:
     requested_quantity: Decimal = Decimal("0")
     executed_quantity: Decimal = Decimal("0")
     price: Decimal | None = None
+    idempotency_key: str | None = None
     currency: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

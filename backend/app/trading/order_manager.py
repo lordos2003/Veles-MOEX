@@ -33,6 +33,7 @@ from app.trading.repository import (
     InMemoryIntentRepository,
     InMemoryOrderRepository,
 )
+from app.trading.state import LiveStateSnapshot
 
 _BROKER_STATUS_MAP = {
     OrderStatus.NEW: OrderState.SUBMITTED,
@@ -91,6 +92,42 @@ class OrderManager:
 
     def get_intent(self, intent_id: str) -> ExecutionIntent | None:
         return self._intents.get(intent_id)
+
+    def list_intents(self) -> list[ExecutionIntent]:
+        return self._intents.list()
+
+    def snapshot(self) -> LiveStateSnapshot:
+        """Snapshot the live execution state for durable persistence."""
+        return LiveStateSnapshot(
+            intents=self._intents.list(),
+            orders=self._orders.list(),
+            fills=self._fills.list(),
+            positions=self._positions.list(),
+        )
+
+    def load_snapshot(self, snapshot: LiveStateSnapshot) -> None:
+        """Restore the live execution state from a recovered snapshot."""
+        self._intents.clear()
+        self._orders.clear()
+        self._fills.clear()
+        for intent in snapshot.intents:
+            self._intents.save(intent)
+        for order in snapshot.orders:
+            self._orders.save(order)
+        for fill in snapshot.fills:
+            self._fills.save(fill)
+        self._positions.load_state(snapshot.positions)
+        self._order_seq = self._max_order_seq()
+
+    def _max_order_seq(self) -> int:
+        max_seq = 0
+        for order in self._orders.list():
+            try:
+                seq = int(order.order_id.rsplit("-", 1)[1])
+            except (IndexError, ValueError):
+                continue
+            max_seq = max(max_seq, seq)
+        return max_seq
 
     # --- submission ---------------------------------------------------------------
 

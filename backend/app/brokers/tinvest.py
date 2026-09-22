@@ -518,6 +518,7 @@ class TInvestAdapter(BrokerAdapter):
             requested_quantity=Decimal(str(requested)),
             executed_quantity=Decimal(str(executed)),
             price=_quotation_to_decimal(raw.get("initialSecurityPrice")),
+            idempotency_key=raw.get("orderRequestId") or raw.get("order_request_id"),
             currency=raw.get("currency"),
             created_at=_timestamp_to_datetime(raw.get("orderDate")),
             updated_at=updated_at,

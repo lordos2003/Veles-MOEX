@@ -78,7 +78,19 @@ ALLOWED_TRANSITIONS: dict[OrderState, frozenset[OrderState]] = {
     OrderState.CANCELLED: frozenset(),
     OrderState.REJECTED: frozenset(),
     OrderState.FAILED: frozenset(),
-    OrderState.UNKNOWN: frozenset(),
+    # An UNKNOWN submission outcome is non-terminal for recovery: it may be
+    # resolved to the real broker state (e.g. after a lost response).
+    OrderState.UNKNOWN: frozenset(
+        {
+            OrderState.SUBMITTED,
+            OrderState.WORKING,
+            OrderState.PARTIALLY_FILLED,
+            OrderState.FILLED,
+            OrderState.CANCELLED,
+            OrderState.REJECTED,
+            OrderState.FAILED,
+        }
+    ),
 }
 
 TERMINAL_STATES = frozenset(

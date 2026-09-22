@@ -59,6 +59,15 @@ class PositionManager:
     def list(self) -> list[Position]:
         return list(self._positions.values())
 
+    def clear(self) -> None:
+        self._positions.clear()
+
+    def load_state(self, positions: list[Position]) -> None:
+        """Replace the manager state with a recovered set of positions."""
+        self._positions.clear()
+        for position in positions:
+            self._positions[position.instrument_figi] = position
+
     def apply_fill(
         self,
         instrument_figi: str,
