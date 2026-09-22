@@ -15,6 +15,7 @@ Backtest / Trading Engine) — следующие этапы, ещё не реа
 - Модульный монолит, без микросервисов.
 - Один будущий Strategy/Trading Engine для Live и Backtest.
 - T-Invest — единственный брокер MVP; за ним следует MOEX.
+- T-Invest поддерживает два предусмотренных транспорта подключения: Open API и T-Invest MCP; пользовательский выбор транспорта не создаёт второго брокера.
 - Прямое подключение к MOEX (ASTS/FIX/TWIME) и Paper Trading — вне MVP.
 
 ## Уже реализовано
@@ -113,15 +114,15 @@ Browser (React/TS)
                  ▼
            BrokerAdapter
                  │
-                 ▼
-          TInvestAdapter
-                 │
-                 ▼
-          TInvestClient
-                 │
-                 ▼
-           T-Invest API
-                 │
+          ┌──────┴──────┐
+          ▼             ▼
+   TInvestAdapter   TInvestMcpAdapter
+     (Open API)        (MCP)
+          │             │
+          ▼             ▼
+   T-Invest API     T-Invest MCP
+          │             │
+          └──────┬──────┘
                  ▼
                 MOEX
 ```
@@ -229,8 +230,9 @@ docker compose up -d
 
 ## T-Invest
 
-Интеграция **read-only**. Токен задаётся только в окружении backend и никогда
-не попадает в Git:
+Интеграция **read-only** на текущем этапе. Архитектура предусматривает два транспорта одного брокера — Open API и T-Invest MCP; выбор транспорта должен быть скрыт за BrokerAdapter. Торговые методы остаются не реализованными до Live Trading.
+
+Токен задаётся только в окружении backend и никогда не попадает в Git:
 
 ```powershell
 $env:TINVEST_TOKEN="your_token"
@@ -263,7 +265,8 @@ smoke-тест T-Invest требует пользовательский `TINVEST
 
 ## Архитектурные ограничения
 
-- T-Invest — единственный брокер MVP.
+- T-Invest — единственный брокер MVP; Open API и MCP являются двумя транспортами одного и того же брокерского подключения.
+- Пользователь выбирает транспорт T-Invest в настройках подключения; Strategy/Trading Engine не зависит от выбранного транспорта.
 - Прямой MOEX API, ASTS/FIX/TWIME — вне MVP.
 - Paper Trading — вне MVP.
 - Микросервисы — вне MVP.
