@@ -24,7 +24,7 @@ from app.trading.repository import (
     InMemoryOrderRepository,
     InMemoryPositionRepository,
 )
-from app.trading.risk_manager import RiskManager
+from app.trading.risk_manager import RiskLimits, RiskManager, RiskRejected
 from app.trading.state import InMemoryLiveStateStore, LiveStateSnapshot, LiveStateStore
 
 __all__ = [
@@ -52,6 +52,8 @@ __all__ = [
     "RecoveryResult",
     "RecoveryStatus",
     "RiskManager",
+    "RiskRejected",
+    "RiskLimits",
     "TradeFill",
     "TradingEngine",
     "can_transition",

@@ -1,26 +1,32 @@
-"""Trading Engine.
+"""Trading Engine (broker-neutral orchestration).
 
-The Trading Engine pairs a Strategy Engine with broker/execution components
-(Order Manager, Position Manager, Risk Manager) and a BrokerAdapter. Live uses
+The Trading Engine pairs a Strategy Engine with execution components (Order
+Manager, Position Manager, Risk Manager) and a BrokerAdapter. Live uses
 TInvestAdapter; Backtest uses BacktestBroker — both implement BrokerAdapter, so
 Live and Backtest share one Trading Engine (Architecture & Product Specification
 section 11).
 
-Trading logic is not implemented yet; this defines the orchestration seams.
+`process()` is the authoritative orchestration seam: it evaluates the strategy
+plan, then routes execution through the Risk Manager before sending an intent to
+the Order Manager. The Risk Manager is never bypassed. T-Invest is never imported
+here; financial decisions come only from the Strategy/Risk configuration.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from app.brokers import BrokerAdapter
 from app.strategies.domain import MarketContext, Plan
 from app.strategies.engine import StrategyEngine
+from app.trading.domain import ExecutionIntent
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
 from app.trading.risk_manager import RiskManager
 
 
 class TradingEngine:
-    """Orchestrates strategy evaluation and broker execution."""
+    """Orchestrates strategy evaluation and risk-gated broker execution."""
 
     def __init__(
         self,
@@ -29,21 +35,49 @@ class TradingEngine:
         order_manager: OrderManager,
         position_manager: PositionManager,
         risk_manager: RiskManager,
+        *,
+        strategy_config=None,
+        intent_factory: Callable[[Plan, MarketContext], ExecutionIntent | None] | None = None,
     ) -> None:
         self.broker = broker
         self.strategy_engine = strategy_engine
         self.order_manager = order_manager
         self.position_manager = position_manager
         self.risk_manager = risk_manager
+        self._strategy_config = strategy_config
+        self._intent_factory = intent_factory
+        self._started = False
+
+    @property
+    def started(self) -> bool:
+        return self._started
 
     async def start(self) -> None:
-        """Connect to the broker and begin processing."""
-        raise NotImplementedError("Trading engine start is not implemented yet")
+        """Begin processing.
+
+        The live runtime already manages the broker connection, so the engine
+        does not open a second broker connection here (no fictitious behavior).
+        """
+        self._started = True
 
     async def stop(self) -> None:
-        """Stop processing and disconnect."""
-        raise NotImplementedError("Trading engine stop is not implemented yet")
+        """Stop processing."""
+        self._started = False
+
+    async def submit_intent(self, intent: ExecutionIntent):
+        """Risk-gated submission of a pre-built execution intent."""
+        if not self._started:
+            raise RuntimeError("TradingEngine is not started")
+        self.risk_manager.check_order(intent)  # raises RiskRejected on violation
+        return await self.order_manager.submit(intent)
 
     async def process(self, context: MarketContext) -> Plan:
-        """Evaluate the strategy and route the resulting plan to execution."""
-        raise NotImplementedError("Trading engine processing is not implemented yet")
+        """Evaluate the strategy and route execution through the Risk Manager."""
+        if not self._started:
+            raise RuntimeError("TradingEngine is not started")
+        plan = self.strategy_engine.evaluate(self._strategy_config, context)
+        if plan.entry is not None and self._intent_factory is not None:
+            intent = self._intent_factory(plan, context)
+            if intent is not None:
+                await self.submit_intent(intent)
+        return plan

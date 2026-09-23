@@ -10,9 +10,11 @@ refused so unsafe new execution cannot resume.
 from __future__ import annotations
 
 from app.trading.domain import ExecutionIntent, InternalOrder
+from app.trading.engine import TradingEngine
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
 from app.trading.recovery import LiveRecoveryCoordinator, RecoveryResult
+from app.trading.risk_manager import RiskManager
 from app.trading.state import LiveStateStore
 
 
@@ -31,6 +33,9 @@ class LiveExecutionService:
         position_manager: PositionManager,
         account_id: str | None = None,
         transport=None,
+        *,
+        risk_manager: RiskManager | None = None,
+        trading_engine: TradingEngine | None = None,
     ) -> None:
         self._broker = broker
         self._order_manager = order_manager
@@ -42,6 +47,10 @@ class LiveExecutionService:
         self._session_owner = None
         self._stream_transport = transport
         self._stream_manager = None
+        self._risk_manager = risk_manager or RiskManager(position_manager=position_manager)
+        self._trading_engine = trading_engine or TradingEngine(
+            broker, None, order_manager, position_manager, self._risk_manager
+        )
 
     @property
     def can_execute(self) -> bool:
@@ -63,13 +72,15 @@ class LiveExecutionService:
         self._account_id = account_id
         result = await self._coordinator.recover(account_id)
         self._safe = result.safe
+        if result.safe:
+            await self._trading_engine.start()
         return result
 
     async def submit(self, intent: ExecutionIntent) -> InternalOrder:
-        """Submit an intent only after a SAFE recovery."""
+        """Submit an intent only after a SAFE recovery, through the Risk gate."""
         if not self._safe:
             raise LiveExecutionBlocked("live execution blocked until recovery succeeds")
-        return await self._order_manager.submit(intent)
+        return await self._trading_engine.submit_intent(intent)
 
     def build_stream_manager(self, transport):
         """Compose an OrderStateStream manager whose reconnect runs full recovery.
@@ -116,6 +127,7 @@ class LiveExecutionService:
 
     async def shutdown(self) -> None:
         """Stop the live stream and close the session/transport."""
+        await self._trading_engine.stop()
         if self._stream_manager is not None:
             self._stream_manager.stop()
         if self._stream_transport is not None:
@@ -156,6 +168,17 @@ def build_live_service() -> LiveExecutionService:
     store = SqlAlchemyLiveStateStore(session)
     order_manager = OrderManager(broker)
     position_manager = order_manager.positions()
-    service = LiveExecutionService(broker, store, order_manager, position_manager)
+    risk_manager = RiskManager(position_manager=position_manager)
+    trading_engine = TradingEngine(
+        broker, None, order_manager, position_manager, risk_manager
+    )
+    service = LiveExecutionService(
+        broker,
+        store,
+        order_manager,
+        position_manager,
+        risk_manager=risk_manager,
+        trading_engine=trading_engine,
+    )
     service._session_owner = session
     return service
