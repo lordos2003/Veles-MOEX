@@ -653,3 +653,38 @@ Blockers:
 6. Run and report `pytest`, `ruff check app tests scripts`, and frontend `npm run build`.
 7. One focused correction commit on `agent/review/mvp-6.4`. Do not push/merge/rebase master.
 8. Update REPORT on `agent/control` and stop.
+
+## REPORT — MVP-6.4 correction #2 (response to review)
+
+Task/status: `integration-trading-risk` — REPORT.
+
+Correction commits (reviewed + this round):
+- `b4a1deb` — `fix: document strategy-path boundary in production live composition`
+- `3ce159f` — `docs: state MVP-6 live integration boundary in task spec`
+
+### Changes
+- `backend/app/trading/engine.py`: added `TradingEngine.strategy_configured` property (False for production); `process()` raises a `RuntimeError` when `strategy_engine`/`strategy_config` is `None` (guard + explicit error), instead of only documenting the seam.
+- `backend/app/trading/live_execution.py`: `build_live_service()` annotated as execution-only composition with a boundary docstring (Strategy path is an integration seam, not wired in MVP-6).
+- `docs/architecture/TASK-09-LIVE-TRADING-MVP-6.md`: added `### MVP-6 live integration boundary` stating the live runtime wires only the risk-gated execution path `submit() -> submit_intent() -> RiskManager.check_order() -> OrderManager.submit()`, and that `TradingEngine.process()` (Strategy) and the bot-start lifecycle (`RiskManager.check_start()` / concurrent-bot control) are explicitly NOT wired in MVP-6 (boundary, not production-integrated). Contradictory claims removed.
+- Result: existing statements updated so no claim reads these paths as production-integrated.
+
+### Production execution path (verified)
+`LiveExecutionService.submit()` (guard `if not self._safe: reject`) -> `TradingEngine.submit_intent()` -> `RiskManager.check_order()` (raises `RiskRejected`) -> `OrderManager.submit()` -> broker. Recovery SAFE gate preserved.
+
+### Validation
+- `pytest`: **276 passed, 1 skipped** (`backend`, `asyncio_mode="auto"`).
+- `ruff check app tests scripts`: **All checks passed!**
+- frontend `npm run build`: **✓ built in 2.11s**.
+
+### Git state
+- `origin/agent/review/mvp-6.4` -> `3ce159f` (fast-forward `b4a1deb..3ce159f`).
+- `master` is **4 commits ahead** of `origin/master` (`75e336f`, `63ca560`, `b4a1deb`, `3ce159f`); master NOT pushed, no merge/rebase.
+- `origin/agent/control` will be updated with this REPORT commit only.
+
+### Git log (master, last 4)
+```
+3ce159f docs: state MVP-6 live integration boundary in task spec
+b4a1deb fix: document strategy-path boundary in production live composition
+63ca560 fix: guard TradingEngine.process against missing strategy config
+75e336f feat: integrate RiskManager and TradingEngine into live execution
+```
