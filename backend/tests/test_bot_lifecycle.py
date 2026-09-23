@@ -1,4 +1,4 @@
-"""VIP-6.5 Bot lifecycle tests (deterministic).
+"""MVP-6.5 Bot lifecycle tests (deterministic).
 
 These tests use only broker-neutral fakes and never place real orders. They
 cover the bot state machine, the RiskManager start guard, the execution gate and
@@ -264,3 +264,202 @@ async def test_safe_blocked_recovery_gate_still_blocks_with_bot_gate() -> None:
     assert result.safe is False
     with pytest.raises(LiveExecutionBlocked):
         await service.submit(_intent(om))
+
+
+# --- correction #1: lifecycle consistency -------------------------------------
+
+
+class FakeBotRepo:
+    """In-memory stand-in for BotRepository."""
+
+    def __init__(self, bots: list) -> None:
+        self._bots = bots
+        self.saved: list[tuple[int, str]] = []
+
+    async def get(self, bot_id: int):
+        for bot in self._bots:
+            if bot.id == bot_id:
+                return bot
+        return None
+
+    async def list(self) -> list:
+        return list(self._bots)
+
+    async def update_state(self, bot, state: BotState):
+        self.saved.append((bot.id, state.value))
+        bot.status = state.value
+        return bot
+
+
+def _persisted_bot(bot_id: int, status: str = "STOPPED"):
+    from app.models.bot import Bot
+
+    return Bot(
+        id=bot_id,
+        name=f"bot-{bot_id}",
+        strategy_version_id=1,
+        account_id=1,
+        instrument_id=1,
+        status=status,
+    )
+
+
+def _manager(risk: RiskManager, om: OrderManager | None = None, submit_cb=None):
+    def _factory(bot_id: int, state: BotState = BotState.STOPPED) -> BotRuntime:
+        return BotRuntime(bot_id, risk, submit_cb=submit_cb, order_manager=om, state=state)
+
+    return BotRuntimeManager(risk, runtime_factory=_factory)
+
+
+async def test_mutating_api_rejects_without_live_runtime() -> None:
+    from fastapi import HTTPException
+
+    from app.api import bots as bots_api
+
+    repo = FakeBotRepo([_persisted_bot(1)])
+    for endpoint in (bots_api.start_bot, bots_api.stop_bot, bots_api.emergency_stop_bot):
+        with pytest.raises(HTTPException) as ei:
+            await endpoint(1, repo, None)
+        assert ei.value.status_code == 503
+    assert repo.saved == []  # no bot state changed
+    assert _persisted_state(repo, 1) == "STOPPED"
+
+
+def _persisted_state(repo: FakeBotRepo, bot_id: int) -> str:
+    for bot in repo._bots:
+        if bot.id == bot_id:
+            return bot.status
+    raise AssertionError(f"bot {bot_id} not in repo")
+
+
+async def test_get_bot_endpoints_work_without_live_runtime() -> None:
+    from fastapi import HTTPException
+
+    from app.api import bots as bots_api
+
+    repo = FakeBotRepo([_persisted_bot(1)])
+    assert [b.id for b in await bots_api.list_bots(repo)] == [1]
+    assert (await bots_api.get_bot(1, repo)).id == 1
+    with pytest.raises(HTTPException) as ei:
+        await bots_api.get_bot(2, repo)
+    assert ei.value.status_code == 404
+
+
+async def test_persisted_running_bot_not_executable_after_restart() -> None:
+    risk = RiskManager(limits=RiskLimits(max_concurrent_bots=1))
+    om = OrderManager(FakeBroker())
+    manager = _manager(risk, om=om, submit_cb=om.submit)
+    repo = FakeBotRepo([_persisted_bot(1, status=BotState.RUNNING.value)])
+    await manager.restore_persisted_states(repo)
+    runtime = manager.get(1)
+    assert runtime is not None
+    # Restarted RUNNING is blocked until an explicit START.
+    assert runtime.state is BotState.ERROR
+    assert repo.saved == [(1, BotState.ERROR.value)]
+    # Risk slot is not implicitly occupied after restart.
+    assert risk.check_start(1) is True
+    # And the bot cannot submit.
+    with pytest.raises(BotStateError):
+        await runtime.submit_intent(_intent(om))
+    # An explicit START works again.
+    await manager.start(1)
+    assert manager.get(1).state is BotState.RUNNING
+
+
+async def test_stop_holds_risk_slot_during_cancellation() -> None:
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    risk = RiskManager(limits=RiskLimits(max_concurrent_bots=1))
+    observations: list[bool] = []
+    original_cancel = broker.cancel_order
+
+    async def spy_cancel(order_id: str, account_id: str | None = None) -> None:
+        observations.append(risk.check_start(1))
+        await original_cancel(order_id, account_id)
+
+    broker.cancel_order = spy_cancel
+    rt = BotRuntime(1, risk, submit_cb=om.submit, order_manager=om)
+    rt.start()
+    await om.submit(_intent(om))
+    await rt.stop()
+    # Slot occupied while cancellation was in progress, released afterwards.
+    assert observations == [False]
+    assert risk.check_start(1) is True
+    assert rt.state is BotState.STOPPED
+
+
+async def test_cancellation_failure_leaves_error_and_releases_slot() -> None:
+    from app.trading.domain import OrderState
+
+    class FailingOrderManager:
+        def list_orders(self) -> list:
+            return [
+                InternalOrder(
+                    order_id="o-1",
+                    intent_id="i-1",
+                    instrument_figi="BBG000",
+                    side=OrderSide.BUY,
+                    order_type=OrderType.MARKET,
+                    requested_quantity=Decimal("1"),
+                    status=OrderState.WORKING,
+                    bot_id=1,
+                )
+            ]
+
+        async def cancel(self, order_id: str) -> None:
+            raise RuntimeError("broker unavailable")
+
+    om = FailingOrderManager()
+    risk = RiskManager()
+    rt = BotRuntime(1, risk, submit_cb=None, order_manager=om)
+    rt.start()
+    with pytest.raises(RuntimeError):
+        await rt.stop()
+    assert rt.state is BotState.ERROR
+    # Risk state released after the lifecycle transition finished.
+    assert risk.check_start(1) is True
+
+
+async def test_rejected_start_persists_error_and_returns_api_error() -> None:
+    from fastapi import HTTPException
+
+    from app.api import bots as bots_api
+
+    risk = RiskManager(limits=RiskLimits(max_concurrent_bots=0))
+    om = OrderManager(FakeBroker())
+    manager = _manager(risk, om=om, submit_cb=om.submit)
+    bot = _persisted_bot(1)
+    repo = FakeBotRepo([bot])
+    with pytest.raises(HTTPException) as ei:
+        await bots_api.start_bot(1, repo, manager)
+    assert ei.value.status_code == 409
+    assert repo.saved == [(1, BotState.ERROR.value)]
+    assert bot.status == BotState.ERROR.value
+
+
+def test_no_disconnected_fallback_runtime_manager_created() -> None:
+    from types import SimpleNamespace
+
+    from app.api.deps import get_bot_runtime_manager
+
+    no_service = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+    assert get_bot_runtime_manager(no_service) is None
+    manager = BotRuntimeManager(RiskManager())
+    with_runtime = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(live_execution=SimpleNamespace(bot_runtime=manager)))
+    )
+    assert get_bot_runtime_manager(with_runtime) is manager
+
+
+async def test_emergency_stop_releases_risk_slot() -> None:
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    risk = RiskManager(limits=RiskLimits(max_concurrent_bots=1))
+    rt = BotRuntime(1, risk, submit_cb=om.submit, order_manager=om)
+    rt.start()
+    await om.submit(_intent(om))
+    await rt.emergency_stop()
+    assert rt.state is BotState.EMERGENCY_STOP
+    assert risk.check_start(1) is True
+    with pytest.raises(BotStateError):
+        await rt.submit_intent(_intent(om))

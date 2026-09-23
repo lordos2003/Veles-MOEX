@@ -266,11 +266,38 @@ In this MVP the live runtime wires:
 
 - The **bot lifecycle** as the upstream control layer (`BotRuntime` /
   `BotRuntimeManager`); a bot must be RUNNING before its intents are accepted.
-  BEGIN transitions run through `RiskManager.check_start()` before RUNNING and
-  `start_bot()` on success; normal STOP and EMERGENCY_STOP call `stop_bot()`.
+  START transitions run through `RiskManager.check_start()` before RUNNING and
+  `start_bot()` on success.
 - `RiskManager.check_order()` is the authoritative execution gate (emergency
   stop, position-size, daily-loss where data is available) and is called before
   every live order.
+
+Bot lifecycle semantics (correction #1):
+
+- **Normal STOP ordering**: RUNNING -> STOP_REQUESTED -> cancel active bot
+  orders -> `RiskManager.stop_bot()` -> STOPPED. The `max_concurrent_bots` slot
+  stays occupied while cancellation is in progress. Normal STOP does not close
+  the position. If cancellation fails, the bot transitions to ERROR and the
+  slot is released only after that transition.
+- **EMERGENCY_STOP**: blocks new intents, cancels active bot orders through the
+  broker-neutral `OrderManager`, and always releases the Risk Manager slot on
+  completion; the position is never closed automatically.
+- **Restart semantics** (persisted state vs runtime): at live-service startup,
+  persisted bot states are restored into the `BotRuntimeManager` from the
+  existing `BotRepository`. Persisted RUNNING/STARTING bots are restored in
+  ERROR (execution blocked until an explicit START); persisted STOP_REQUESTED is
+  restored as STOPPED; other states are restored as-is. The Risk Manager is
+  never re-occupied via `start_bot()` after a process restart, and the DB is
+  synced to the restored state, so DB and runtime cannot contradict on
+  executability.
+- **START rejection persistence**: if the Risk Manager rejects a START, the
+  persisted bot state is synced to the actual lifecycle state (ERROR) and the
+  API returns an explicit error; the DB is never left in RUNNING or stale
+  STOPPED.
+- **API error mapping** (mutating endpoints): bot not found -> 404; live
+  runtime unavailable -> 503; invalid lifecycle transition / risk-manager START
+  rejection -> 409; lifecycle execution failure -> 503. Mutations are rejected
+  when no real application `BotRuntimeManager` is wired (no fallback runtime).
 
 Remaining boundaries (kept in sync with the implementation, not
 production-integrated):

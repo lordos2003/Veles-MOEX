@@ -14,7 +14,6 @@ from app.services.broker_data import BrokerDataService
 from app.services.instruments import InstrumentService
 from app.services.market_data import MarketDataService
 from app.trading.bot_lifecycle import BotRuntimeManager
-from app.trading.risk_manager import RiskManager
 
 
 def get_broker_adapter() -> BrokerAdapter:
@@ -54,14 +53,14 @@ def get_bot_repository(
     return BotRepository(session)
 
 
-def get_bot_runtime_manager(request: Request) -> BotRuntimeManager:
-    """Return the application bot runtime manager.
+def get_bot_runtime_manager(request: Request) -> BotRuntimeManager | None:
+    """Return the application bot runtime manager, or ``None`` if not running.
 
-    When the live execution service is running it exposes the wired manager;
-    otherwise a default (execution-unwired) manager is returned so endpoints stay
-    usable for read-only/state operations.
+    Mutating bot endpoints require the real application manager that is wired
+    to the live execution service. No disconnected fallback manager is created.
+    Read-only (GET) bot endpoints do not require it.
     """
     service = getattr(request.app.state, "live_execution", None)
-    if service is not None and service.bot_runtime is not None:
+    if service is not None:
         return service.bot_runtime
-    return BotRuntimeManager(RiskManager())
+    return None

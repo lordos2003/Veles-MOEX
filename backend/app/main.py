@@ -33,7 +33,7 @@ async def lifespan(app: FastAPI):
         from app.trading.live_execution import build_live_service
 
         try:
-            service = build_live_service()
+            service = await build_live_service()
             result = await service.start()
             app.state.live_execution = service
             if result.safe:

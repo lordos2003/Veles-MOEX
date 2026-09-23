@@ -36,6 +36,7 @@ __all__ = [
     "BotState",
     "BotStateError",
     "BotStartRejected",
+    "RESTART_STATE_MAP",
     "can_transition",
 ]
 
@@ -64,6 +65,18 @@ ALLOWED_BOT_TRANSITIONS: dict[BotState, frozenset[BotState]] = {
 def can_transition(current: BotState, target: BotState) -> bool:
     """Return whether ``target`` is a legal transition from ``current``."""
     return target in ALLOWED_BOT_TRANSITIONS.get(current, frozenset())
+
+
+#: Persisted-state -> restored-runtime-state after a process restart.
+#: A bot persisted in RUNNING/STARTING was interrupted mid-execution; its
+#: runtime state is unknown, so it is restored in ERROR (execution blocked until
+#: an explicit START). STOP_REQUESTED is restored as STOPPED. Other states are
+#: restored as-is. The Risk Manager is never re-occupied via ``start_bot()``.
+RESTART_STATE_MAP: dict[BotState, BotState] = {
+    BotState.RUNNING: BotState.ERROR,
+    BotState.STARTING: BotState.ERROR,
+    BotState.STOP_REQUESTED: BotState.STOPPED,
+}
 
 
 class BotRuntime:
@@ -121,19 +134,38 @@ class BotRuntime:
         self._transition(BotState.RUNNING)
 
     async def stop(self) -> None:
-        """Normal stop: block new intents, cancel active orders, leave position open."""
+        """Normal stop: block new intents, cancel active orders, leave position open.
+
+        Order: RUNNING -> STOP_REQUESTED -> cancel active bot orders ->
+        ``RiskManager.stop_bot()`` -> STOPPED. The ``max_concurrent_bots`` slot
+        stays occupied while order cancellation is in progress. A failed
+        cancellation leaves the bot in ERROR; the Risk Manager slot is released
+        only after that lifecycle transition (no fake RUNNING/STOPPED).
+        """
         if self._state is BotState.STOPPED:
             return
         self._transition(BotState.STOP_REQUESTED)
+        try:
+            await self._cancel_active_orders()
+        except Exception:
+            self._transition(BotState.ERROR)
+            self._risk_manager.stop_bot(self.bot_id)
+            raise
         self._risk_manager.stop_bot(self.bot_id)
-        await self._cancel_active_orders()
         self._transition(BotState.STOPPED)
 
     async def emergency_stop(self) -> None:
-        """Emergency stop: block new intents and cancel active orders."""
+        """Emergency stop: block new intents and cancel active bot orders.
+
+        The Risk Manager slot is always released on completion (even if
+        cancellation fails); the bot remains in EMERGENCY_STOP, so execution
+        stays blocked and the position is never closed automatically.
+        """
         self._transition(BotState.EMERGENCY_STOP)
-        self._risk_manager.stop_bot(self.bot_id)
-        await self._cancel_active_orders()
+        try:
+            await self._cancel_active_orders()
+        finally:
+            self._risk_manager.stop_bot(self.bot_id)
 
     # --- execution gate ----------------------------------------------------------
 
@@ -194,6 +226,39 @@ class BotRuntimeManager:
             runtime = self._runtime_factory(bot_id)
             self._runtimes[bot_id] = runtime
         return runtime
+
+    def restore_state(self, bot_id: int, state: BotState) -> BotRuntime:
+        """Register (or keep) a runtime at an explicit restored state.
+
+        Used by :meth:`restore_persisted_states`; never starts the Risk Manager.
+        """
+        runtime = self._runtimes.get(bot_id)
+        if runtime is None:
+            if self._runtime_factory is None:
+                raise KeyError(f"no bot runtime registered for bot {bot_id}")
+            runtime = self._runtime_factory(bot_id, state)
+            self._runtimes[bot_id] = runtime
+        return runtime
+
+    async def restore_persisted_states(self, repository: Any) -> None:
+        """Reconcile runtime state with persisted bot states after a restart.
+
+        Semantics: persisted RUNNING/STARTING bots were interrupted by the
+        process restart and are restored in ERROR (execution blocked until an
+        explicit START); persisted STOP_REQUESTED is restored as STOPPED; other
+        states are restored as-is. The Risk Manager is never re-occupied via
+        ``start_bot()``. The DB is synced to the restored state via the
+        repository, so persisted and runtime states cannot contradict.
+        """
+        for bot in await repository.list():
+            try:
+                persisted = BotState(bot.status)
+            except ValueError:
+                persisted = BotState.STOPPED
+            restored = RESTART_STATE_MAP.get(persisted, persisted)
+            self.restore_state(bot.id, restored)
+            if restored != persisted:
+                await repository.update_state(bot, restored)
 
     async def start(self, bot_id: int) -> BotRuntime:
         runtime = self._get_or_create(bot_id)

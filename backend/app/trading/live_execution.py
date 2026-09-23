@@ -173,7 +173,7 @@ class LiveExecutionService:
         )
 
 
-def build_live_service() -> LiveExecutionService:
+async def build_live_service() -> LiveExecutionService:
     """Compose a live execution service from application settings.
 
     Uses the configured T-Invest adapter and the SQLAlchemy-backed durable state
@@ -188,9 +188,16 @@ def build_live_service() -> LiveExecutionService:
     MVP-6, so ``TradingEngine.process()`` (the Strategy -> TradingEngine path)
     is *not* integrated and ``strategy_configured`` is ``False`` (``process()``
     raises if invoked).
+
+    Startup bot-state sync: persisted bot states are restored into the runtime
+    manager so DB and runtime never contradict. Persisted RUNNING/STARTING bots
+    are restored in ERROR (blocked until an explicit START); STOP_REQUESTED is
+    restored as STOPPED. The Risk Manager is never re-occupied implicitly.
     """
+    from app.bots.repository import BotRepository
     from app.brokers import TInvestAdapter
     from app.core.db import SessionLocal
+    from app.models.enums import BotState
     from app.persistence.execution_state import SqlAlchemyLiveStateStore
     from app.trading.bot_lifecycle import BotRuntime
 
@@ -207,15 +214,17 @@ def build_live_service() -> LiveExecutionService:
     async def _submit_cb(intent: ExecutionIntent) -> InternalOrder:
         return await trading_engine.submit_intent(intent)
 
-    def _make_runtime(bot_id: int) -> BotRuntime:
+    def _make_runtime(bot_id: int, state: BotState = BotState.STOPPED) -> BotRuntime:
         return BotRuntime(
             bot_id,
             risk_manager,
             submit_cb=_submit_cb,
             order_manager=order_manager,
+            state=state,
         )
 
     bot_runtime_manager = BotRuntimeManager(risk_manager, runtime_factory=_make_runtime)
+    await bot_runtime_manager.restore_persisted_states(BotRepository(session))
 
     service = LiveExecutionService(
         broker,
