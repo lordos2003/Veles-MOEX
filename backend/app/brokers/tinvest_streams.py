@@ -149,7 +149,10 @@ class TInvestStreamManager:
     async def _run_session(self) -> None:
         await self._transport.connect([self._account_id])
         logger.debug("stream connected for account %s", self._account_id)
-        await self._recover()
+        if not await self._recover():
+            # Unary recovery failed: do not dispatch live events. Raise so the
+            # run loop reconnects and retries recovery on the next attempt.
+            raise ConnectionError("unary recovery failed; refusing to dispatch events")
         if self._recovery is not None:
             # Full durable reconciliation (store -> broker facts -> resume gate).
             # Live events are only processed after a SAFE reconciliation.
@@ -181,8 +184,13 @@ class TInvestStreamManager:
         elif isinstance(event, PositionUpdate):
             self._handler.on_position_update(event)
 
-    async def _recover(self) -> None:
-        """Reconcile order/position state via unary API after a (re)connect."""
+    async def _recover(self) -> bool:
+        """Reconcile order/position state via unary API after a (re)connect.
+
+        Returns True only if both order and position reconciliation succeed. A
+        failure is NOT swallowed: it blocks dispatch and triggers a reconnect.
+        """
+        order_ok = True
         try:
             for broker_order in await self._adapter.get_orders(self._account_id):
                 update = OrderUpdate(
@@ -192,8 +200,10 @@ class TInvestStreamManager:
                     timestamp=broker_order.updated_at,
                 )
                 self._handler.on_order_update(update)
-        except Exception as exc:  # noqa: BLE001 - recovery must not crash the stream loop
+        except Exception as exc:  # noqa: BLE001 - failure blocks dispatch, not swallowed
             logger.warning("order recovery failed: %s", exc)
+            order_ok = False
+        pos_ok = True
         try:
             for position in await self._adapter.get_open_positions(self._account_id):
                 update = PositionUpdate(
@@ -205,8 +215,10 @@ class TInvestStreamManager:
                     timestamp=position.timestamp,
                 )
                 self._handler.on_position_update(update)
-        except Exception as exc:  # noqa: BLE001 - recovery must not crash the stream loop
+        except Exception as exc:  # noqa: BLE001 - failure blocks dispatch, not swallowed
             logger.warning("position recovery failed: %s", exc)
+            pos_ok = False
+        return order_ok and pos_ok
 
     async def _safe_close(self) -> None:
         try:

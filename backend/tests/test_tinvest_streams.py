@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 from decimal import Decimal
 
+import pytest
+
 from app.brokers.base import BrokerOrder, BrokerPosition
 from app.brokers.tinvest_streams import (
     TInvestStreamManager,
@@ -54,14 +56,22 @@ class RecoveryAdapter:
         self,
         orders: list[BrokerOrder] | None = None,
         positions: list[BrokerPosition] | None = None,
+        orders_error: Exception | None = None,
+        positions_error: Exception | None = None,
     ):
         self.orders = orders or []
         self.positions = positions or []
+        self.orders_error = orders_error
+        self.positions_error = positions_error
 
     async def get_orders(self, account_id: str | None = None) -> list[BrokerOrder]:
+        if self.orders_error is not None:
+            raise self.orders_error
         return self.orders
 
     async def get_open_positions(self, account_id: str | None = None) -> list[BrokerPosition]:
+        if self.positions_error is not None:
+            raise self.positions_error
         return self.positions
 
 
@@ -320,3 +330,39 @@ async def test_reconnect_runs_recovery_before_resume() -> None:
     assert recovery_calls == ["recovered"]
     assert transport.connections == 1
     assert transport.messages_calls == 1
+
+
+async def test_unary_order_recovery_error_blocks_dispatch() -> None:
+    """Unary get_orders() error must block dispatch (not swallowed)."""
+    om = OrderManager(PlaceBroker(), PositionManager())
+    adapter = RecoveryAdapter(orders_error=ConnectionError("get_orders failed"))
+    transport = FakeStreamTransport(
+        batches=[
+            {
+                "order_state": {
+                    "order_id": "broker-1",
+                    "execution_report_status": "EXECUTION_REPORT_STATUS_FILL",
+                    "trades": [],
+                }
+            }
+        ]
+    )
+    mgr = TInvestStreamManager(adapter, transport, om, "acc-1")
+    with pytest.raises(ConnectionError):
+        await mgr._run_session()
+    # no live event was dispatched
+    assert transport.messages_calls == 0
+
+
+async def test_unary_position_recovery_error_blocks_dispatch() -> None:
+    """Unary get_open_positions() error must block dispatch (not swallowed)."""
+    om = OrderManager(PlaceBroker(), PositionManager())
+    adapter = RecoveryAdapter(
+        orders_error=None,
+        positions_error=ConnectionError("get_open_positions failed"),
+    )
+    transport = FakeStreamTransport(batches=[])
+    mgr = TInvestStreamManager(adapter, transport, om, "acc-1")
+    with pytest.raises(ConnectionError):
+        await mgr._run_session()
+    assert transport.messages_calls == 0

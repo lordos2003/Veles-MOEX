@@ -423,3 +423,26 @@ async def test_lot_size_unavailable_blocks_order_normalization() -> None:
     adapter = TInvestAdapter(client=fake)
     with pytest.raises(InvalidRequestError):
         await adapter.get_orders()
+
+
+@pytest.mark.asyncio
+async def test_order_without_figi_but_quantity_rejected() -> None:
+    """Final: an order with quantity but no FIGI cannot be normalized to units."""
+    fake = TInvestFakeClient(
+        responses={
+            _GET_ACCOUNTS: {"accounts": [{"id": "acc-1"}]},
+            _GET_ORDERS: {
+                "orders": [
+                    {
+                        "orderId": "o1",
+                        "executionReportStatus": "EXECUTION_REPORT_STATUS_FILL",
+                        "lotsRequested": 5,
+                        "lotsExecuted": 0,
+                    }
+                ]
+            },
+        }
+    )
+    adapter = TInvestAdapter(client=fake)
+    with pytest.raises(InvalidRequestError):
+        await adapter.get_orders()

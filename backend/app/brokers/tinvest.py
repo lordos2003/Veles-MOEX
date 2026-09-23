@@ -554,16 +554,24 @@ class TInvestAdapter(BrokerAdapter):
         individual executions are derived from the official ``stages`` facts
         (``price`` x ``quantity``), never from ``initialSecurityPrice``.
         """
-        if lot_size is None and raw.get("figi"):
-            lot_size = await self._lot_size_for(raw["figi"])
-        if raw.get("figi") and (not lot_size or lot_size <= 0):
-            raise InvalidRequestError(
-                f"cannot resolve lot size for instrument {raw['figi']}; "
-                "refusing to map T-Invest lots as canonical units"
-            )
-        factor = Decimal(lot_size) if lot_size else Decimal("1")
         requested = raw.get("lotsRequested") or 0
         executed = raw.get("lotsExecuted") or 0
+        if raw.get("figi"):
+            if lot_size is None:
+                lot_size = await self._lot_size_for(raw["figi"])
+            if not lot_size or lot_size <= 0:
+                raise InvalidRequestError(
+                    f"cannot resolve lot size for instrument {raw['figi']}; "
+                    "refusing to map T-Invest lots as canonical units"
+                )
+            factor = Decimal(lot_size)
+        else:
+            if requested or executed:
+                raise InvalidRequestError(
+                    "order has quantity but no FIGI; cannot normalize lots to units"
+                )
+            # Only reached for zero-quantity orders with no instrument (units = 0).
+            factor = Decimal("1")
         stages = raw.get("stages") or []
         order_id = raw.get("orderId", "")
         updated_at = None
