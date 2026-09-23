@@ -52,6 +52,11 @@ class TradingEngine:
     def started(self) -> bool:
         return self._started
 
+    @property
+    def strategy_configured(self) -> bool:
+        """Whether the Strategy -> TradingEngine path is wired (engine + config)."""
+        return self.strategy_engine is not None and self._strategy_config is not None
+
     async def start(self) -> None:
         """Begin processing.
 
@@ -81,7 +86,7 @@ class TradingEngine:
         """
         if not self._started:
             raise RuntimeError("TradingEngine is not started")
-        if self.strategy_engine is None or self._strategy_config is None:
+        if not self.strategy_configured:
             raise RuntimeError(
                 "TradingEngine.process() requires a StrategyEngine and a strategy "
                 "config; the live execution path uses submit_intent() instead"

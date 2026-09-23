@@ -158,6 +158,13 @@ def build_live_service() -> LiveExecutionService:
     Uses the configured T-Invest adapter and the SQLAlchemy-backed durable state
     store. The caller owns the returned service; ``shutdown()`` closes the
     underlying session.
+
+    Strategy-path boundary: the live composition wires only the **execution**
+    path (RiskManager -> OrderManager via ``TradingEngine.submit_intent``). A
+    ``StrategyEngine``/``StrategyConfig`` is NOT wired because there is no live
+    bot-strategy configuration source in MVP-6, so ``TradingEngine.process()``
+    (the Strategy -> TradingEngine path) is *not* integrated and ``strategy_configured``
+    is ``False`` (``process()`` raises if invoked).
     """
     from app.brokers import TInvestAdapter
     from app.core.db import SessionLocal
