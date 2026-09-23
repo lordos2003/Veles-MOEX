@@ -339,7 +339,7 @@ PUBLISH-MASTER-AFTER-MVP-6.3 — выполнено. Принятые измен
 
 
 ## STATUS
-TASK
+REPORT
 
 ## TASK_ID
 MVP-6-INTEGRATION-TRADING-RISK
@@ -451,3 +451,88 @@ REPORT должен содержать:
 - git status;
 - git log -5;
 - ограничения, если какое-либо risk-правило нельзя реализовать без расширения scope.
+
+## REPORT
+
+MVP-6-INTEGRATION-TRADING-RISK — выполнено. Committed on `master` over
+`fe59bdf`; commit `75e336f`.
+
+### commit SHA
+`75e336fb651e6ebf79a4f55d18c76651f209c792` — `feat: integrate RiskManager and
+TradingEngine into live execution` (branch `master`, NOT pushed). Published to
+`agent/review/mvp-6.4`.
+
+### Реализованные RiskManager / TradingEngine paths
+- **RiskManager** (`app/trading/risk_manager.py`): broker-agnostic authoritative
+  guard. Configuration-driven `RiskLimits` (Decimal): `max_position_size`,
+  `max_concurrent_bots`, `daily_loss_limit`, `emergency_stop`. `check_order(intent)`
+  raises `RiskRejected` on emergency stop / projected position-size / daily-loss
+  violation; `check_start(bot_id)`/`start_bot`/`stop_bot` enforce max concurrent
+  bots; `check_emergency_stop()`. Safe by default (no limit = allowed). Uses only
+  broker-neutral domain objects and `Decimal`.
+- **TradingEngine** (`app/trading/engine.py`): `process(context)` evaluates the
+  Strategy Plan, then routes execution through `RiskManager.check_order()` before
+  `OrderManager.submit()`; `submit_intent(intent)` is the risk-gated submit used
+  by the live path; `start()`/`stop()` toggle the started flag without opening a
+  second broker connection (the live runtime already owns the connection).
+  Does not import T-Invest; financial decisions come only from Strategy/Risk
+  configuration.
+
+### Production submit path
+`LiveExecutionService.submit(intent)` -> checks SAFE/BLOCKED gate (recovery) ->
+`TradingEngine.submit_intent(intent)` -> `RiskManager.check_order(intent)` (raises
+on violation) -> `OrderManager.submit(intent)`. The direct bypass of RiskManager
+via `OrderManager.submit()` was removed. Recovery/OrderStateStream-only /
+idempotency / fill reconciliation / broker-neutral domain are preserved;
+T-Invest details stay inside `TInvestAdapter`.
+
+### Changed files
+- backend/app/trading/risk_manager.py (RiskManager implementation + RiskLimits/RiskRejected)
+- backend/app/trading/engine.py (TradingEngine process/submit_intent/start/stop)
+- backend/app/trading/live_execution.py (submit via TradingEngine; risk_manager/trading_engine wiring)
+- backend/app/trading/__init__.py (exports)
+- backend/tests/test_trading_risk.py (new, 7 tests)
+
+### Tests and exact results
+New deterministic tests (`tests/test_trading_risk.py`): emergency stop blocks
+submit; position-size limit blocks submit; allowed intent reaches OrderManager;
+TradingEngine does not import T-Invest; LiveExecutionService cannot bypass
+RiskManager; SAFE/BLOCKED recovery gate still blocks execution; TradingEngine
+process routes through risk.
+
+Full backend suite: `275 passed, 1 skipped` (was `268 passed, 1 skipped`; +7).
+The single skip is the opt-in live sandbox integration test (no credentials).
+
+### ruff result
+`All checks passed!` (app + tests).
+
+### npm build result
+`✓ built in 8.00s` (vite, 32 modules).
+
+### git status
+Branch `master`, ahead of `origin/master` by 1 (the new commit not pushed),
+working tree clean (verified before checkout to `agent/control` for this report).
+
+### git log -5
+- `75e336f` feat: integrate RiskManager and TradingEngine into live execution
+- `fe59bdf` Merge remote-tracking branch 'origin/master'
+- `3b381d6` fix: remove lot-size fallback for zero-quantity orders
+- `1907c24` fix: harden lot-size normalization and unary recovery gating
+- `a4eaac9` fix: wire production live runtime and harden lot-size normalization
+
+### Ограничения (risk-правило без расширения scope)
+- **Daily loss limit** реализован как настраиваемое правило, но фактически
+  проверяется только если доступно значение дневного реализованного PnL
+  (`daily_pnl`). Текущий broker-neutral домен (PositionManager) не отслеживает
+  дневной реализованный PnL отдельно, поэтому в default производственной
+  конфигурации `_daily_pnl=None` — правило не активно (recorded limitation;
+  модель не выдумывалась).
+- `max_position_size` проверяется по текущей позиции (сумма модуля позиции + модуль
+  интента); не учитывает будущие частичные исполнения/нетто-эффект сокращения
+  позиции (conservative check).
+- `TradingEngine.process()` автоматически строит `ExecutionIntent` только при
+  наличии `intent_factory` (и делегирует построение количеству/фигу конфигурации);
+  без фабрики `process()` оценивает план, но не размещает заказ сам (не изобретает
+  финансовые параметры).
+
+`## CHATGPT REVIEW` не изменялся.
