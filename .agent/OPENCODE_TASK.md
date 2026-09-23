@@ -636,3 +636,20 @@ Required before acceptance:
 6. Run and report: `pytest`, `ruff check app tests scripts`, and frontend `npm run build`.
 7. One focused correction commit on `agent/review/mvp-6.4`. Do not push/merge/rebase `master`.
 8. Update REPORT on `agent/control`, then stop.
+
+
+## CHATGPT REVIEW — MVP-6.4 correction #3
+
+Independent review of `agent/review/mvp-6.4` commit `b4a1deb5386eb9e2cbd3753f14eebac13deba0e7`.
+
+Result: NOT ACCEPTED.
+
+Blockers:
+1. The required REPORT is still missing as a separate report artifact on `agent/control`. The control file contains historical REPORT sections, but no REPORT for correction #2. Add the current correction report with exact commit SHA, changes, pytest, ruff, npm build, git status and git log.
+2. `build_live_service()` still intentionally constructs `TradingEngine` with `strategy_engine=None` and `strategy_config=None`. The new guard only documents and detects the missing path. This is acceptable only as an explicit MVP boundary, but the correction task required either a real production Strategy integration OR removal/disablement of the false strategy-driven live claim. Update the relevant MVP-6 documentation/specification wording if it currently claims this path is production-integrated. Do not leave contradictory claims.
+3. `RiskManager.check_start()` remains an unused method. It is not connected to a real bot-start lifecycle. Either wire it into an existing bot-start path or explicitly define concurrent-bot start control as outside MVP-6 and remove any claim that this is an implemented authoritative live control. No fake lifecycle is allowed.
+4. Verify the actual production execution path remains `LiveExecutionService.submit()` -> `TradingEngine.submit_intent()` -> `RiskManager.check_order()` -> `OrderManager.submit()`, with recovery SAFE gate preserved.
+5. Do not add unrelated functionality or financial defaults.
+6. Run and report `pytest`, `ruff check app tests scripts`, and frontend `npm run build`.
+7. One focused correction commit on `agent/review/mvp-6.4`. Do not push/merge/rebase master.
+8. Update REPORT on `agent/control` and stop.
