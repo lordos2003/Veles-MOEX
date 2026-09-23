@@ -254,6 +254,29 @@ Emergency Stop is different: it is an explicit cancellation of the bot's active 
 
 Veles documents this distinction between normal stop and urgent stop.
 
+### MVP-6 live integration boundary
+
+The MVP-6 live runtime wires the execution path as:
+
+`LiveExecutionService.submit()` -> `TradingEngine.submit_intent()` ->
+`RiskManager.check_order()` -> `OrderManager.submit()` -> broker.
+
+In this MVP the live runtime wires **only** the risk-gated execution path:
+
+- `RiskManager.check_order()` is the authoritative execution gate (emergency
+  stop, position-size, daily-loss where data is available) and is called before
+  every live order.
+- The `TradingEngine.process()` (Strategy -> TradingEngine) path is **not**
+  wired into the live runtime: no live `StrategyEngine`/`StrategyConfig`
+  composition exists in MVP-6, so `process()` is an integration seam (it raises
+  if invoked without an engine/config).
+- The bot-start lifecycle (`RiskManager.check_start()` / concurrent-bot control)
+  is **not** wired into a live bot-start lifecycle in MVP-6; bot-start is outside
+  the MVP-6 scope.
+
+These boundary statements are kept in sync with the implementation and should
+not be read as production-integrated functionality.
+
 ## 12. Recovery
 
 After application restart or connection loss:
