@@ -535,6 +535,34 @@ working tree clean (verified before checkout to `agent/control` for this report)
   без фабрики `process()` оценивает план, но не размещает заказ сам (не изобретает
   финансовые параметры).
 
+### MVP-6.4 review corrections
+- Correction commit `63ca560954b5bbc2978f005b435929ab6eecabab` —
+  `fix: guard TradingEngine.process against missing strategy config` (branch
+  `master`, NOT pushed); published to `agent/review/mvp-6.4`.
+- **process() guard (blocker 2):** `TradingEngine.process()` now raises
+  `RuntimeError` if the engine is not started or if `strategy_engine`/`strategy_config`
+  is `None`. The production `build_live_service()` composes the engine with a
+  strategy engine/config not wired yet, so `process()` is documented as an
+  integration seam and cannot be invoked with `None`; the live path uses
+  `submit_intent()` (risk-gated) instead. No fake strategy was added.
+- **check_start() not wired (blocker 3):** the current live runtime has no
+  bot-start/lifecycle hook that calls `RiskManager.check_start()`. The rule is
+  implemented and unit-tested at the RiskManager level, but is not integrated
+  into a production bot-start path because no bot-start lifecycle exists in the
+  current runtime. This is a documented limitation, not a claim of integration.
+- **No application-level risk config source wired (blocker 4):** production
+  `build_live_service()` creates `RiskManager` with default empty `RiskLimits`
+  (no limits), because no bot `StrategyConfig.risk`/app-level risk configuration
+  source is wired into the live runtime yet. No financial defaults were invented.
+- **Daily loss limit:** implemented as a configurable rule but only enforced when
+  a daily realized-PnL value (`daily_pnl`) is supplied; the default production
+  value is `None` (rule inactive). Documented limitation; no model invented.
+
+### Tests and exact results (after correction)
+Full backend suite: `276 passed, 1 skipped` (was `275 passed, 1 skipped`; +1
+guard test `test_process_requires_strategy_engine_and_config`). The single skip
+is the opt-in live sandbox integration test (no credentials).
+
 `## CHATGPT REVIEW` не изменялся.
 
 
