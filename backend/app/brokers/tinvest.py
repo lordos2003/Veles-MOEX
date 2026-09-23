@@ -556,6 +556,11 @@ class TInvestAdapter(BrokerAdapter):
         """
         requested = raw.get("lotsRequested") or 0
         executed = raw.get("lotsExecuted") or 0
+        stages = raw.get("stages") or []
+        order_id = raw.get("orderId", "")
+        updated_at = None
+        if stages:
+            updated_at = _timestamp_to_datetime(stages[-1].get("executionTime"))
         if raw.get("figi"):
             if lot_size is None:
                 lot_size = await self._lot_size_for(raw["figi"])
@@ -565,18 +570,19 @@ class TInvestAdapter(BrokerAdapter):
                     "refusing to map T-Invest lots as canonical units"
                 )
             factor = Decimal(lot_size)
+            requested_quantity = Decimal(str(requested)) * factor
+            executed_quantity = Decimal(str(executed)) * factor
+            executions = _stages_to_executions(raw, order_id, factor)
         else:
             if requested or executed:
                 raise InvalidRequestError(
                     "order has quantity but no FIGI; cannot normalize lots to units"
                 )
-            # Only reached for zero-quantity orders with no instrument (units = 0).
-            factor = Decimal("1")
-        stages = raw.get("stages") or []
-        order_id = raw.get("orderId", "")
-        updated_at = None
-        if stages:
-            updated_at = _timestamp_to_datetime(stages[-1].get("executionTime"))
+            # No FIGI -> no instrument facts; zero-quantity orders have zero units.
+            # No fallback factor (1) is used here.
+            requested_quantity = Decimal("0")
+            executed_quantity = Decimal("0")
+            executions = []
         return BrokerOrder(
             order_id=order_id,
             account_id=account_id,
@@ -585,11 +591,11 @@ class TInvestAdapter(BrokerAdapter):
             status=_map_order_status(raw.get("executionReportStatus")),
             type=_map_order_type(raw.get("orderType")),
             side=_map_order_side(raw.get("direction")),
-            requested_quantity=Decimal(str(requested)) * factor,
-            executed_quantity=Decimal(str(executed)) * factor,
+            requested_quantity=requested_quantity,
+            executed_quantity=executed_quantity,
             price=_quotation_to_decimal(raw.get("initialSecurityPrice")),
             executed_average_price=_executed_average_price(raw),
-            executions=_stages_to_executions(raw, order_id, factor),
+            executions=executions,
             idempotency_key=raw.get("orderRequestId") or raw.get("order_request_id"),
             currency=raw.get("currency"),
             created_at=_timestamp_to_datetime(raw.get("orderDate")),

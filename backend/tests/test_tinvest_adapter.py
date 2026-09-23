@@ -446,3 +446,34 @@ async def test_order_without_figi_but_quantity_rejected() -> None:
     adapter = TInvestAdapter(client=fake)
     with pytest.raises(InvalidRequestError):
         await adapter.get_orders()
+
+
+def test_to_order_has_no_silent_lot_fallback() -> None:
+    """The adapter must not fall back to a factor of 1 for a missing lot size."""
+    import inspect
+
+    src = inspect.getsource(TInvestAdapter._to_order)
+    assert 'factor = Decimal("1")' not in src
+
+
+@pytest.mark.asyncio
+async def test_zero_quantity_no_figi_order_returns_zero_units() -> None:
+    """A zero-quantity, no-FIGI order maps to zero canonical units (no fallback)."""
+    fake = TInvestFakeClient(
+        responses={
+            _GET_ACCOUNTS: {"accounts": [{"id": "acc-1"}]},
+            _GET_ORDERS: {
+                "orders": [
+                    {
+                        "orderId": "o1",
+                        "executionReportStatus": "EXECUTION_REPORT_STATUS_NEW",
+                    }
+                ]
+            },
+        }
+    )
+    adapter = TInvestAdapter(client=fake)
+    order = (await adapter.get_orders())[0]
+    assert order.requested_quantity == Decimal("0")
+    assert order.executed_quantity == Decimal("0")
+    assert order.executions == []
