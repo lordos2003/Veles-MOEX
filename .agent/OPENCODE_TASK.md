@@ -183,7 +183,7 @@ MVP-6.3 **ПРИНЯТО**.
 Следующее действие: можно перенести принятые изменения в `master` по установленному Git workflow.
 
 ## STATUS
-TASK
+REPORT
 
 ## TASK_ID
 PUBLISH-MASTER-AFTER-MVP-6.3
@@ -285,3 +285,54 @@ git log --oneline --graph --decorate -12
 - `git log --oneline --graph --decorate -12`.
 
 После REPORT остановиться.
+
+## REPORT
+
+PUBLISH-MASTER-AFTER-MVP-6.3 — выполнено. Принятые изменения MVP-6.3 опубликованы в `origin/master`.
+
+### merge commit SHA
+`fe59bdf66c2401aadebd05562b1292e9cf73c287` — `Merge remote-tracking branch 'origin/master'`.
+
+### Исходные parent SHA
+- master-side: `3b381d68fc31d6ac37053539e869a908d6517e2e` (принятый продукт MVP-6.3);
+- origin/master-side: `b8d7331bd52ad4370d6a285471bfd4068bbca17a` (`docs: define ChatGPT OpenCode workflow`).
+
+### Результат `git merge`
+`Merge made by the 'ort' strategy.` — без конфликтов. Добавлен только
+`docs/development/OPENCODE-WORKFLOW.md` (101 insertions); product code не изменён.
+
+### Результат `git push origin master`
+`b8d7331..fe59bdf  master -> master` — успешно (PUSH_EXIT=0), force-push не использовался.
+
+### Итоговый `origin/master`
+`fe59bdf66c2401aadebd05562b1292e9cf73c287` — тот же merge commit.
+
+### git status
+`## master...origin/master` — синхронизировано; working tree clean.
+
+### git log --oneline --graph --decorate -12
+```
+*   fe59bdf (HEAD -> master, origin/master, origin/HEAD) Merge remote-tracking branch 'origin/master'
+|\
+| * b8d7331 docs: define ChatGPT OpenCode workflow
+* | 3b381d6 (origin/agent/review/mvp-6.3, agent/review/mvp-6.3) fix: remove lot-size fallback for zero-quantity orders
+* | 1907c24 fix: harden lot-size normalization and unary recovery gating
+* | a4eaac9 fix: wire production live runtime and harden lot-size normalization
+* | fd10067 fix: finalize MVP-6.3 unit normalization and recovery wiring
+* | b9869d9 fix: complete MVP-6.3 recovery wiring and broker-fact reconciliation
+* | 3720b7c feat: implement live state reconciliation and recovery
+|/
+* 8529bc0 fix: use OrderStateStream for live executions
+* 5d52014 feat: connect real T-Invest Open API transport
+* 51eb7a2 feat: implement T-Invest Open API execution
+* 54e5b96 feat: implement live execution domain
+```
+
+### Подтверждение
+- Все 6 принятых product-коммитов MVP-6.3 сохранены;
+- `b8d7331` присутствует в истории (ancestor);
+- product code не удалён/не изменён;
+- рабочее дерево чистое;
+- merge/rebase-конфликтов не было.
+
+`## CHATGPT REVIEW` не изменялся.
