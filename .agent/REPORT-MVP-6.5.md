@@ -1,9 +1,10 @@
 # REPORT — MVP-6.5 Bot Lifecycle and Risk Preconditions
 
-Task/status: `MVP-6.5-BOT-LIFECYCLE-FOUNDATION` — IMPLEMENTED.
+Task/status: `MVP-6.5-BOT-LIFECYCLE-FOUNDATION` + `MVP-6.5-CORRECTION-1-LIFECYCLE-CONSISTENCY` — IMPLEMENTED.
 
-Commit SHA: `9affc539a7653ab32e6517fe994f7b3f7cca5c03` (published on
-`agent/review/mvp-6.5`).
+Implementation commit SHA: `9affc539a7653ab32e6517fe994f7b3f7cca5c03`.
+Correction #1 commit SHA: `b2b199e2d73f7d1ec32abd4f7128e6f7a5a04f1b`.
+Review branch `agent/review/mvp-6.5` head: `b2b199e2d73f7d1ec32abd4f7128e6f7a5a04f1b`.
 
 ## Exact lifecycle implementation
 
@@ -97,4 +98,100 @@ Minimal broker-neutral endpoints added (no UI, no auth subsystem). They drive th
 b4a1deb fix: document strategy-path boundary in production live composition
 63ca560 fix: guard TradingEngine.process against missing strategy config
 75e336f feat: integrate RiskManager and TradingEngine into live execution
+```
+
+---
+
+## Correction #1 — lifecycle consistency (commit `b2b199e`)
+
+Task/status: `MVP-6.5-CORRECTION-1-LIFECYCLE-CONSISTENCY` — IMPLEMENTED.
+
+Correction commit SHA: `b2b199e2d73f7d1ec32abd4f7128e6f7a5a04f1b`.
+Review branch `agent/review/mvp-6.5`: `9affc53..b2b199e` (updated).
+
+### Exact fixes
+
+1. **Disconnected fallback removed (blocker 1).**
+   `get_bot_runtime_manager()` now returns the real application
+   `BotRuntimeManager` wired into the live execution service, or `None` when no
+   live service is running. No fallback `BotRuntimeManager`/`RiskManager` is
+   created. Mutating endpoints (`start`/`stop`/`emergency-stop`) are rejected
+   with an explicit `503` when the runtime is unavailable; no bot state is
+   changed. GET endpoints remain independent of the live runtime.
+
+2. **Restart state sync (blocker 2).**
+   `BotRuntimeManager.restore_persisted_states(repository)` is invoked during
+   `build_live_service()` (now `async`) using the existing `BotRepository`.
+   `RESTART_STATE_MAP` defines the chosen semantics:
+   - persisted RUNNING -> restored in ERROR (blocked until an explicit START);
+   - persisted STARTING -> restored in ERROR;
+   - persisted STOP_REQUESTED -> restored as STOPPED;
+   - STOPPED / ERROR / EMERGENCY_STOP -> restored as-is.
+   The Risk Manager is never re-occupied via `start_bot()` after a process
+   restart, and the DB is synced to the restored state, so DB and runtime cannot
+   contradict on executability. No fake recovery logic.
+
+3. **STOP ordering (blocker 3).**
+   `BotRuntime.stop()` now runs: RUNNING -> STOP_REQUESTED -> cancel active bot
+   orders -> `RiskManager.stop_bot()` -> STOPPED. The `max_concurrent_bots` slot
+   stays occupied while cancellation is in progress. If cancellation fails the
+   bot transitions to ERROR and the Risk Manager slot is released only after
+   that transition (no fake RUNNING/STOPPED). Normal STOP does not close the
+   position. `emergency_stop()` always releases the Risk Manager slot on
+   completion (even if cancellation fails); the bot remains in EMERGENCY_STOP.
+
+4. **START rejection persistence (blocker 4).**
+   The mutating endpoints persist the actual runtime state on failure: a
+   rejected START (RiskManager) is persisted as ERROR and returns `409`; the DB
+   is never left in RUNNING or stale STOPPED. Uses the existing
+   `BotRepository.update_state()`.
+
+### API error behavior
+- bot not found -> `404`;
+- live runtime unavailable -> `503` (mutation rejected, state unchanged);
+- invalid lifecycle transition -> `409`;
+- RiskManager START rejection -> `409`;
+- lifecycle execution failure -> `503` (state persisted).
+No new general error subsystem introduced.
+
+### EMERGENCY STOP semantics (preserved)
+Blocks new intents; cancels active bot orders through the existing broker-neutral
+`OrderManager`; never closes the position automatically; no broker-specific code;
+the Risk Manager no longer counts the bot active after completion.
+
+### Changed files (correction #1)
+`backend/app/trading/bot_lifecycle.py`, `backend/app/trading/live_execution.py`,
+`backend/app/api/deps.py`, `backend/app/api/bots.py`, `backend/app/main.py`,
+`backend/tests/test_bot_lifecycle.py`,
+`docs/architecture/TASK-09-LIVE-TRADING-MVP-6.md`.
+
+### Tests (correction #1) — added to `test_bot_lifecycle.py`
+- mutating API rejects when live `BotRuntimeManager` is unavailable (503, state
+  unchanged);
+- GET bot endpoints still work without the live runtime (incl. 404);
+- persisted RUNNING bot is not executable after restart without an explicit
+  START (restored ERROR, DB synced, risk slot free);
+- STOP keeps the RiskManager slot occupied during order cancellation;
+- cancellation failure leads to ERROR with consistent RiskManager state;
+- rejected START persists ERROR and returns API 409;
+- no disconnected fallback RiskManager/RuntimeManager is created;
+- existing SAFE/BLOCKED recovery gate still blocks execution;
+- existing EMERGENCY_STOP behavior (slot released, intents blocked).
+
+### Validation
+- `pytest`: **295 passed, 1 skipped**.
+- `ruff check app tests scripts`: **All checks passed!**
+- frontend `npm run build`: **✓ built in 6.79s**.
+
+### Git status (correction #1)
+- `agent/review/mvp-6.5` -> `b2b199e2d73f7d1ec32abd4f7128e6f7a5a04f1b`.
+- `master` NOT pushed (ahead by both MVP-6.5 commits); no merge/rebase/reset.
+
+### Git log -5 (master, correction #1)
+```
+b2b199e fix: correct MVP-6.5 bot lifecycle consistency (restart sync, STOP order, API errors)
+9affc53 feat: implement MVP-6.5 bot lifecycle and risk preconditions
+3ce159f docs: state MVP-6 live integration boundary in task spec
+b4a1deb fix: document strategy-path boundary in production live composition
+63ca560 fix: guard TradingEngine.process against missing strategy config
 ```
