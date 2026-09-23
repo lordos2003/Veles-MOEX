@@ -192,125 +192,114 @@ If history diverges unexpectedly, stop and report it.
 
 ## REPORT
 
-MVP-6.3 — FINAL CORRECTION applied. Committed on `master` over `b9869d9`;
-final correction commit `fd10067`.
+MVP-6.3 — FINAL CORRECTION TASK applied. Committed on `master` over `fd10067`;
+final correction commit `a4eaac9`.
 
 ### Three blockers fixed
-1. **Production reconnect recovery.** `LiveExecutionService` now owns the
-   production OrderStateStream composition: `build_stream_manager()` wires the
-   `LiveRecoveryCoordinator` into `TInvestStreamManager` via a `recovery` hook
-   that runs full durable reconciliation and returns whether it was SAFE.
-   `_run_session()` does connect/resubscribe -> unary recovery -> full recovery;
-   live events are dispatched only when the recovery hook returns SAFE, otherwise
-   they are paused and execution remains blocked. OrderStateStream-only approach
-   preserved; TradesStream is not used.
-2. **Broker order facts / unit normalization.** `TInvestAdapter._to_order()`
-   normalizes `lotsRequested`/`lotsExecuted` -> canonical instrument units using
-   the instrument `lot_size` (fetched via `get_instrument`). The executed average
-   price is derived from the official `stages` facts (`stages[].price` weighted
-   by `stages[].quantity`), never from `initialSecurityPrice`. `BrokerOrder` now
-   carries `executed_average_price` and `executions` (domain
-   `BrokerExecution`), and `price` remains the initial/limit order price.
-   Conversion stays inside the adapter; the trading domain stays broker-neutral
-   and uses `Decimal`.
-3. **Fill / execution recovery.** `LiveRecoveryCoordinator` recovers executions
-   from the broker order facts (`BrokerOrder.executions`, correlated to the order
-   by `broker_order_id`) and applies them through `OrderManager.apply_fill`, which
-   updates the fill repository, `InternalOrder.filled_quantity`/
-   `average_fill_price` and the `PositionManager`; `apply_fill` de-duplicates by
-   execution id so a later duplicate OrderStateStream trade is not applied twice.
-   Additionally `TInvestAdapter._operation_to_deals()` now populates
-   `BrokerDeal.order_id` from the operation references, so `BrokerDeal` can be
-   correlated to a broker order.
+1. **OrderStateStream connected to the real production live runtime.**
+   `LiveExecutionService.run_stream_forever()` builds the production T-Invest
+   WebSocket transport (`build_stream_transport` from settings when not injected)
+   and runs the `TInvestStreamManager` (`build_stream_manager`). `app/main.py`
+   lifespan now starts this runtime as an asyncio task only after a SAFE startup
+   recovery and stops it (`service.shutdown()` -> `manager.stop()` + transport
+   close) on shutdown; the reconnect path already runs connect/resubscribe ->
+   unary recovery -> full durable recovery -> SAFE gate -> dispatch. No second
+   recovery path; OrderStateStream-only preserved; TradesStream not used.
+2. **Unsafe lot_size fallback removed.** `TInvestAdapter._to_order()` no longer
+   falls back to `factor = 1`. If a T-Invest order has a FIGI and the lot size
+   cannot be resolved, it raises `InvalidRequestError` (an explicit broker
+   integration error) instead of returning a potentially wrong BrokerOrder.
+   The error stays inside the broker integration boundary; the trading domain
+   remains broker-neutral and `Decimal`-based.
+3. **Startup failure semantics.** `LiveRecoveryCoordinator.recover()` now treats
+   a broker order/position reconciliation error as BLOCKED (returns
+   `RecoveryStatus.BLOCKED`), so `service.can_execute` stays `False`, `submit()`
+   has no bypass, and the API can continue read-only. `run_stream_forever()`
+   refuses to start the stream unless a SAFE recovery has already completed.
 
-### Production reconnect wiring
-In `app/trading/live_execution.py`: `LiveExecutionService.build_stream_manager()`
-creates a `TInvestStreamManager` with `recovery=self._stream_recovery`;
-`_stream_recovery()` calls `LiveRecoveryCoordinator.recover(account_id)` and
-returns `result.safe`. In `app/brokers/tinvest_streams.py`,
-`TInvestStreamManager._run_session()` awaits the hook and only resumes live event
-dispatch when it returns `True`; `app/main.py` lifespan runs `service.start()` at
-startup when `live_trading_enabled`.
+### Production composition path
+- `app/trading/live_execution.py`: `LiveExecutionService` owns the runtime —
+  `run_stream_forever()` creates the transport (or uses an injected one),
+  builds the `TInvestStreamManager` via `build_stream_manager(transport)` and
+  runs it; `shutdown()` stops the manager, closes the transport and the session.
+- `app/main.py` lifespan: when `live_trading_enabled` and `service.start()`
+  returns SAFE, `stream_task = asyncio.create_task(service.run_stream_forever())`;
+  on shutdown it calls `service.shutdown()` and awaits the task. On BLOCKED /
+  failure the service stays disabled (read-only API).
 
-### Unit normalization (lots -> canonical units)
-`TInvestAdapter._to_order(raw, account_id, lot_size=None)` resolves the lot size
-via `get_instrument` when not supplied, then multiplies lots by the lot size:
-`requested_quantity = lotsRequested * lot_size`, `executed_quantity =
-lotsExecuted * lot_size`. `_stages_to_executions()` maps each official `stage` to
-a `BrokerExecution` in canonical units; `_executed_average_price()` computes the
-volume-weighted average execution price per unit from `stages[].price` x
-`stages[].quantity`.
+### Where TInvestStreamManager is created/started
+It is created inside `LiveExecutionService.run_stream_forever()` via
+`build_stream_manager()` (which wires the `recovery` hook -> durable recovery
+gate) and started by `await manager.run()` in the lifespan-created asyncio task.
 
-### Execution-price field
-The executed average price is taken from the T-Invest order `stages` facts
-(`stages[].price` weighted by `stages[].quantity`), i.e. the official per-order
-execution records — not `initialSecurityPrice`. `BrokerOrder.price` retains the
-initial/limit order price.
+### Shutdown path
+`LiveExecutionService.shutdown()` -> `manager.stop()` (breaks the reconnect loop),
+then closes the stream transport and the DB session. `main.py` awaits the stream
+task and cancels it as a fallback.
 
-### Deal -> broker order correlation
-`TInvestAdapter._operation_to_deals()` sets `BrokerDeal.order_id` from the
-operation reference fields (`orderId`/`order_id`/`orderRequestId`/
-`order_request_id`/`parentOrderId`) when present, so a recovered execution is
-correlated to the broker order rather than being recorded with `order_id=None`.
+### What happens on startup/stream failure
+If building the service, running startup recovery, or starting the stream fails,
+`service.can_execute` remains `False`; `submit()` stays blocked
+(`LiveExecutionBlocked`); the FastAPI application continues to serve read-only
+endpoints. `run_stream_forever()` raises `LiveExecutionBlocked` when called
+before a SAFE recovery.
 
-### How recovery applies missing fills / dedup
-For each reconciled order, `LiveRecoveryCoordinator._reconcile_order()` applies
-each `BrokerOrder.executions` entry via `OrderManager.apply_fill`, then sets the
-authoritative order facts (`filled_quantity = executed_quantity`,
-`average_fill_price = executed_average_price`). `apply_fill` de-duplicates by
-`fill_id = execution_id` and forwards to `PositionManager`, so a missing
-execution is recovered once and a later duplicate OrderStateStream trade is
-ignored. Position authority is preserved: broker open positions are applied and
-stale local positions removed.
+### lot_size fallback removal
+`_to_order()` checks: if the order has a FIGI and the resolved lot size is
+missing/<=0, it raises `InvalidRequestError` ("refusing to map T-Invest lots as
+canonical units"). No silent `factor=1`; the adapter never returns a false
+canonical quantity.
 
 ### Tests and exact results
-New/adjusted deterministic tests: lots->canonical units
-(`test_get_orders_normalized`), executed average price from stages
-(`test_executed_average_price_from_stages_not_initial`), deal correlation
-(`test_operation_to_deals_correlates_broker_order`), production reconnect full
-recovery before resume and blocked-no-resume
-(`test_production_reconnect_recovers_before_resume`,
-`test_production_reconnect_blocked_does_not_resume`), and the existing
-startup/recovery/deep-dedup tests.
+New deterministic tests:
+- `test_production_composition_runs_stream_and_shutdown` (startup -> stream
+  manager created/started -> recovery -> resume -> shutdown)
+- `test_stream_requires_safe_recovery` (stream cannot start without SAFE)
+- `test_lot_size_unavailable_blocks_recovery` (BLOCKED, not SAFE)
+- `test_submit_remains_blocked_after_stream_failure`
+- `test_lot_size_unavailable_blocks_order_normalization` (adapter raises
+  `InvalidRequestError`)
 
-Full backend suite: `258 passed, 1 skipped` (was `254 passed, 1 skipped`; +4).
+Full backend suite: `263 passed, 1 skipped` (was `258 passed, 1 skipped`; +5).
 The single skip is the opt-in live sandbox integration test (no credentials).
 
 ### ruff result
 `All checks passed!` (app + tests).
 
 ### npm build result
-`✓ built in 5.79s` (vite, 32 modules).
+`✓ built in 12.79s` (vite, 32 modules).
 
 ### commit SHA
-Final correction commit `fd10067bebce7baea06f899a63a4a5826bc3b28d` —
-`fix: finalize MVP-6.3 unit normalization and recovery wiring`
-(branch `master`, NOT pushed), on top of `b9869d9` over `3720b7c`.
+Final correction commit `a4eaac975f59454c14b980fe3234af2bd2a2d8bf` —
+`fix: wire production live runtime and harden lot-size normalization`
+(branch `master`, NOT pushed), on top of `fd10067` over `b9869d9` / `3720b7c`.
+Published to `agent/review/mvp-6.3`.
 
 ### Known limitations
-- `live_trading_enabled` defaults False; startup/reconnect recovery wiring runs
-  only when enabled (preserves app boot without credentials/DB).
-- When the instrument lot size cannot be resolved, `_to_order` falls back to a
-  factor of 1 (quantities remain in lots); this is a best-effort edge case.
-- `BrokerDeal.order_id` is populated only if the T-Invest operation item exposes
-  an order reference; fill recovery is guaranteed through broker order
-  `executions` (stages), which are natively correlated by order id.
+- `live_trading_enabled` defaults False; the production runtime only starts when
+  enabled (preserves app boot without credentials/DB).
+- The production runtime reconnects with backoff; if it cannot establish a
+  session it keeps retrying (live events remain blocked by the recovery gate
+  until SAFE).
+- `BrokerDeal.order_id` is populated only when the T-Invest operation item
+  exposes an order reference; fill recovery is guaranteed through broker order
+  `executions` (stages), natively correlated by order id.
 - No live/real-sandbox verification (no credentials/network), consistent with
   earlier MVP-6.x reports.
 
 ### git status / git log -5
-- `git status`: branch `master`, ahead of `origin/master` by 3, working tree
+- `git status`: branch `master`, ahead of `origin/master` by 4, working tree
   clean (verification done before checkout to `agent/control` for this report).
 - `git log -5 --oneline`:
+  - `a4eaac9` fix: wire production live runtime and harden lot-size normalization
   - `fd10067` fix: finalize MVP-6.3 unit normalization and recovery wiring
   - `b9869d9` fix: complete MVP-6.3 recovery wiring and broker-fact reconciliation
   - `3720b7c` feat: implement live state reconciliation and recovery
   - `8529bc0` fix: use OrderStateStream for live executions
-  - `5d52014` feat: connect real T-Invest Open API transport
 
 ### Divergence / blocked conditions
 - None. No merge/rebase performed; `master` NOT pushed (ahead of
-  `origin/master` by 3). `## CHATGPT REVIEW` was not modified.
+  `origin/master` by 4). `## CHATGPT REVIEW` was not modified.
 ## CHATGPT REVIEW
 
 ### Результат независимой проверки
