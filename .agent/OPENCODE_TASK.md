@@ -565,6 +565,32 @@ is the opt-in live sandbox integration test (no credentials).
 
 `## CHATGPT REVIEW` не изменялся.
 
+### MVP-6.4 correction #2 (final integration correction)
+- Correction commit `b4a1deb5386eb9e2cbd3753f14eebac13deba0e7` —
+  `fix: document strategy-path boundary in production live composition`
+  (branch `master`, NOT pushed); published to `agent/review/mvp-6.4`.
+- **Production composition status (honest boundary):** `build_live_service()`
+  wires the **execution** path only — `TradingEngine.submit_intent()` ->
+  `RiskManager.check_order()` -> `OrderManager.submit()`. A `StrategyEngine` /
+  `StrategyConfig` is NOT wired because there is no live bot-strategy
+  configuration source in MVP-6. `TradingEngine.strategy_configured` is `False`,
+  and `process()` (the Strategy -> TradingEngine path) raises if invoked with
+  no engine/config. This is explicitly *not* claimed as production-integrated.
+- **max_concurrent_bots start guard:** implemented and unit-tested at the
+  `RiskManager.check_start()` level, but NOT wired into a live bot-start
+  lifecycle, because no bot-start lifecycle exists in the MVP-6 live runtime.
+  Bot-start is kept outside MVP-6 scope (documented boundary).
+- **Production RiskManager limits:** no application-level risk-configuration
+  source is wired into the live runtime, so the production `RiskManager` uses
+  default empty `RiskLimits` (no limits). No financial defaults were invented.
+  This is a stated MVP boundary.
+- **Daily loss limit / max_position_size:** same as documented below (daily PnL
+  not tracked by default; conservative position-size check).
+- **Tests (run for this correction):** pytest `276 passed, 1 skipped`; ruff
+  `All checks passed!`; npm build `✓ built in 2.77s`.
+
+`## CHATGPT REVIEW` не изменялся.
+
 
 ## CHATGPT REVIEW — MVP-6.4 correction required
 
