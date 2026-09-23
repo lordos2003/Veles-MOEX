@@ -72,9 +72,20 @@ class TradingEngine:
         return await self.order_manager.submit(intent)
 
     async def process(self, context: MarketContext) -> Plan:
-        """Evaluate the strategy and route execution through the Risk Manager."""
+        """Evaluate the strategy and route execution through the Risk Manager.
+
+        This is the integration seam for the Strategy -> TradingEngine ->
+        RiskManager -> OrderManager pipeline. It requires a StrategyEngine and a
+        strategy config; production live execution goes through
+        :meth:`submit_intent` and must not invoke this with ``None``.
+        """
         if not self._started:
             raise RuntimeError("TradingEngine is not started")
+        if self.strategy_engine is None or self._strategy_config is None:
+            raise RuntimeError(
+                "TradingEngine.process() requires a StrategyEngine and a strategy "
+                "config; the live execution path uses submit_intent() instead"
+            )
         plan = self.strategy_engine.evaluate(self._strategy_config, context)
         if plan.entry is not None and self._intent_factory is not None:
             intent = self._intent_factory(plan, context)

@@ -185,8 +185,27 @@ async def test_trading_engine_process_routes_through_risk() -> None:
     def intent_factory(_plan, _context):
         return _intent(om)
 
-    te = TradingEngine(broker, _SE(), om, pm, risk, intent_factory=intent_factory)
+    te = TradingEngine(
+        broker,
+        _SE(),
+        om,
+        pm,
+        risk,
+        strategy_config=object(),
+        intent_factory=intent_factory,
+    )
     await te.start()
     with pytest.raises(RiskRejected):
         await te.process(None)
     assert broker.place_calls == 0
+
+
+async def test_process_requires_strategy_engine_and_config() -> None:
+    """process() must not be invoked with a missing strategy engine/config."""
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    te = TradingEngine(broker, None, om, pm, RiskManager())
+    await te.start()
+    with pytest.raises(RuntimeError):
+        await te.process(None)
