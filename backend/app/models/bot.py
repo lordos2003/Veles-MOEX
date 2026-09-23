@@ -12,6 +12,7 @@ from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
+from app.models.enums import BotState
 
 
 class Bot(TimestampMixin, Base):
@@ -30,8 +31,9 @@ class Bot(TimestampMixin, Base):
     instrument_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("instruments.id"), index=True, nullable=False
     )
-    # e.g. "stopped", "running", "error". Exact vocabulary TBD at MVP-6.
-    status: Mapped[str] = mapped_column(String(32), default="stopped", nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default=BotState.STOPPED.value, nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -117,6 +117,7 @@ class ExecutionIntent:
     account_id: str | None = None
     created_at: datetime = field(default_factory=_utcnow)
     idempotency_key: str = ""
+    bot_id: int | None = None
 
 
 @dataclass
@@ -139,6 +140,7 @@ class InternalOrder:
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
     reject_info: str | None = None
+    bot_id: int | None = None
 
     @property
     def remaining_quantity(self) -> Decimal:

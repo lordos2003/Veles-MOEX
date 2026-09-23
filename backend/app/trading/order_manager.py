@@ -180,6 +180,7 @@ class OrderManager:
             limit_price=intent.limit_price,
             idempotency_key=_ensure_idempotency(intent),
             account_id=intent.account_id,
+            bot_id=intent.bot_id,
             created_at=_utcnow(),
         )
 
@@ -197,6 +198,7 @@ class OrderManager:
             account_id=intent.account_id,
             status=OrderState.REJECTED,
             reject_info=reason,
+            bot_id=intent.bot_id,
             created_at=_utcnow(),
         )
         self._orders.save(order)

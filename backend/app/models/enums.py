@@ -27,3 +27,14 @@ class OrderStatus(StrEnum):
     EXPIRED = "EXPIRED"
     ERROR = "ERROR"
     UNKNOWN = "UNKNOWN"
+
+
+class BotState(StrEnum):
+    """Bot lifecycle states (MVP-6.5)."""
+
+    STOPPED = "STOPPED"
+    STARTING = "STARTING"
+    RUNNING = "RUNNING"
+    STOP_REQUESTED = "STOP_REQUESTED"
+    ERROR = "ERROR"
+    EMERGENCY_STOP = "EMERGENCY_STOP"

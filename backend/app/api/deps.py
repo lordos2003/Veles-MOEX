@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bots.repository import BotRepository
 from app.brokers import BrokerAdapter, TInvestAdapter
 from app.core.db import get_session
 from app.services.broker_data import BrokerDataService
 from app.services.instruments import InstrumentService
 from app.services.market_data import MarketDataService
+from app.trading.bot_lifecycle import BotRuntimeManager
+from app.trading.risk_manager import RiskManager
 
 
 def get_broker_adapter() -> BrokerAdapter:
@@ -42,3 +45,23 @@ def get_broker_data_service(
 ) -> BrokerDataService:
     """Return a BrokerDataService bound to the request broker adapter."""
     return BrokerDataService(broker)
+
+
+def get_bot_repository(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> BotRepository:
+    """Return a BotRepository bound to the request session."""
+    return BotRepository(session)
+
+
+def get_bot_runtime_manager(request: Request) -> BotRuntimeManager:
+    """Return the application bot runtime manager.
+
+    When the live execution service is running it exposes the wired manager;
+    otherwise a default (execution-unwired) manager is returned so endpoints stay
+    usable for read-only/state operations.
+    """
+    service = getattr(request.app.state, "live_execution", None)
+    if service is not None and service.bot_runtime is not None:
+        return service.bot_runtime
+    return BotRuntimeManager(RiskManager())

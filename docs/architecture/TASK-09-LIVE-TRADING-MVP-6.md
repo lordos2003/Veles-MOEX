@@ -258,24 +258,32 @@ Veles documents this distinction between normal stop and urgent stop.
 
 The MVP-6 live runtime wires the execution path as:
 
-`LiveExecutionService.submit()` -> `TradingEngine.submit_intent()` ->
-`RiskManager.check_order()` -> `OrderManager.submit()` -> broker.
+`LiveExecutionService.submit()` -> `BotRuntime.submit_intent()` ->
+`TradingEngine.submit_intent()` -> `RiskManager.check_order()` ->
+`OrderManager.submit()` -> broker.
 
-In this MVP the live runtime wires **only** the risk-gated execution path:
+In this MVP the live runtime wires:
 
+- The **bot lifecycle** as the upstream control layer (`BotRuntime` /
+  `BotRuntimeManager`); a bot must be RUNNING before its intents are accepted.
+  BEGIN transitions run through `RiskManager.check_start()` before RUNNING and
+  `start_bot()` on success; normal STOP and EMERGENCY_STOP call `stop_bot()`.
 - `RiskManager.check_order()` is the authoritative execution gate (emergency
   stop, position-size, daily-loss where data is available) and is called before
   every live order.
+
+Remaining boundaries (kept in sync with the implementation, not
+production-integrated):
+
 - The `TradingEngine.process()` (Strategy -> TradingEngine) path is **not**
   wired into the live runtime: no live `StrategyEngine`/`StrategyConfig`
   composition exists in MVP-6, so `process()` is an integration seam (it raises
   if invoked without an engine/config).
-- The bot-start lifecycle (`RiskManager.check_start()` / concurrent-bot control)
-  is **not** wired into a live bot-start lifecycle in MVP-6; bot-start is outside
-  the MVP-6 scope.
-
-These boundary statements are kept in sync with the implementation and should
-not be read as production-integrated functionality.
+- There is **no production risk-limits configuration source**; `build_live_service()`
+  uses default empty `RiskLimits()` (no invented financial defaults).
+- Per-bot order correlation relies on `bot_id` on intents/orders; EMERGENCY_STOP
+  cancels a bot's active orders only through the existing broker-neutral
+  `OrderManager.cancel()` path when an `OrderManager` is wired.
 
 ## 12. Recovery
 

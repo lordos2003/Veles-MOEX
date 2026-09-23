@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from app.trading.bot_lifecycle import (
+    BotRuntime,
+    BotRuntimeManager,
+    BotStartRejected,
+    BotStateError,
+)
 from app.trading.domain import (
     ALLOWED_TRANSITIONS,
     ExecutionIntent,
@@ -29,6 +35,10 @@ from app.trading.state import InMemoryLiveStateStore, LiveStateSnapshot, LiveSta
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
+    "BotRuntime",
+    "BotRuntimeManager",
+    "BotStateError",
+    "BotStartRejected",
     "ExecutionIntent",
     "Fill",
     "InMemoryFillRepository",

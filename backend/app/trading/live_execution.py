@@ -9,6 +9,7 @@ refused so unsafe new execution cannot resume.
 
 from __future__ import annotations
 
+from app.trading.bot_lifecycle import BotRuntimeManager, BotStateError
 from app.trading.domain import ExecutionIntent, InternalOrder
 from app.trading.engine import TradingEngine
 from app.trading.order_manager import OrderManager
@@ -36,6 +37,7 @@ class LiveExecutionService:
         *,
         risk_manager: RiskManager | None = None,
         trading_engine: TradingEngine | None = None,
+        bot_runtime_manager: BotRuntimeManager | None = None,
     ) -> None:
         self._broker = broker
         self._order_manager = order_manager
@@ -51,11 +53,17 @@ class LiveExecutionService:
         self._trading_engine = trading_engine or TradingEngine(
             broker, None, order_manager, position_manager, self._risk_manager
         )
+        self._bot_runtime_manager = bot_runtime_manager
 
     @property
     def can_execute(self) -> bool:
         """True once a SAFE recovery has completed."""
         return self._safe
+
+    @property
+    def bot_runtime(self) -> BotRuntimeManager | None:
+        """The bot lifecycle manager wired into this service (may be None)."""
+        return self._bot_runtime_manager
 
     @property
     def coordinator(self) -> LiveRecoveryCoordinator:
@@ -77,9 +85,22 @@ class LiveExecutionService:
         return result
 
     async def submit(self, intent: ExecutionIntent) -> InternalOrder:
-        """Submit an intent only after a SAFE recovery, through the Risk gate."""
+        """Submit an intent only after a SAFE recovery, through the Risk gate.
+
+        When a bot lifecycle is wired, submission is additionally gated on the
+        owning bot being in RUNNING (the authoritative upstream control layer).
+        """
         if not self._safe:
             raise LiveExecutionBlocked("live execution blocked until recovery succeeds")
+        if self._bot_runtime_manager is not None:
+            if intent.bot_id is None:
+                raise BotStateError(
+                    "live submit requires a bot_id while the bot lifecycle is enabled"
+                )
+            runtime = self._bot_runtime_manager.get(intent.bot_id)
+            if runtime is None:
+                raise BotStateError(f"no bot runtime for bot {intent.bot_id}")
+            return await runtime.submit_intent(intent)
         return await self._trading_engine.submit_intent(intent)
 
     def build_stream_manager(self, transport):
@@ -160,15 +181,18 @@ def build_live_service() -> LiveExecutionService:
     underlying session.
 
     Strategy-path boundary: the live composition wires only the **execution**
-    path (RiskManager -> OrderManager via ``TradingEngine.submit_intent``). A
-    ``StrategyEngine``/``StrategyConfig`` is NOT wired because there is no live
-    bot-strategy configuration source in MVP-6, so ``TradingEngine.process()``
-    (the Strategy -> TradingEngine path) is *not* integrated and ``strategy_configured``
-    is ``False`` (``process()`` raises if invoked).
+    path (RiskManager -> OrderManager via ``TradingEngine.submit_intent``), with
+    the **bot lifecycle** as the upstream control layer (a bot must be RUNNING
+    before its intents are accepted). A ``StrategyEngine``/``StrategyConfig`` is
+    NOT wired because there is no live bot-strategy configuration source in
+    MVP-6, so ``TradingEngine.process()`` (the Strategy -> TradingEngine path)
+    is *not* integrated and ``strategy_configured`` is ``False`` (``process()``
+    raises if invoked).
     """
     from app.brokers import TInvestAdapter
     from app.core.db import SessionLocal
     from app.persistence.execution_state import SqlAlchemyLiveStateStore
+    from app.trading.bot_lifecycle import BotRuntime
 
     broker = TInvestAdapter()
     session = SessionLocal()
@@ -179,6 +203,20 @@ def build_live_service() -> LiveExecutionService:
     trading_engine = TradingEngine(
         broker, None, order_manager, position_manager, risk_manager
     )
+
+    async def _submit_cb(intent: ExecutionIntent) -> InternalOrder:
+        return await trading_engine.submit_intent(intent)
+
+    def _make_runtime(bot_id: int) -> BotRuntime:
+        return BotRuntime(
+            bot_id,
+            risk_manager,
+            submit_cb=_submit_cb,
+            order_manager=order_manager,
+        )
+
+    bot_runtime_manager = BotRuntimeManager(risk_manager, runtime_factory=_make_runtime)
+
     service = LiveExecutionService(
         broker,
         store,
@@ -186,6 +224,7 @@ def build_live_service() -> LiveExecutionService:
         position_manager,
         risk_manager=risk_manager,
         trading_engine=trading_engine,
+        bot_runtime_manager=bot_runtime_manager,
     )
     service._session_owner = session
     return service
