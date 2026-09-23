@@ -147,3 +147,37 @@ Correction commit `3b381d68fc31d6ac37053539e869a908d6517e2e` —
 ### Divergence / blocked conditions
 - None. No merge/rebase performed; `master` NOT pushed (ahead of
   `origin/master` by 6). `## CHATGPT REVIEW` was not modified.
+
+
+## CHATGPT REVIEW
+
+### Результат независимой проверки
+
+MVP-6.3 **ПРИНЯТО**.
+
+Проверен фактический commit:
+
+`3b381d68fc31d6ac37053539e869a908d6517e2e`
+
+Проверка выполнена относительно предыдущего принятого correction base:
+
+`1907c245f49a66678ab7c204fcafdefb7c482fd9`
+
+Фактический diff содержит только:
+- `backend/app/brokers/tinvest.py`
+- `backend/tests/test_tinvest_adapter.py`
+
+Проверено:
+
+1. `factor = Decimal("1")` полностью удалён из `TInvestAdapter._to_order()`.
+2. Order с FIGI требует положительный `lot_size`.
+3. Order без FIGI с ненулевым quantity получает `InvalidRequestError`.
+4. Zero-quantity/no-FIGI order получает явные `Decimal("0")` без fallback.
+5. Добавлены deterministic tests для отсутствия fallback и zero-quantity case.
+6. Предыдущие recovery/startup/reconnect исправления в этом commit не изменены.
+7. По REPORT: `268 passed, 1 skipped`, ruff passed, npm build passed.
+8. `master` не push, merge/rebase не выполнялись.
+
+**MVP-6.3 принят.**
+
+Следующее действие: можно перенести принятые изменения в `master` по установленному Git workflow.
