@@ -336,3 +336,118 @@ PUBLISH-MASTER-AFTER-MVP-6.3 — выполнено. Принятые измен
 - merge/rebase-конфликтов не было.
 
 `## CHATGPT REVIEW` не изменялся.
+
+
+## STATUS
+TASK
+
+## TASK_ID
+MVP-6-INTEGRATION-TRADING-RISK
+
+## TASK
+
+Закрыть фактический незавершённый участок MVP-6: production live execution сейчас обходит `TradingEngine` и `RiskManager`.
+
+### Проверенный текущий факт
+
+В `master`:
+
+- `backend/app/trading/engine.py` содержит только orchestration seam и `NotImplementedError` в `start()`, `stop()`, `process()`.
+- `backend/app/trading/risk_manager.py` содержит только интерфейс и `NotImplementedError` в `check_order()`, `check_start()`, `check_emergency_stop()`.
+- `LiveExecutionService.submit()` напрямую вызывает `OrderManager.submit()`.
+- Поэтому утверждение спецификации MVP-6, что Risk Manager является обязательным authoritative guard и Trading Engine является live orchestration layer, фактически не выполняется.
+
+Это текущий blocker MVP-6. Не делать новый MVP-7 поверх него.
+
+### Цель
+
+Сделать минимальную рабочую интеграцию:
+
+`Strategy/Trading layer → RiskManager → OrderManager → BrokerAdapter`
+
+и сохранить существующий recovery/live stream механизм.
+
+### Требования
+
+1. Реализовать broker-agnostic `RiskManager` для существующих MVP-конфигураций.
+   Минимально обеспечить:
+   - emergency stop;
+   - maximum position size;
+   - maximum concurrent bots / start guard;
+   - daily loss limit, если соответствующие данные доступны через существующие domain/state objects.
+   
+   Если конкретное ограничение невозможно проверить из существующего broker-neutral контекста без нового крупного subsystem, не изобретать модель. Зафиксировать точное ограничение в REPORT.
+
+2. Реализовать `TradingEngine.process()` как broker-neutral orchestration:
+   - получить/оценить Strategy Plan;
+   - проверить execution через RiskManager;
+   - только после успешной проверки передать intent/order в OrderManager;
+   - не импортировать T-Invest;
+   - не принимать финансовые решения, которых нет в Strategy/Risk configuration.
+
+3. Реализовать lifecycle `TradingEngine.start()/stop()` без фиктивного поведения.
+   Не создавать второй broker connection, если текущий live runtime уже управляет соединением.
+
+4. Подключить `LiveExecutionService.submit()` к authoritative Risk/Trading path.
+   Прямой обход RiskManager через `OrderManager.submit()` удалить.
+
+5. Сохранить:
+   - `LiveRecoveryCoordinator` и SAFE/BLOCKED gate;
+   - OrderStateStream-only;
+   - текущую idempotency;
+   - текущую fill/recovery reconciliation;
+   - broker-neutral domain;
+   - T-Invest details внутри BrokerAdapter.
+
+6. Добавить deterministic tests минимум:
+   - emergency stop blocks submit;
+   - position-size limit blocks submit;
+   - allowed intent reaches OrderManager;
+   - TradingEngine does not import T-Invest;
+   - LiveExecutionService cannot bypass RiskManager;
+   - SAFE/BLOCKED recovery gate still blocks execution.
+
+### Не менять
+
+- T-Invest MCP;
+- OrderStateStream;
+- recovery algorithm;
+- DCA/Grid;
+- Exit Engine;
+- Strategy Engine;
+- Backtest Engine;
+- persistence schema без необходимости;
+- финансовые параметры;
+- другие брокеры;
+- unrelated refactoring.
+
+### Validation
+
+Запустить:
+
+- `pytest`
+- `ruff`
+- `npm build`
+
+### Git
+
+- Один focused correction commit.
+- НЕ push `master`.
+- НЕ merge.
+- НЕ rebase.
+- Опубликовать commit в `agent/review/mvp-6.4`.
+- REPORT записать в `agent/control`.
+- `CHATGPT REVIEW` НЕ изменять.
+- После REPORT остановиться.
+
+REPORT должен содержать:
+- commit SHA;
+- реализованные RiskManager/TradingEngine paths;
+- production submit path;
+- changed files;
+- pytest;
+- ruff;
+- npm build;
+- git status;
+- git log -5;
+- ограничения, если какое-либо risk-правило нельзя реализовать без расширения scope.
