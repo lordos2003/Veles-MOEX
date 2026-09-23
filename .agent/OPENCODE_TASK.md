@@ -1,7 +1,7 @@
 # OpenCode Agent Control
 
 ## STATUS
-TASK
+REPORT
 
 ## TASK_ID
 MVP-6.3-CORRECTION-LOT-SIZE
@@ -85,3 +85,65 @@ REPORT должен содержать:
 - npm build;
 - git status;
 - git log -5.
+
+## REPORT
+
+MVP-6.3-CORRECTION-LOT-SIZE — applied. Committed on `master` over `1907c24`;
+correction commit `3b381d6`.
+
+### What was fixed
+Removed the last silent `lot_size -> 1` fallback in `TInvestAdapter._to_order()`.
+The `factor = Decimal("1")` branch is gone entirely. `_to_order()` now:
+
+- For an order **with** a FIGI: requires a positive `lot_size` (fetched via
+  `get_instrument`); otherwise it raises `InvalidRequestError` (never a false
+  canonical quantity).
+- For an order **without** a FIGI:
+  - if `lotsRequested`/`lotsExecuted` are non-zero -> raises
+    `InvalidRequestError` (cannot normalize without an instrument);
+  - if quantity is zero -> returns **zero** canonical units and an empty
+    `executions` list, without using any fallback factor of 1.
+
+The broker-neutral trading domain is unchanged; `Decimal` is kept.
+
+### Files changed
+- backend/app/brokers/tinvest.py (`_to_order` no-factor restructure)
+- backend/tests/test_tinvest_adapter.py (new tests)
+
+### Tests and exact results
+New deterministic tests:
+- `test_to_order_has_no_silent_lot_fallback` (asserts `factor = Decimal("1")`
+  is not present in `_to_order`)
+- `test_zero_quantity_no_figi_order_returns_zero_units` (zero-quantity/no-FIGI
+  maps to zero units, no fallback)
+- existing `test_order_without_figi_but_quantity_rejected` (non-zero/no-FIGI
+  raises `InvalidRequestError`) still passes.
+
+Full backend suite: `268 passed, 1 skipped` (was `266 passed, 1 skipped`; +2).
+The single skip is the opt-in live sandbox integration test (no credentials).
+
+### ruff result
+`All checks passed!` (app + tests).
+
+### npm build result
+`✓ built in 2.86s` (vite, 32 modules).
+
+### commit SHA
+Correction commit `3b381d68fc31d6ac37053539e869a908d6517e2e` —
+`fix: remove lot-size fallback for zero-quantity orders`
+(branch `master`, NOT pushed), on top of `1907c24`. Published to
+`agent/review/mvp-6.3`.
+
+### git status / git log -5
+- `git status`: branch `master`, ahead of `origin/master` by 6, working tree
+  clean (verification done before checkout to `agent/control` for this report).
+- `git log -5 --oneline`:
+  - `3b381d6` fix: remove lot-size fallback for zero-quantity orders
+  - `1907c24` fix: harden lot-size normalization and unary recovery gating
+  - `a4eaac9` fix: wire production live runtime and harden lot-size normalization
+  - `fd10067` fix: finalize MVP-6.3 unit normalization and recovery wiring
+  - `b9869d9` fix: complete MVP-6.3 recovery wiring and broker-fact reconciliation
+
+### Divergence / blocked conditions
+- None. No merge/rebase performed; `master` NOT pushed (ahead of
+  `origin/master` by 6). `## CHATGPT REVIEW` was not modified.
