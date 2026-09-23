@@ -1,7 +1,7 @@
 # OpenCode Agent Control
 
 ## STATUS
-CORRECTION REQUIRED
+REPORT
 
 ## TASK_ID
 MVP-6.3
@@ -96,7 +96,70 @@ REPORT должен содержать:
 - git log -5.
  
 
-## CHATGPT REVIEW` was not modified.
+## REPORT
+
+MVP-6.3 — CORRECTION REQUIRED task applied. Committed on `master` over
+`a4eaac9`; correction commit `1907c24`.
+
+### What was fixed (two blockers)
+1. **lot_size fallback removed.** `TInvestAdapter._to_order()` no longer contains
+   `factor = Decimal(lot_size) if lot_size else Decimal("1")`. For an order with a
+   FIGI, the lot size must resolve to a positive value or `InvalidRequestError`
+   is raised (never a false canonical quantity). For an order without a FIGI that
+   still carries a non-zero lot quantity, an `InvalidRequestError` is also raised
+   (cannot normalize without an instrument). The only `factor = Decimal("1")`
+   path is a zero-quantity, no-FIGI order (units resolve to 0). The error stays
+   inside the broker integration boundary; the trading domain remains
+   broker-neutral.
+2. **Unary recovery errors are no longer swallowed.** `TInvestStreamManager._recover()`
+   now returns `bool` (True only when both `get_orders()` and `get_open_positions()`
+   succeed). On failure `_run_session()` does not dispatch live events and raises
+   `ConnectionError`, so the `run()` loop reconnects and retries recovery. The
+   sequence is preserved: connect/resubscribe -> unary recovery -> full durable
+   recovery -> SAFE gate -> dispatch.
+
+### Files changed
+- backend/app/brokers/tinvest.py (`_to_order` lot-size guard)
+- backend/app/brokers/tinvest_streams.py (`_recover` returns bool; `_run_session` gates)
+- backend/tests/test_tinvest_adapter.py (new `test_order_without_figi_but_quantity_rejected`)
+- backend/tests/test_tinvest_streams.py (new unary-recovery failure tests)
+
+### Tests and exact results
+New deterministic tests:
+- `test_lot_size_unavailable_blocks_order_normalization` (figi order -> raises)
+- `test_order_without_figi_but_quantity_rejected` (no-figi + quantity -> raises)
+- `test_unary_order_recovery_error_blocks_dispatch`
+- `test_unary_position_recovery_error_blocks_dispatch`
+
+Full backend suite: `266 passed, 1 skipped` (was `263 passed, 1 skipped`; +3).
+The single skip is the opt-in live sandbox integration test (no credentials).
+
+### ruff result
+`All checks passed!` (app + tests).
+
+### npm build result
+`✓ built in 3.16s` (vite, 32 modules).
+
+### commit SHA
+Correction commit `1907c245f49a66678ab7c204fcafdefb7c482fd9` —
+`fix: harden lot-size normalization and unary recovery gating`
+(branch `master`, NOT pushed), on top of `a4eaac9`. Published to
+`agent/review/mvp-6.3`.
+
+### git status / git log -5
+- `git status`: branch `master`, ahead of `origin/master` by 5, working tree
+  clean (verification done before checkout to `agent/control` for this report).
+- `git log -5 --oneline`:
+  - `1907c24` fix: harden lot-size normalization and unary recovery gating
+  - `a4eaac9` fix: wire production live runtime and harden lot-size normalization
+  - `fd10067` fix: finalize MVP-6.3 unit normalization and recovery wiring
+  - `b9869d9` fix: complete MVP-6.3 recovery wiring and broker-fact reconciliation
+  - `3720b7c` feat: implement live state reconciliation and recovery
+
+### Divergence / blocked conditions
+- None. No merge/rebase performed; `master` NOT pushed (ahead of
+  `origin/master` by 5). `## CHATGPT REVIEW` was not modified.
+
 ## CHATGPT REVIEW
 
 ### Результат независимой проверки
