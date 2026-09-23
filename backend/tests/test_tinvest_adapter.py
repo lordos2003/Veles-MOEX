@@ -397,3 +397,29 @@ async def test_operation_to_deals_correlates_broker_order() -> None:
     assert deals[0].deal_id == "op-1"
     assert deals[0].order_id == "order-9"
     assert deals[0].instrument_figi == "BBG004730N88"
+
+
+@pytest.mark.asyncio
+async def test_lot_size_unavailable_blocks_order_normalization() -> None:
+    """Final 2: missing lot size must raise, never return false canonical units."""
+    fake = TInvestFakeClient(
+        responses={
+            _GET_ACCOUNTS: {"accounts": [{"id": "acc-1"}]},
+            _GET_ORDERS: {
+                "orders": [
+                    {
+                        "orderId": "o1",
+                        "executionReportStatus": "EXECUTION_REPORT_STATUS_FILL",
+                        "lotsRequested": 10,
+                        "lotsExecuted": 10,
+                        "figi": "BBG004730N88",
+                        "direction": "ORDER_DIRECTION_BUY",
+                        "orderType": "ORDER_TYPE_LIMIT",
+                    }
+                ]
+            },
+        }
+    )
+    adapter = TInvestAdapter(client=fake)
+    with pytest.raises(InvalidRequestError):
+        await adapter.get_orders()

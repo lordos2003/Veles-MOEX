@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -20,12 +21,14 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Run live-execution recovery at startup when enabled.
+    """Run live-execution recovery and the live runtime at startup when enabled.
 
     Live execution is only allowed to resume after a SAFE reconciliation. When
-    recovery is blocked the service remains disabled (no new live orders).
+    recovery is blocked the service stays disabled (no new live orders). The
+    OrderStateStream live runtime is started only after a SAFE startup recovery.
     """
     service = None
+    stream_task = None
     if get_settings().live_trading_enabled:
         from app.trading.live_execution import build_live_service
 
@@ -33,18 +36,28 @@ async def lifespan(app: FastAPI):
             service = build_live_service()
             result = await service.start()
             app.state.live_execution = service
-            if not result.safe:
+            if result.safe:
+                stream_task = asyncio.create_task(service.run_stream_forever())
+            else:
                 logger.warning("live execution blocked at startup: %s", result.reason)
         except Exception as exc:  # noqa: BLE001 - startup must not crash the API
             logger.exception("live execution recovery failed; live trading disabled: %s", exc)
             service = None
+            stream_task = None
     try:
         yield
     finally:
         if service is not None:
-            session = getattr(service, "_session_owner", None)
-            if session is not None:
-                await session.close()
+            if stream_task is not None:
+                await service.shutdown()
+                try:
+                    await stream_task
+                except asyncio.CancelledError:
+                    pass
+            else:
+                session = getattr(service, "_session_owner", None)
+                if session is not None:
+                    await session.close()
 
 
 app = FastAPI(

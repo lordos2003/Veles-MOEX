@@ -88,7 +88,15 @@ class LiveRecoveryCoordinator:
         self._order_manager.load_snapshot(snapshot)
         self._blocked_reason = None
 
-        broker_orders = await self._broker.get_orders(account_id)
+        try:
+            broker_orders = await self._broker.get_orders(account_id)
+        except Exception as exc:  # noqa: BLE001 - integration failure is not SAFE
+            self._blocked_reason = f"order reconciliation failed: {exc}"
+            await self.persist_snapshot()
+            return RecoveryResult(
+                status=RecoveryStatus.BLOCKED,
+                reason=self._blocked_reason,
+            )
         by_broker_id = {order.order_id: order for order in broker_orders}
         by_idempotency = {
             order.idempotency_key: order
@@ -114,7 +122,15 @@ class LiveRecoveryCoordinator:
         if unresolved:
             self._blocked_reason = f"unresolved active orders: {', '.join(unresolved)}"
 
-        broker_positions = await self._broker.get_open_positions(account_id)
+        try:
+            broker_positions = await self._broker.get_open_positions(account_id)
+        except Exception as exc:  # noqa: BLE001 - integration failure is not SAFE
+            self._blocked_reason = f"position reconciliation failed: {exc}"
+            await self.persist_snapshot()
+            return RecoveryResult(
+                status=RecoveryStatus.BLOCKED,
+                reason=self._blocked_reason,
+            )
         broker_figis = {position.instrument_figi for position in broker_positions}
         for position in list(self._order_manager.positions().list()):
             # Broker facts win: a local position the broker no longer reports is stale.
@@ -135,7 +151,11 @@ class LiveRecoveryCoordinator:
             )
             recovered_positions += 1
 
-        for deal in await self._broker.get_deals(account_id):
+        try:
+            deals = await self._broker.get_deals(account_id)
+        except Exception:  # noqa: BLE001 - deals are best-effort; not a blocked state
+            deals = []
+        for deal in deals:
             order = self._order_manager.find_by_broker(deal.order_id)
             if order is None or order.status in TERMINAL_STATES:
                 continue

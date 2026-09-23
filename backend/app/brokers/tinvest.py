@@ -556,6 +556,11 @@ class TInvestAdapter(BrokerAdapter):
         """
         if lot_size is None and raw.get("figi"):
             lot_size = await self._lot_size_for(raw["figi"])
+        if raw.get("figi") and (not lot_size or lot_size <= 0):
+            raise InvalidRequestError(
+                f"cannot resolve lot size for instrument {raw['figi']}; "
+                "refusing to map T-Invest lots as canonical units"
+            )
         factor = Decimal(lot_size) if lot_size else Decimal("1")
         requested = raw.get("lotsRequested") or 0
         executed = raw.get("lotsExecuted") or 0

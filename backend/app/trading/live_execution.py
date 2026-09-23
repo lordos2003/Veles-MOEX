@@ -30,6 +30,7 @@ class LiveExecutionService:
         order_manager: OrderManager,
         position_manager: PositionManager,
         account_id: str | None = None,
+        transport=None,
     ) -> None:
         self._broker = broker
         self._order_manager = order_manager
@@ -39,6 +40,8 @@ class LiveExecutionService:
         self._account_id = account_id
         self._safe = False
         self._session_owner = None
+        self._stream_transport = transport
+        self._stream_manager = None
 
     @property
     def can_execute(self) -> bool:
@@ -94,6 +97,47 @@ class LiveExecutionService:
         result = await self._coordinator.recover(account_id)
         self._safe = result.safe
         return result.safe
+
+    async def run_stream_forever(self) -> None:
+        """Run the production OrderStateStream live runtime until :meth:`shutdown`.
+
+        Creates the T-Invest WebSocket transport (unless injected) and runs the
+        stream manager, whose reconnect path already runs unary recovery then the
+        full durable recovery gate before dispatching live events.
+        """
+        if not self._safe:
+            raise LiveExecutionBlocked(
+                "cannot start live stream before a SAFE recovery"
+            )
+        if self._stream_transport is None:
+            self._stream_transport = await self._build_transport()
+        self._stream_manager = self.build_stream_manager(self._stream_transport)
+        await self._stream_manager.run()
+
+    async def shutdown(self) -> None:
+        """Stop the live stream and close the session/transport."""
+        if self._stream_manager is not None:
+            self._stream_manager.stop()
+        if self._stream_transport is not None:
+            try:
+                await self._stream_transport.close()
+            except Exception:  # noqa: BLE001 - best-effort close
+                pass
+        session = self._session_owner
+        if session is not None:
+            try:
+                await session.close()
+            except Exception:  # noqa: BLE001 - best-effort close
+                pass
+
+    async def _build_transport(self):
+        from app.brokers.tinvest_stream_transport import build_stream_transport
+        from app.core.config import get_settings
+
+        settings = get_settings()
+        return build_stream_transport(
+            settings.tinvest_stream_url, settings.tinvest_token
+        )
 
 
 def build_live_service() -> LiveExecutionService:

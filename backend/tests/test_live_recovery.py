@@ -6,6 +6,7 @@ the SQLAlchemy persistence is exercised against an in-memory SQLite store.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -15,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.brokers.base import BrokerAccount, BrokerExecution, BrokerOrder, BrokerPosition
+from app.brokers.tinvest_errors import InvalidRequestError
 from app.models import Base
 from app.models.enums import OrderSide, OrderStatus, OrderType
 from app.persistence.execution_state import SqlAlchemyLiveStateStore
@@ -80,13 +82,18 @@ async def store():
 class FakeBroker:
     """Duck-typed broker used by the recovery coordinator."""
 
-    def __init__(self, orders=None, positions=None, get_order=None, deals=None) -> None:
+    def __init__(
+        self, orders=None, positions=None, get_order=None, deals=None, orders_error=None
+    ) -> None:
         self._orders = orders or []
         self._positions = positions or []
         self._get_order = get_order
         self._deals = deals or []
+        self._orders_error = orders_error
 
     async def get_orders(self, account_id: str | None = None) -> list:
+        if self._orders_error is not None:
+            raise self._orders_error
         return self._orders
 
     async def get_open_positions(self, account_id: str | None = None) -> list:
@@ -134,12 +141,13 @@ class FakeTransport:
         self.batches = batches or []
         self.connections = 0
         self.messages_calls = 0
+        self.closed = 0
 
     async def connect(self, accounts) -> None:
         self.connections += 1
 
     async def close(self) -> None:
-        pass
+        self.closed += 1
 
     async def messages(self):
         self.messages_calls += 1
@@ -578,3 +586,95 @@ async def test_production_reconnect_blocked_does_not_resume():
     assert service.can_execute is False
     # recovery blocked -> live events were not dispatched
     assert transport.messages_calls == 0
+
+
+# --- final correction: production runtime + lot_size guard --------------------
+
+
+async def test_production_composition_runs_stream_and_shutdown():
+    """Final 1: the service actually runs the stream manager and stops on shutdown."""
+    store = InMemoryLiveStateStore()
+    await store.save_snapshot(LiveStateSnapshot(orders=[_make_order()]))
+    broker = FakeBroker(
+        orders=[_broker_order("broker-1", OrderStatus.FILLED, idempotency_key="key-1")]
+    )
+    om = OrderManager(broker=broker)
+    transport = FakeTransport(batches=[])
+    service = LiveExecutionService(
+        broker, store, om, om.positions(), "acc-1", transport=transport
+    )
+    result = await service.start()
+    assert result.safe is True
+    assert service.can_execute is True
+
+    task = asyncio.create_task(service.run_stream_forever())
+    await asyncio.sleep(0.05)
+
+    assert transport.connections >= 1
+    assert service.can_execute is True
+
+    await service.shutdown()
+    await task
+    assert transport.closed >= 1
+
+
+async def test_stream_requires_safe_recovery():
+    """Final: stream runtime cannot start until startup recovery is SAFE."""
+    store = InMemoryLiveStateStore()
+    await store.save_snapshot(
+        LiveStateSnapshot(orders=[_make_order(status=OrderState.SUBMITTED)])
+    )
+    broker = FakeBroker(
+        orders=[],
+        get_order=lambda oid, acc: (_ for _ in ()).throw(LookupError(oid)),
+    )
+    om = OrderManager(broker=broker)
+    service = LiveExecutionService(
+        broker, store, om, om.positions(), "acc-1", transport=FakeTransport([])
+    )
+    result = await service.start()
+    assert result.safe is False
+    assert service.can_execute is False
+    with pytest.raises(LiveExecutionBlocked):
+        await service.run_stream_forever()
+
+
+async def test_lot_size_unavailable_blocks_recovery():
+    """Final 2: an integration lot-size error must keep recovery BLOCKED."""
+    store = InMemoryLiveStateStore()
+    await store.save_snapshot(LiveStateSnapshot(orders=[_make_order()]))
+    broker = FakeBroker(
+        orders_error=InvalidRequestError("cannot resolve lot size"),
+    )
+    om = OrderManager(broker=broker)
+    coordinator = LiveRecoveryCoordinator(store, om, om.positions(), broker)
+    result = await coordinator.recover("acc-1")
+    assert result.safe is False
+    assert result.status == RecoveryStatus.BLOCKED
+    assert result.reason is not None
+
+
+async def test_submit_remains_blocked_after_stream_failure():
+    """Final 3: after a failed startup recovery there is no bypass for submit."""
+    store = InMemoryLiveStateStore()
+    await store.save_snapshot(
+        LiveStateSnapshot(orders=[_make_order(status=OrderState.SUBMITTED)])
+    )
+    broker = FakeBroker(
+        orders_error=InvalidRequestError("order reconciliation failed"),
+    )
+    om = OrderManager(broker=broker)
+    service = LiveExecutionService(broker, store, om, om.positions(), "acc-1")
+    result = await service.start()
+    assert result.safe is False
+    intent = om.create_intent(
+        intent_id="i-rev",
+        trade_id="bot-1",
+        instrument_figi="BBG000",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal("10"),
+        account_id="acc-1",
+    )
+    with pytest.raises(LiveExecutionBlocked):
+        await service.submit(intent)
