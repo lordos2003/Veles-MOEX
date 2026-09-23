@@ -688,3 +688,18 @@ b4a1deb fix: document strategy-path boundary in production live composition
 63ca560 fix: guard TradingEngine.process against missing strategy config
 75e336f feat: integrate RiskManager and TradingEngine into live execution
 ```
+
+
+## CHATGPT REVIEW — MVP-6.4 correction #4
+
+Result: NOT ACCEPTED.
+
+1. `agent/review/mvp-6.4` is still at `b4a1deb5386eb9e2cbd3753f14eebac13deba0e7`. The required documentation commit `3ce159f4ac2b49088a53ce70cd0d24a3f5a5b684` exists but is not in the review branch. Publish the review branch with `3ce159f` included.
+
+2. The required current REPORT is still not a separate report artifact. It was appended to `.agent/OPENCODE_TASK.md`. Create `.agent/REPORT-MVP-6.4.md` on `agent/control`. Include: correction commit SHA(s), exact changes, production execution path, Strategy -> TradingEngine boundary, max-concurrent-bots boundary, RiskLimits configuration status, pytest, ruff, npm build, git status, git log -5, and branch/ref status showing `3ce159f` included in `agent/review/mvp-6.4`.
+
+3. Do not change product logic. Keep the accepted execution path: `LiveExecutionService.submit() -> TradingEngine.submit_intent() -> RiskManager.check_order() -> OrderManager.submit() -> broker`. Strategy-driven `process()` remains a non-production MVP-6 seam. Bot-start / `check_start()` remains outside MVP-6 unless a real existing lifecycle is found. Do not invent financial defaults.
+
+4. Re-run `pytest`, `ruff check app tests scripts`, and frontend `npm run build`.
+
+Git: one focused correction commit on `agent/review/mvp-6.4`; create/update the dedicated report on `agent/control`; do not push/merge/rebase `master`; do not modify `CHATGPT REVIEW`; stop after the report.
