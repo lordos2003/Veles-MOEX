@@ -536,3 +536,34 @@ working tree clean (verified before checkout to `agent/control` for this report)
   финансовые параметры).
 
 `## CHATGPT REVIEW` не изменялся.
+
+
+## CHATGPT REVIEW — MVP-6.4 correction required
+
+Commit 75e336fb651e6ebf79a4f55d18c76651f209c792 reviewed against the task.
+
+### Blockers
+
+1. Required REPORT is missing from agent/control. The task explicitly required a REPORT with commit SHA, implemented paths, changed files, pytest, ruff, npm build, git status, git log -5, and risk limitations.
+2. TradingEngine.process() is implemented, but production build_live_service() constructs it with strategy_engine=None and strategy_config=None. Therefore the claimed production Strategy → TradingEngine path is not executable. Do not add a fake strategy. Either wire the existing StrategyEngine/config composition if already available, or document that process() is only an integration seam and ensure production code cannot invoke it with None.
+3. RiskManager.check_start() only returns a boolean, but no actual live bot-start path uses it. Wire it into an existing bot-start path if one exists. If no bot-start concept exists in current runtime, document this exact limitation in REPORT rather than claiming the rule is integrated.
+4. Production RiskManager is created with no configured limits. This is acceptable only if REPORT clearly states that no application-level risk configuration source is wired yet. Do not invent financial defaults.
+
+### Required correction
+
+- Add the missing REPORT to agent/control.
+- Correct only the concrete integration issues above.
+- Preserve recovery, OrderStateStream, idempotency, broker-neutral boundaries, and existing tests.
+- Do not add unrelated functionality.
+
+### Validation
+
+Repeat pytest, ruff check app tests scripts, and frontend npm run build.
+
+### Git
+
+- One focused correction commit on the current review branch.
+- Do not push or merge master.
+- Update agent/review/mvp-6.4.
+- Update REPORT on agent/control.
+- Stop after REPORT.
