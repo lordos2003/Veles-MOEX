@@ -393,3 +393,123 @@ Git:
 - `CHATGPT REVIEW` не изменять.
 
 Остановиться после публикации REPORT для повторной независимой проверки.
+
+## FINAL CORRECTION TASK
+
+Исправить MVP-6.3 поверх commit:
+
+fd10067bebce7baea06f899a63a4a5826bc3b28d
+
+Это финальная targeted correction. Не расширять scope.
+
+### 1. Подключить OrderStateStream к реальному production live runtime
+
+Сейчас LiveExecutionService.build_stream_manager() корректно создаёт TInvestStreamManager с recovery hook, но production startup в app/main.py создаёт только LiveExecutionService и вызывает service.start(). Production runtime фактически не запускает TInvestStreamManager.
+
+Нужно:
+
+- в production composition реально создать TInvestStreamManager через LiveExecutionService.build_stream_manager(...);
+- использовать существующий production T-Invest OrderStateStream transport;
+- запустить stream manager в live runtime после успешного startup recovery;
+- корректно остановить/закрыть stream manager при shutdown;
+- не создавать второй отдельный recovery path;
+- reconnect должен проходить через уже реализованный:
+  connect/resubscribe → unary recovery → full durable recovery → SAFE → dispatch;
+- при BLOCKED/failed recovery новые live events и новые execution должны оставаться заблокированными;
+- сохранить OrderStateStream-only решение;
+- TradesStream не возвращать.
+
+ВАЖНО:
+Не делать stream manager только тестовым объектом. Должна существовать реальная production composition path от app lifespan до TInvestStreamManager.run().
+
+Добавить deterministic test, доказывающий production composition:
+startup → stream manager создан/запущен → reconnect recovery → resume.
+И test shutdown, что stream manager останавливается.
+
+### 2. Убрать небезопасный lot_size fallback
+
+В TInvestAdapter._to_order() сейчас при невозможности определить lot_size используется:
+
+factor = Decimal("1")
+
+Это запрещено.
+
+BrokerOrder contract требует canonical instrument units.
+
+Если для T-Invest order с FIGI невозможно получить корректный lot_size:
+
+- НЕ считать lots canonical units;
+- НЕ возвращать потенциально неверный BrokerOrder;
+- завершить normalization/recovery с явной broker/integration error;
+- live execution/recovery должен остаться BLOCKED/UNSAFE;
+- ошибка должна оставаться внутри broker integration boundary;
+- не добавлять broker-specific логику в trading domain.
+
+Удалить silent fallback lot_size -> 1.
+
+Добавить deterministic test:
+- lot_size unavailable;
+- TInvestAdapter не возвращает ложный canonical quantity;
+- recovery/live execution не становится SAFE.
+
+### 3. Проверить startup failure semantics
+
+Если создание/запуск live stream manager или его initial recovery не удалось:
+
+- live execution не должно становиться доступным;
+- API application может продолжить работу в read-only режиме;
+- service.can_execute должно оставаться False;
+- не должно существовать обходного пути для submit().
+
+Не менять существующую модель SAFE/BLOCKED.
+
+### 4. Не менять
+
+Не менять:
+- T-Invest MCP;
+- DCA/Grid;
+- Exit Engine;
+- Risk Manager;
+- Strategy Engine;
+- Backtest;
+- другие брокеры;
+- OrderStateStream-only архитектуру;
+- финансовые параметры;
+- persistence schema без необходимости;
+- unrelated refactoring.
+
+### 5. Tests / validation
+
+Добавить deterministic tests минимум на:
+1. production lifespan/composition реально запускает stream manager;
+2. startup recovery must be SAFE before stream events resume;
+3. stream manager shutdown;
+4. reconnect recovery remains the gate;
+5. lot_size unavailable blocks normalization/recovery;
+6. submit remains blocked after stream/startup failure.
+
+Запустить:
+- pytest
+- ruff
+- npm build
+
+### 6. Git protocol
+
+- Один focused correction commit.
+- НЕ push master.
+- НЕ merge.
+- НЕ rebase.
+- Опубликовать correction commit в agent/review/mvp-6.3.
+- REPORT записать в agent/control.
+- CHATGPT REVIEW НЕ изменять.
+- После REPORT остановиться для независимой проверки ChatGPT.
+
+В REPORT обязательно указать:
+- commit SHA;
+- production composition path;
+- где создаётся и запускается TInvestStreamManager;
+- shutdown path;
+- что происходит при startup/stream failure;
+- как устранён lot_size fallback;
+- результаты pytest/ruff/npm build;
+- git status и git log -5.
