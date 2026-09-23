@@ -595,3 +595,18 @@ Repeat pytest, ruff check app tests scripts, and frontend npm run build.
 - Update agent/review/mvp-6.4.
 - Update REPORT on agent/control.
 - Stop after REPORT.
+
+
+## CHATGPT REVIEW — MVP-6.4 correction #2
+
+Review of `agent/review/mvp-6.4` commit `63ca560954b5bbc2978f005b435929ab6eecabab` found the previous blockers are not resolved.
+
+Required before acceptance:
+1. Add the required REPORT to `agent/control`. It must state the implemented changes, exact test/lint/build results, and explicitly document the production composition status.
+2. Fix the production Strategy -> TradingEngine integration. `build_live_service()` still constructs `TradingEngine(..., strategy_engine=None, strategy_config=None)`. Do not solve this by only adding a guard. Wire an actual broker-neutral StrategyEngine/config into the production live composition, or, if strategy-driven live processing is intentionally not executable in MVP-6 yet, remove/disable the false production path and document the exact boundary. Do not claim the Strategy -> TradingEngine path is production-integrated while it cannot execute.
+3. Integrate the `max_concurrent_bots` start guard into a real live bot-start lifecycle, or explicitly keep bot-start outside MVP-6 and remove the claim that this guard is implemented as an authoritative live control. `check_start()` alone is not integration.
+4. Configure the production RiskManager from an existing application configuration source if one exists. Do not invent financial defaults. If no risk-limit configuration source exists yet, leave limits unset and state this explicitly in REPORT as a known MVP boundary.
+5. Preserve recovery, OrderStateStream, idempotency, broker-neutral boundaries, and all existing behavior.
+6. Run and report: `pytest`, `ruff check app tests scripts`, and frontend `npm run build`.
+7. One focused correction commit on `agent/review/mvp-6.4`. Do not push/merge/rebase `master`.
+8. Update REPORT on `agent/control`, then stop.
