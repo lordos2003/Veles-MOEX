@@ -1,305 +1,102 @@
 # OpenCode Agent Control
 
 ## STATUS
-REPORT
+CORRECTION REQUIRED
 
 ## TASK_ID
 MVP-6.3
 
 ## TASK
-Implement MVP-6.3: live synchronization, durable execution-state persistence, startup/reconnect reconciliation, and safe recovery for the existing T-Invest Open API live execution domain.
+Исправить MVP-6.3 поверх commit `a4eaac975f59454c14b980fe3234af2bd2a2d8bf`.
 
-## Context
+Только два текущих блокера.
 
-Accepted product baseline:
-- 8529bc028178a18d131abf65b36f705c573a7713 — fix: use OrderStateStream for live executions
+### 1. Убрать lot_size fallback
 
-Accepted previous scope:
-- MVP-6.1 broker-neutral live execution domain;
-- MVP-6.2 / 6.2.1 T-Invest Open API execution and real WebSocket transport;
-- MVP-6.2.2 OrderStateStream-only live execution.
+В `TInvestAdapter._to_order()` всё ещё есть:
 
-The project specification requires live execution state to survive process restart and requires reconciliation before new execution resumes.
+```python
+factor = Decimal(lot_size) if lot_size else Decimal("1")
+```
 
-## Objective
+Удалить fallback.
 
-Make the existing live execution state durable and implement safe reconciliation/recovery after process restart or broker-stream reconnect.
+Если для order с FIGI `lot_size` отсутствует или некорректен:
 
-The system must prefer broker facts over stale in-memory assumptions.
+- не возвращать BrokerOrder;
+- выбросить явную broker/integration error;
+- recovery/live execution остаётся BLOCKED;
+- не добавлять T-Invest детали в trading domain.
 
-## Required scope
+Добавить deterministic test.
 
-### 1. Durable execution state
+### 2. Не проглатывать unary recovery errors
 
-Persist the minimum state needed to recover active live execution:
+В `TInvestStreamManager._recover()` ошибки `get_orders()` и `get_open_positions()` сейчас только логируются.
 
-- execution intent identity;
-- internal order identity;
-- broker order ID;
-- T-Invest idempotency/order request ID;
-- instrument FIGI/UID as currently represented by the broker-neutral model;
-- side;
-- requested/fill/remaining quantity;
-- order state;
-- limit price where applicable;
-- average fill price where available;
-- fill/execution records including trade ID;
-- position state required by PositionManager;
-- reconciliation/synchronization timestamps;
-- terminal error/unknown state where applicable.
+Это запрещено.
 
-Use the project's existing PostgreSQL/ORM infrastructure. Do not introduce a second persistence technology.
+Если unary recovery завершилась ошибкой:
 
-### 2. Repository boundary
+- recovery должна вернуть failure/SAFE=false;
+- full recovery не должна разрешить dispatch;
+- live execution остаётся BLOCKED;
+- stream не должен продолжать обработку live events;
+- reconnect должен повторить recovery при следующей попытке.
 
-Introduce persistence through repository interfaces so OrderManager/PositionManager remain broker-neutral and testable.
+Сохранить порядок:
 
-Do not make trading domain code depend directly on SQLAlchemy session/query details.
+`connect/resubscribe → unary recovery → full durable recovery → SAFE → dispatch`.
 
-### 3. Startup recovery
+Добавить deterministic tests:
+- ошибка `get_orders()` блокирует dispatch;
+- ошибка `get_open_positions()` блокирует dispatch;
+- после failed recovery события не обрабатываются.
 
-On application startup/recovery:
-
-1. load durable local live execution state;
-2. query T-Invest broker state using the existing BrokerAdapter;
-3. reconcile active orders;
-4. reconcile positions;
-5. reconcile fills using available broker facts and existing execution identifiers;
-6. update durable local state;
-7. only after successful reconciliation allow live execution to resume.
-
-If reconciliation cannot establish a safe state, do not submit new orders and expose an ERROR/unknown recovery state.
-
-### 4. Stream reconnect recovery
-
-Preserve the current OrderStateStream-only transport.
-
-After stream reconnect:
-
-1. resubscribe;
-2. perform unary reconciliation;
-3. deduplicate already-known executions by trade ID;
-4. continue processing live events only after reconciliation succeeds.
-
-Do not reintroduce TradesStream.
-
-### 5. Idempotency and lost-response recovery
-
-Preserve the existing UUID idempotency key for each execution intent.
-
-A lost broker response must not cause blind duplicate submission.
-
-If the local order has an unknown submission outcome:
-
-- use the stored broker request/idempotency identifier and available broker queries to resolve it;
-- if it cannot be resolved safely, keep the order UNKNOWN and block unsafe new execution for that order/bot context.
-
-### 6. Position authority
-
-Position changes must continue to originate from actual fills/broker position facts, not merely from submitted intents.
-
-After reconciliation, PositionManager must represent the broker position accurately enough for the existing DCA/Grid and Exit Engine to continue from the recovered state.
-
-Do not redesign DCA or Exit calculations.
-
-### 7. Duplicate/out-of-order events
-
-The recovery path must tolerate:
-
-- duplicate order-state events;
-- duplicate trade IDs;
-- events arriving after unary reconciliation;
-- stale local state;
-- partial fills followed by later full fills.
-
-The same trade must affect position accounting exactly once.
-
-### 8. Tests
-
-Add/update deterministic tests for at least:
-
-- persist and reload an active internal order;
-- persist and reload fills;
-- restart recovery of an active order;
-- broker order differs from stale local order;
-- broker position differs from stale local position;
-- duplicate trade during recovery is applied once;
-- lost response resolved through broker query;
-- unresolved order remains UNKNOWN and blocks unsafe continuation;
-- successful reconnect reconciliation before resume;
-- failed reconciliation blocks new execution;
-- recovered DCA position keeps correct weighted average;
-- persistence does not leak broker-specific protocol objects into trading domain.
-
-Use fakes/mocks for broker calls. Do not place real-money orders.
-
-## Explicit non-goals
-
-Do NOT implement in this task:
+### Не менять
 
 - T-Invest MCP;
-- Bot lifecycle START/STOP/EMERGENCY_STOP;
+- DCA/Grid;
+- Exit Engine;
 - Risk Manager;
-- new Strategy logic;
-- new DCA/Grid modes;
-- new Exit modes;
-- new brokers;
-- direct MOEX APIs;
-- tick-level backtesting;
-- autonomous strategy optimization;
-- financial parameter tuning;
-- microservices;
+- Strategy;
+- Backtest;
+- другие брокеры;
+- OrderStateStream-only;
+- финансовые параметры;
+- persistence schema;
 - unrelated refactoring.
 
-Do not change the current OrderStateStream-only decision.
+### Validation
 
-## Architecture constraints
+Запустить:
 
-- Trading domain remains broker-neutral.
-- T-Invest-specific objects stay inside the broker adapter.
-- Keep Decimal for money/price/quantity.
-- Keep canonical quantity in instrument units in the domain.
-- Preserve the current idempotency semantics.
-- Do not bypass repository boundaries with ad-hoc global state.
-- Use the existing PostgreSQL/ORM infrastructure.
-- Do not invent broker protocol fields.
+- `pytest`
+- `ruff`
+- `npm build`
 
-## Validation
+### Git
 
-Run:
+- Один focused correction commit.
+- НЕ push master.
+- НЕ merge.
+- НЕ rebase.
+- Опубликовать commit в `agent/review/mvp-6.3`.
+- REPORT записать в `agent/control`.
+- `CHATGPT REVIEW` НЕ изменять.
+- После REPORT остановиться.
 
-pytest
-ruff
-npm build
+REPORT должен содержать:
+- commit SHA;
+- что исправлено;
+- pytest;
+- ruff;
+- npm build;
+- git status;
+- git log -5.
+ 
 
-Also inspect:
-
-git status
-git diff
-git log -5 --oneline
-
-## Git
-
-Create one focused commit:
-
-feat: implement live state reconciliation and recovery
-
-Do NOT push.
-
-Do NOT merge or rebase.
-
-If history diverges unexpectedly, stop and report it.
-
-## REPORT
-
-MVP-6.3 — FINAL CORRECTION TASK applied. Committed on `master` over `fd10067`;
-final correction commit `a4eaac9`.
-
-### Three blockers fixed
-1. **OrderStateStream connected to the real production live runtime.**
-   `LiveExecutionService.run_stream_forever()` builds the production T-Invest
-   WebSocket transport (`build_stream_transport` from settings when not injected)
-   and runs the `TInvestStreamManager` (`build_stream_manager`). `app/main.py`
-   lifespan now starts this runtime as an asyncio task only after a SAFE startup
-   recovery and stops it (`service.shutdown()` -> `manager.stop()` + transport
-   close) on shutdown; the reconnect path already runs connect/resubscribe ->
-   unary recovery -> full durable recovery -> SAFE gate -> dispatch. No second
-   recovery path; OrderStateStream-only preserved; TradesStream not used.
-2. **Unsafe lot_size fallback removed.** `TInvestAdapter._to_order()` no longer
-   falls back to `factor = 1`. If a T-Invest order has a FIGI and the lot size
-   cannot be resolved, it raises `InvalidRequestError` (an explicit broker
-   integration error) instead of returning a potentially wrong BrokerOrder.
-   The error stays inside the broker integration boundary; the trading domain
-   remains broker-neutral and `Decimal`-based.
-3. **Startup failure semantics.** `LiveRecoveryCoordinator.recover()` now treats
-   a broker order/position reconciliation error as BLOCKED (returns
-   `RecoveryStatus.BLOCKED`), so `service.can_execute` stays `False`, `submit()`
-   has no bypass, and the API can continue read-only. `run_stream_forever()`
-   refuses to start the stream unless a SAFE recovery has already completed.
-
-### Production composition path
-- `app/trading/live_execution.py`: `LiveExecutionService` owns the runtime —
-  `run_stream_forever()` creates the transport (or uses an injected one),
-  builds the `TInvestStreamManager` via `build_stream_manager(transport)` and
-  runs it; `shutdown()` stops the manager, closes the transport and the session.
-- `app/main.py` lifespan: when `live_trading_enabled` and `service.start()`
-  returns SAFE, `stream_task = asyncio.create_task(service.run_stream_forever())`;
-  on shutdown it calls `service.shutdown()` and awaits the task. On BLOCKED /
-  failure the service stays disabled (read-only API).
-
-### Where TInvestStreamManager is created/started
-It is created inside `LiveExecutionService.run_stream_forever()` via
-`build_stream_manager()` (which wires the `recovery` hook -> durable recovery
-gate) and started by `await manager.run()` in the lifespan-created asyncio task.
-
-### Shutdown path
-`LiveExecutionService.shutdown()` -> `manager.stop()` (breaks the reconnect loop),
-then closes the stream transport and the DB session. `main.py` awaits the stream
-task and cancels it as a fallback.
-
-### What happens on startup/stream failure
-If building the service, running startup recovery, or starting the stream fails,
-`service.can_execute` remains `False`; `submit()` stays blocked
-(`LiveExecutionBlocked`); the FastAPI application continues to serve read-only
-endpoints. `run_stream_forever()` raises `LiveExecutionBlocked` when called
-before a SAFE recovery.
-
-### lot_size fallback removal
-`_to_order()` checks: if the order has a FIGI and the resolved lot size is
-missing/<=0, it raises `InvalidRequestError` ("refusing to map T-Invest lots as
-canonical units"). No silent `factor=1`; the adapter never returns a false
-canonical quantity.
-
-### Tests and exact results
-New deterministic tests:
-- `test_production_composition_runs_stream_and_shutdown` (startup -> stream
-  manager created/started -> recovery -> resume -> shutdown)
-- `test_stream_requires_safe_recovery` (stream cannot start without SAFE)
-- `test_lot_size_unavailable_blocks_recovery` (BLOCKED, not SAFE)
-- `test_submit_remains_blocked_after_stream_failure`
-- `test_lot_size_unavailable_blocks_order_normalization` (adapter raises
-  `InvalidRequestError`)
-
-Full backend suite: `263 passed, 1 skipped` (was `258 passed, 1 skipped`; +5).
-The single skip is the opt-in live sandbox integration test (no credentials).
-
-### ruff result
-`All checks passed!` (app + tests).
-
-### npm build result
-`✓ built in 12.79s` (vite, 32 modules).
-
-### commit SHA
-Final correction commit `a4eaac975f59454c14b980fe3234af2bd2a2d8bf` —
-`fix: wire production live runtime and harden lot-size normalization`
-(branch `master`, NOT pushed), on top of `fd10067` over `b9869d9` / `3720b7c`.
-Published to `agent/review/mvp-6.3`.
-
-### Known limitations
-- `live_trading_enabled` defaults False; the production runtime only starts when
-  enabled (preserves app boot without credentials/DB).
-- The production runtime reconnects with backoff; if it cannot establish a
-  session it keeps retrying (live events remain blocked by the recovery gate
-  until SAFE).
-- `BrokerDeal.order_id` is populated only when the T-Invest operation item
-  exposes an order reference; fill recovery is guaranteed through broker order
-  `executions` (stages), natively correlated by order id.
-- No live/real-sandbox verification (no credentials/network), consistent with
-  earlier MVP-6.x reports.
-
-### git status / git log -5
-- `git status`: branch `master`, ahead of `origin/master` by 4, working tree
-  clean (verification done before checkout to `agent/control` for this report).
-- `git log -5 --oneline`:
-  - `a4eaac9` fix: wire production live runtime and harden lot-size normalization
-  - `fd10067` fix: finalize MVP-6.3 unit normalization and recovery wiring
-  - `b9869d9` fix: complete MVP-6.3 recovery wiring and broker-fact reconciliation
-  - `3720b7c` feat: implement live state reconciliation and recovery
-  - `8529bc0` fix: use OrderStateStream for live executions
-
-### Divergence / blocked conditions
-- None. No merge/rebase performed; `master` NOT pushed (ahead of
-  `origin/master` by 4). `## CHATGPT REVIEW` was not modified.
+## CHATGPT REVIEW` was not modified.
 ## CHATGPT REVIEW
 
 ### Результат независимой проверки
