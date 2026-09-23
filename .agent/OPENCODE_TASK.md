@@ -181,3 +181,107 @@ MVP-6.3 **ПРИНЯТО**.
 **MVP-6.3 принят.**
 
 Следующее действие: можно перенести принятые изменения в `master` по установленному Git workflow.
+
+## STATUS
+TASK
+
+## TASK_ID
+PUBLISH-MASTER-AFTER-MVP-6.3
+
+## TASK
+
+Опубликовать принятые изменения MVP-6.3 в `origin/master`.
+
+### Контекст
+
+Текущее состояние проверено:
+
+- локальный `master` = `3b381d68fc31d6ac37053539e869a908d6517e2e`;
+- `origin/master` содержит `b8d7331` (`docs: define ChatGPT OpenCode workflow`);
+- общий предок = `8529bc0`;
+- локальный `master` и `origin/master` разошлись;
+- рабочее дерево должно быть чистым;
+- MVP-6.3 принят ChatGPT.
+
+### Разрешённый способ интеграции
+
+**Явно разрешён только MERGE.**
+
+Выполнить в локальном `master`:
+
+```powershell
+git status
+git fetch origin
+git merge origin/master
+```
+
+Не выполнять:
+- `git rebase`;
+- `git reset`;
+- force-push;
+- merge через `agent/control`;
+- изменение product-коммитов.
+
+### После merge
+
+Проверить:
+
+```powershell
+git status
+git log --oneline --graph --decorate -12
+```
+
+Убедиться, что:
+1. все 6 принятых product-коммитов MVP-6.3 сохранены;
+2. `b8d7331` присутствует в истории;
+3. merge не удалил и не изменил product code;
+4. рабочее дерево чистое.
+
+Если возникнут конфликты или неожиданные изменения:
+- остановиться;
+- НЕ разрешать конфликт самостоятельно;
+- НЕ push;
+- записать точное состояние в REPORT.
+
+### Push
+
+Если merge прошёл штатно и проверки успешны:
+
+```powershell
+git push origin master
+```
+
+Force-push запрещён.
+
+После push проверить:
+
+```powershell
+git fetch origin
+git status
+git log --oneline --graph --decorate -12
+```
+
+Убедиться, что `origin/master` указывает на опубликованный merge commit и рабочее дерево чистое.
+
+### Ограничения
+
+Это публикация уже принятого product code.
+
+Не менять Strategy, DCA/Grid, Exit Engine, Risk Manager, Backtest, T-Invest integration, OrderStateStream, финансовую логику, тесты или unrelated files.
+
+Не создавать дополнительные product changes.
+
+### REPORT
+
+После завершения записать REPORT в этот файл.
+
+Указать:
+- merge commit SHA;
+- исходные parent SHA;
+- результат `git merge`;
+- результат `git push origin master`;
+- итоговый `origin/master`;
+- `git status`;
+- `git log --oneline --graph --decorate -12`.
+
+После REPORT остановиться.
