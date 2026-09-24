@@ -262,6 +262,15 @@ async def build_live_service() -> LiveExecutionService:
     source exists yet, so the per-bot ``TradingEngine`` is created without a
     sizing source and ``process()`` blocks live strategy execution with
     ``SizingNotConfigured`` until a sizing source is configured.
+
+    Position quantity boundary (MVP-6.9): the wired ``PositionManager`` is the
+    only authoritative source of live execution quantity. The per-bot
+    ``TradingEngine`` is given its ``instrument_figi`` so ``process()`` can
+    resolve the real exit quantity via ``PositionManager.resolve_quantity``;
+    the old ``position_qty=1.0`` placeholder is removed from the live path. The
+    authoritative positions are reconciled from the broker-neutral adapter
+    (``get_open_positions``) during recovery; the broker is never queried inside
+    the strategy/exit/trading layers.
     """
     from app.bots.repository import BotRepository
     from app.bots.strategy import (
@@ -337,11 +346,14 @@ async def build_live_service() -> LiveExecutionService:
                 risk_manager,
                 strategy_config=bot_strategy.config,
                 intent_factory=_intent_factory,
-                # MVP-6.8 boundary: no authoritative position-sizing source is
+                instrument_figi=instrument.figi,
+                # MVP-6.8/6.9 boundary: no authoritative position-sizing source is
                 # wired for a bot yet, so `sizing` stays None and
                 # `TradingEngine.process()` blocks live strategy execution with
                 # SizingNotConfigured until a sizing source is configured. No
-                # default (100 / 1.0) is used.
+                # default (100 / 1.0) is used. The authoritative exit quantity
+                # comes from the wired PositionManager (MVP-6.9), never a
+                # placeholder.
             )
             await engine.start()
             return engine

@@ -879,8 +879,78 @@ MarketContext outside the boundary module, per-bot sizing source usage, missing
 sizing blocking execution, explicit sizing reaching the DCA/Grid engine, the
 `100` default never used by the live path, positive real entry intents,
 non-positive quantity rejected before the Order Manager, full path remaining
-Risk-Manager-gated, exit placeholder remaining blocked, and sizing failure at
-START not consuming a Risk Manager slot.
+Risk-Manager-gated, exit placeholder remaining blocked (the MVP-6.8 boundary;
+replaced by the real position quantity in §27), and sizing failure at START not
+consuming a Risk Manager slot.
+
+## 27. Position state & authoritative quantity — MVP-6.9
+
+This section records MVP-6.9: the live-execution quantity boundary from MVP-6.8
+is removed. The Position Manager is now the **only** authoritative source of
+quantity for live execution; the old `position_qty=1.0` placeholder is gone
+from the live path.
+
+### Authoritative quantity source
+
+- `app/trading/position_manager.py` is the single authoritative source:
+  `PositionManager.resolve_quantity(instrument_figi, direction) -> Decimal`
+  returns a positive position magnitude valid for an exit. It raises
+  `PositionUnavailable` (no position for the FIGI) or
+  `InvalidPositionQuantity` (zero quantity, or a sign inconsistent with the
+  strategy direction). No fabricated/default quantity is ever returned.
+- Positions are obtained through the broker-neutral adapter (`BrokerAdapter
+  get_open_positions`) during the existing recovery reconciliation
+  (`LiveRecoveryCoordinator`), which feeds `PositionManager`. The broker is
+  never queried inside StrategyEngine, ExitEngine, BotRuntime or OrderManager.
+
+### Live path
+
+```
+T-Invest -> BrokerAdapter -> PositionManager -> real position quantity
+        -> Exit/Strategy planning -> ExitPlan -> ExecutionIntent
+        -> RiskManager -> OrderManager
+```
+
+- `StrategyEngine.evaluate(..., position_qty=None)` builds exit plans only when
+  a real, positive `position_qty` is supplied. **The hardcoded
+  `position_qty=1.0` is removed from the live path.**
+- `TradingEngine.process()` resolves the real exit quantity from the
+  PositionManager (per-bot `instrument_figi`) and passes it to `evaluate`; a
+  missing/invalid position yields `position_qty=None`, so **no live exit order
+  is generated** (no position, zero quantity or sign mismatch => no live exit).
+- `plan_to_intents()` now converts exit plans to `ExecutionIntent`s when they
+  carry a positive real quantity; non-positive exit quantities are skipped.
+
+### Quantity rules
+
+- No position -> no live exit order.
+- `quantity == 0` -> no live order (`InvalidPositionQuantity`).
+- Quantity with a sign inconsistent with the strategy direction (e.g. a LONG
+  strategy holding a short position) -> no live order.
+- No fabricated or default fallback quantity anywhere in the live path.
+
+### Preserved behavior
+
+- DCA/Grid mathematics unchanged (`DCAGridEngine`).
+- Backtest semantics unchanged: Backtest calls `evaluate(config, context)`
+  without a position quantity (it keeps its own broker position state), so the
+  call produces no planned exits there and does not error; the existing
+  Backtest/Exit suites are the regression check.
+- T-Invest stays read-only; no actual live order submission is added.
+
+### Broker neutrality
+
+No `app.brokers.tinvest*` import or T-Invest protocol type is introduced into
+the strategy, Exit, position or trading-engine layers. `Direction` and the
+domain position exceptions stay broker-neutral.
+
+### Testing
+
+`tests/test_mvp69_position_state.py` covers: valid real position, missing
+position (`PositionUnavailable`), zero quantity and negative/sign-mismatched
+quantity (`InvalidPositionQuantity`), real quantity reaching the ExitPlan, real
+quantity reaching the ExecutionIntent, no live exit order when the position is
+absent, no fallback quantity, and unchanged Backtest / DCA behavior.
 
 
 

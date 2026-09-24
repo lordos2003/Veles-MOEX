@@ -123,8 +123,9 @@ def test_strategy_engine_plan_entry_and_exit() -> None:
         timestamp=T0 + timedelta(minutes=2),
         price=105.0,
     )
-    plan = se.evaluate(cfg, context)
+    plan = se.evaluate(cfg, context, position_qty=Decimal("2"))
     assert plan.entry is not None
     assert plan.entry.direction == OrderSide.BUY
     assert len(plan.exits) == 1
     assert plan.exits[0].price == Decimal("115.5")  # 105 * 1.10
+    assert plan.exits[0].quantity == 2.0

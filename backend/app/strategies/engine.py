@@ -33,20 +33,26 @@ class StrategyEngine:
         context: MarketContext,
         *,
         base_nominal: Decimal | None = None,
+        position_qty: Decimal | None = None,
     ) -> Plan:
         signal = self.entry.evaluate(config.entry, config.direction, context)
         exits = []
         grid = []
         if signal is not None:
             entry_price = self._entry_price(config, context)
-            exits = self.exit_engine.build_exit_orders(
-                config.exit, config.direction, entry_price, position_qty=1.0
-            )
-            # The DCA/Grid plan is built only when an explicit live sizing source
-            # (base nominal) is supplied; the engine's Decimal("100") default is
-            # never relied upon by live execution. Entry signals carry no order
-            # quantity and ExitPlans carry the position_qty=1.0 placeholder, so
-            # neither becomes a live order (explicit boundaries).
+            # Exit plans are built only with a real, positive position quantity
+            # (sourced by the PositionManager in the live path). No placeholder
+            # (position_qty=1.0) is used; without a real quantity no exits are
+            # planned. The DCA/Grid plan is built only when an explicit live
+            # sizing source (base nominal) is supplied; the engine's
+            # Decimal("100") default is never relied upon by live execution.
+            if position_qty is not None and position_qty > 0:
+                exits = self.exit_engine.build_exit_orders(
+                    config.exit,
+                    config.direction,
+                    entry_price,
+                    position_qty=float(position_qty),
+                )
             if base_nominal is not None and base_nominal > 0 and entry_price > 0:
                 grid_state = self.dca_grid.build(
                     config.dca_grid,

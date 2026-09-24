@@ -332,8 +332,10 @@ async def test_entry_signal_without_quantity_is_not_converted() -> None:
 
 
 async def test_exit_placeholder_quantity_is_not_converted() -> None:
-    # The ExitEngine placeholder (position_qty=1.0) must never become a live order.
-    plan = Plan(exits=[ExitPlan(side=OrderSide.SELL, quantity=1.0, price=Decimal("100"))])
+    # MVP-6.9: the old ExitEngine placeholder (position_qty=1.0) is removed. An
+    # exit plan is converted only with a real, positive position quantity; a
+    # non-positive quantity must never become a live order.
+    plan = Plan(exits=[ExitPlan(side=OrderSide.SELL, quantity=0.0, price=Decimal("100"))])
     intents = plan_to_intents(plan, instrument_figi="BBG000", bot_id=1)
     assert intents == []
 
