@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     # execution on it (reconciliation must be SAFE before new orders).
     live_trading_enabled: bool = False
 
+    # --- Risk (execution gate limits, MVP-6.6) ---
+    # Typed boundary for the RiskManager limits, separate from strategy
+    # parameters. All optional: unset (None / empty) keeps the corresponding
+    # check disabled. No financial defaults are invented.
+    risk_max_position_size: float | None = None
+    risk_daily_loss_limit: float | None = None
+    risk_max_concurrent_bots: int | None = None
+    risk_blocked_instruments: list[str] = []
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -237,6 +237,45 @@ Risk Manager must not autonomously tune strategy parameters.
 
 MVP-6 must not introduce an investment optimization algorithm.
 
+### 10.1. Execution preconditions implemented (MVP-6.6)
+
+`RiskManager.check_order()` is the authoritative gate before every live order
+and enforces, in order:
+
+1. emergency stop is not active;
+2. quantity is positive;
+3. LIMIT intents carry a valid positive limit price (MARKET intents do not
+   require one);
+4. instrument is allowed: not in the configured `blocked_instruments` set, and
+   the optional broker-neutral `instrument_status_check` dependency (if wired)
+   does not report trading as not permitted;
+5. configured position limit is not exceeded (worst-case projected position);
+6. configured daily loss limit is not breached.
+
+The **bot RUNNING state is NOT checked here**: the bot lifecycle (MVP-6.5)
+remains the upstream lifecycle gate and is not duplicated inside the Risk
+Manager.
+
+**Configuration source:** the RiskManager limits are supplied from the typed
+application settings (`risk_max_position_size`, `risk_daily_loss_limit`,
+`risk_max_concurrent_bots`, `risk_blocked_instruments` environment variables),
+mapped by `risk_limits_from_settings()` in `app.trading.live_execution`.
+Unset values keep the corresponding check disabled; no financial defaults are
+invented. The configuration is separate from strategy parameters.
+
+**Explicitly unavailable boundaries (not fabricated):**
+
+- *Instrument trading-session status:* the broker-neutral
+  `instrument_status_check` dependency is defined and tested, but NOT wired in
+  production: instrument trading status is stored in PostgreSQL behind the
+  async `InstrumentService`, while the execution gate is synchronous. Wiring it
+  requires an async-aware lookup (a follow-up task). No hardcoded MOEX session
+  rules.
+- *Funds/position capacity:* broker account facts (`available_cash`, `equity`)
+  are exposed only through async `BrokerAdapter` calls; the synchronous gate
+  cannot consume them without a larger architectural change. The check is
+  explicitly unavailable and no fake balances are used.
+
 ## 11. Bot lifecycle
 
 The bot lifecycle must support:
@@ -475,6 +514,15 @@ No real-money integration test may submit an order unless the test explicitly us
 MVP-6 should first implement the broker-neutral live execution domain and interfaces, then T-Invest Open API execution, then T-Invest MCP transport mapping.
 
 The existing Strategy/DCA/Grid/Exit behavior is considered input to this task and must not be redesigned.
+
+MVP-6.6 completed the execution-side Risk Manager preconditions (positive
+quantity, valid LIMIT price, instrument/trading permission via the configured
+`blocked_instruments` set and the broker-neutral `instrument_status_check`
+dependency, configured position/daily-loss limits, emergency stop) with the
+limits supplied from the typed application settings (`risk_*` environment
+variables). The instrument trading-session status and the funds/capacity
+checks are explicitly unavailable in the current architecture (documented in
+section 10.1); no fabricated values are used.
 
 ## 22. Reference sources
 

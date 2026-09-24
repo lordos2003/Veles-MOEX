@@ -9,13 +9,15 @@ refused so unsafe new execution cannot resume.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from app.trading.bot_lifecycle import BotRuntimeManager, BotStateError
 from app.trading.domain import ExecutionIntent, InternalOrder
 from app.trading.engine import TradingEngine
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
 from app.trading.recovery import LiveRecoveryCoordinator, RecoveryResult
-from app.trading.risk_manager import RiskManager
+from app.trading.risk_manager import RiskLimits, RiskManager
 from app.trading.state import LiveStateStore
 
 
@@ -173,6 +175,33 @@ class LiveExecutionService:
         )
 
 
+def risk_limits_from_settings(settings) -> RiskLimits:
+    """Map typed application settings to RiskManager limits.
+
+    Only explicitly configured values are applied; unset values stay ``None``
+    (check disabled) and empty blocklists stay ``None`` (no restriction). No
+    financial defaults are invented.
+    """
+    return RiskLimits(
+        max_position_size=(
+            Decimal(str(settings.risk_max_position_size))
+            if settings.risk_max_position_size is not None
+            else None
+        ),
+        max_concurrent_bots=settings.risk_max_concurrent_bots,
+        daily_loss_limit=(
+            Decimal(str(settings.risk_daily_loss_limit))
+            if settings.risk_daily_loss_limit is not None
+            else None
+        ),
+        blocked_instruments=(
+            frozenset(settings.risk_blocked_instruments)
+            if settings.risk_blocked_instruments
+            else None
+        ),
+    )
+
+
 async def build_live_service() -> LiveExecutionService:
     """Compose a live execution service from application settings.
 
@@ -193,9 +222,18 @@ async def build_live_service() -> LiveExecutionService:
     manager so DB and runtime never contradict. Persisted RUNNING/STARTING bots
     are restored in ERROR (blocked until an explicit START); STOP_REQUESTED is
     restored as STOPPED. The Risk Manager is never re-occupied implicitly.
+
+    Risk limits (MVP-6.6) come from the typed application settings
+    (``risk_*`` environment variables) via ``risk_limits_from_settings``;
+    unset values leave the corresponding check disabled. The instrument
+    trading-status dependency is NOT wired here: instrument status is stored in
+    PostgreSQL behind the async ``InstrumentService`` while the execution gate
+    is synchronous, so the check is explicitly unavailable in production
+    (documented boundary, no fabricated values).
     """
     from app.bots.repository import BotRepository
     from app.brokers import TInvestAdapter
+    from app.core.config import get_settings
     from app.core.db import SessionLocal
     from app.models.enums import BotState
     from app.persistence.execution_state import SqlAlchemyLiveStateStore
@@ -206,7 +244,10 @@ async def build_live_service() -> LiveExecutionService:
     store = SqlAlchemyLiveStateStore(session)
     order_manager = OrderManager(broker)
     position_manager = order_manager.positions()
-    risk_manager = RiskManager(position_manager=position_manager)
+    risk_manager = RiskManager(
+        limits=risk_limits_from_settings(get_settings()),
+        position_manager=position_manager,
+    )
     trading_engine = TradingEngine(
         broker, None, order_manager, position_manager, risk_manager
     )
