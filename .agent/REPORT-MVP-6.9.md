@@ -1,13 +1,16 @@
 # Veles-MOEX — REPORT: MVP-6.9 Position State & Authoritative Quantity
 
-## Implementation commit
+## Implementation commits
 
-`5acc7a78d1159b134b9a3a6e0c0a3b9c114404be` — "feat: implement MVP-6.9 position
-state and authoritative quantity" (single focused commit on
-`agent/review/mvp-6.9`).
+1. `5acc7a78d1159b134b9a3a6e0c0a3b9c114404be` — "feat: implement MVP-6.9 position
+   state and authoritative quantity" (initial implementation on
+   `agent/review/mvp-6.9`).
+2. `5b4c42b` — "fix: block all live intents when position state is unresolved
+   (MVP-6.9 review blocker)" (focused correction, see "Review blocker fix"
+   below).
 
 - Base: `master @ b2c4ee2` (current accepted master).
-- Review branch HEAD: `5acc7a7` (published to `origin/agent/review/mvp-6.9`).
+- Review branch HEAD: `5b4c42b` (published to `origin/agent/review/mvp-6.9`).
 - `master` NOT modified; no merge/rebase.
 
 ## Objective
@@ -15,6 +18,34 @@ state and authoritative quantity" (single focused commit on
 Eliminate the live-execution quantity boundary left by MVP-6.8: the
 `position_qty=1.0` placeholder is removed and the Position Manager becomes the
 only authoritative source of live execution quantity.
+
+## Review blocker fix (commit `5b4c42b`)
+
+Reviewer correction `b841f16 control: add MVP-6.9 review blocker correction`
+changed requirement 8 from "no live **exit** order" to "no live **order**" and
+added "Sign-inconsistent position: no live order".
+
+**Blocker:** `TradingEngine.process()` mapped `PositionUnavailable` /
+`InvalidPositionQuantity` to `position_qty=None`, but `StrategyEngine.evaluate()`
+still built DCA/Grid orders from the explicit `base_nominal`, and
+`plan_to_intents()` converted them — so with an absent/zero/sign-mismatched
+position a live Grid order could still be produced.
+
+**Fix (commit `5b4c42b`):** `TradingEngine.process()` now returns the plan
+immediately, **without creating or submitting any ExecutionIntent**, when the
+position state is unresolved. `backend/app/trading/engine.py`:
+
+- New `TradingEngine._position_gates_execution(position_qty) -> bool`: returns
+  `True` only for a live per-bot engine (`instrument_figi` set) when
+  `position_qty is None` (missing / zero / sign-mismatch). Generic/Backtest
+  engines (no `instrument_figi`) are not gated.
+- In `process()`, after `evaluate(...)` and before intent
+  creation/submission: `if self._position_gates_execution(position_qty):
+  return plan`.
+- `_exit_position_quantity()` docstring updated to reference the gate.
+
+Regression tests proving `OrderManager.list_orders() == []` for absent, zero,
+and sign-mismatched positions (see "Tests" below).
 
 ## What was implemented
 
@@ -96,7 +127,7 @@ quantity anywhere in the exit planning or intent generation.
 
 ## Tests
 
-`backend/tests/test_mvp69_position_state.py` (10 focused tests):
+`backend/tests/test_mvp69_position_state.py` (12 focused tests):
 
 1. valid real position resolves quantity;
 2. missing position -> `PositionUnavailable`;
@@ -105,10 +136,17 @@ quantity anywhere in the exit planning or intent generation.
    position is valid for a SHORT strategy);
 5. real quantity reaches ExitPlan;
 6. real quantity reaches ExecutionIntent;
-7. no live exit order when the position is absent;
-8. no fallback quantity (exit quantity is the real position quantity);
-9. Backtest-style `evaluate(config, context)` is unchanged (no error, no exits);
-10. DCA/Grid still builds from the explicit base nominal.
+7. **no live order at all** when the position is absent
+   (`OrderManager.list_orders() == []`);
+8. **no live order at all** when the position quantity is zero
+   (`OrderManager.list_orders() == []`) — regression test added by the blocker
+   fix;
+9. **no live order at all** when the position is sign-mismatched (short
+   position vs LONG strategy, `OrderManager.list_orders() == []`) — regression
+   test added by the blocker fix;
+10. no fallback quantity (exit quantity is the real position quantity);
+11. Backtest-style `evaluate(config, context)` is unchanged (no error, no exits);
+12. DCA/Grid still builds from the explicit base nominal.
 
 Existing tests were updated only where behavior intentionally changed:
 - `tests/test_entry_engine.py::test_strategy_engine_plan_entry_and_exit` now
@@ -120,14 +158,15 @@ Existing tests were updated only where behavior intentionally changed:
 
 ## Commands / results
 
-- `pytest`: **346 passed, 1 skipped** (was 336 passed, 1 skipped; +10 new tests;
+- `pytest`: **348 passed, 1 skipped** (was 336 passed, 1 skipped; +12 new
+  tests — 10 from the initial implementation and 2 added by the blocker fix;
   the single skip is the opt-in live sandbox integration test).
 - `ruff check app tests scripts`: **All checks passed!**
-- `npm run build`: **✓ built in 3.06s**.
+- `npm run build`: **✓ built in 8.63s**.
 
 ## Git state
 
-- Review branch `agent/review/mvp-6.9` -> `5acc7a7` (published).
+- Review branch `agent/review/mvp-6.9` -> `5b4c42b` (published).
 - `master` unchanged at `b2c4ee2`; no merge/rebase; working tree clean.
 - `agent/control` updated with this report only.
 
