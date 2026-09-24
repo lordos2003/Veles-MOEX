@@ -16,6 +16,7 @@ from app.trading import (
     LiveExecutionBlocked,
     LiveExecutionService,
     OrderManager,
+    PositionSizing,
     RiskLimits,
     RiskManager,
     RiskRejected,
@@ -177,7 +178,7 @@ async def test_trading_engine_process_routes_through_risk() -> None:
     risk = RiskManager(limits=RiskLimits(emergency_stop=True))
 
     class _SE:
-        def evaluate(self, config, context):
+        def evaluate(self, config, context, **kwargs):
             from app.strategies.domain import EntrySignal, Plan
 
             return Plan(entry=EntrySignal(action="enter", direction=OrderSide.BUY))
@@ -193,6 +194,7 @@ async def test_trading_engine_process_routes_through_risk() -> None:
         risk,
         strategy_config=object(),
         intent_factory=intent_factory,
+        sizing=PositionSizing(base_nominal=Decimal("1000")),
     )
     await te.start()
     with pytest.raises(RiskRejected):

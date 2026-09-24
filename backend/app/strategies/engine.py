@@ -12,7 +12,7 @@ from decimal import Decimal
 
 from app.strategies.config import StrategyConfig
 from app.strategies.dca_grid import DCAGridEngine
-from app.strategies.domain import MarketContext, Plan
+from app.strategies.domain import GridOrder, MarketContext, Plan
 from app.strategies.entry import EntryEngine
 from app.strategies.exit import ExitEngine
 
@@ -27,15 +27,43 @@ class StrategyEngine:
         self.dca_grid = dca_grid
         self.exit_engine = exit_engine
 
-    def evaluate(self, config: StrategyConfig, context: MarketContext) -> Plan:
+    def evaluate(
+        self,
+        config: StrategyConfig,
+        context: MarketContext,
+        *,
+        base_nominal: Decimal | None = None,
+    ) -> Plan:
         signal = self.entry.evaluate(config.entry, config.direction, context)
         exits = []
+        grid = []
         if signal is not None:
             entry_price = self._entry_price(config, context)
             exits = self.exit_engine.build_exit_orders(
                 config.exit, config.direction, entry_price, position_qty=1.0
             )
-        return Plan(entry=signal, exits=exits)
+            # The DCA/Grid plan is built only when an explicit live sizing source
+            # (base nominal) is supplied; the engine's Decimal("100") default is
+            # never relied upon by live execution. Entry signals carry no order
+            # quantity and ExitPlans carry the position_qty=1.0 placeholder, so
+            # neither becomes a live order (explicit boundaries).
+            if base_nominal is not None and base_nominal > 0 and entry_price > 0:
+                grid_state = self.dca_grid.build(
+                    config.dca_grid,
+                    entry_price,
+                    config.direction,
+                    base_nominal=base_nominal,
+                )
+                grid = [
+                    GridOrder(
+                        side=plan.side,
+                        quantity=float(plan.quantity),
+                        price=None if plan.is_market else float(plan.price),
+                        offset_percent=plan.offset_percent,
+                    )
+                    for plan in grid_state.active_orders()
+                ]
+        return Plan(entry=signal, grid=grid, exits=exits)
 
     @staticmethod
     def _entry_price(config: StrategyConfig, context: MarketContext) -> Decimal:

@@ -14,6 +14,7 @@ from decimal import Decimal
 from app.trading.bot_lifecycle import BotRuntimeManager, BotStateError
 from app.trading.domain import ExecutionIntent, InternalOrder
 from app.trading.engine import TradingEngine
+from app.trading.market_context import MarketContextUnavailable, build_market_context
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
 from app.trading.recovery import LiveRecoveryCoordinator, RecoveryResult
@@ -40,6 +41,7 @@ class LiveExecutionService:
         risk_manager: RiskManager | None = None,
         trading_engine: TradingEngine | None = None,
         bot_runtime_manager: BotRuntimeManager | None = None,
+        market_data: object | None = None,
     ) -> None:
         self._broker = broker
         self._order_manager = order_manager
@@ -51,11 +53,25 @@ class LiveExecutionService:
         self._session_owner = None
         self._stream_transport = transport
         self._stream_manager = None
+        self._market_data = market_data
         self._risk_manager = risk_manager or RiskManager(position_manager=position_manager)
         self._trading_engine = trading_engine or TradingEngine(
             broker, None, order_manager, position_manager, self._risk_manager
         )
         self._bot_runtime_manager = bot_runtime_manager
+
+    async def build_context(self, instrument_figi: str):
+        """Construct a live MarketContext from broker-neutral market data.
+
+        Uses the wired ``MarketDataService``-like provider (if any); raises
+        |MarketContextUnavailable| when no usable live price is available. The
+        candle/snapshot source is not wired in MVP-6.8 (documented boundary).
+        """
+        if self._market_data is None:
+            raise MarketContextUnavailable(
+                "no market-data source is wired into the live service"
+            )
+        return await build_market_context(self._market_data, instrument_figi)
 
     @property
     def can_execute(self) -> bool:
@@ -237,6 +253,15 @@ async def build_live_service() -> LiveExecutionService:
     Per-bot risk configuration limitation: ``StrategyConfig.risk`` is NOT
     copied into the global Risk Manager; the execution Risk Manager uses the
     application settings only (documented boundary, no precedence invented).
+
+    Market-context / sizing boundary (MVP-6.8): a broker-neutral
+    ``MarketDataService`` is wired into the service and a live MarketContext is
+    built via ``build_market_context()`` from the real last price (no fabricated
+    prices/candles/timestamps); the candle/snapshot source and per-bot timeframe
+    are not wired (documented dependency). No authoritative position-sizing
+    source exists yet, so the per-bot ``TradingEngine`` is created without a
+    sizing source and ``process()`` blocks live strategy execution with
+    ``SizingNotConfigured`` until a sizing source is configured.
     """
     from app.bots.repository import BotRepository
     from app.bots.strategy import (
@@ -251,6 +276,7 @@ async def build_live_service() -> LiveExecutionService:
     from app.models.enums import BotState
     from app.models.instrument import Instrument
     from app.persistence.execution_state import SqlAlchemyLiveStateStore
+    from app.services.market_data import MarketDataService
     from app.strategies.domain import MarketContext, Plan
     from app.trading.bot_lifecycle import BotRuntime
     from app.trading.engine import compose_strategy_engine
@@ -270,6 +296,7 @@ async def build_live_service() -> LiveExecutionService:
     )
     strategy_engine = compose_strategy_engine()
     bot_repository = BotRepository(session)
+    market_data = MarketDataService(broker)
 
     async def _submit_cb(intent: ExecutionIntent) -> InternalOrder:
         return await trading_engine.submit_intent(intent)
@@ -310,6 +337,11 @@ async def build_live_service() -> LiveExecutionService:
                 risk_manager,
                 strategy_config=bot_strategy.config,
                 intent_factory=_intent_factory,
+                # MVP-6.8 boundary: no authoritative position-sizing source is
+                # wired for a bot yet, so `sizing` stays None and
+                # `TradingEngine.process()` blocks live strategy execution with
+                # SizingNotConfigured until a sizing source is configured. No
+                # default (100 / 1.0) is used.
             )
             await engine.start()
             return engine
@@ -335,6 +367,7 @@ async def build_live_service() -> LiveExecutionService:
         risk_manager=risk_manager,
         trading_engine=trading_engine,
         bot_runtime_manager=bot_runtime_manager,
+        market_data=market_data,
     )
     service._session_owner = session
     return service

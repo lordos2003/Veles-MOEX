@@ -795,5 +795,92 @@ OrderManager, risk rejection before the broker, idempotent plan re-evaluation,
 entry/exit conversion boundaries, broker-neutrality of the strategy code, and
 restart semantics with the strategy path.
 
+## 26. Market context & sizing boundary — MVP-6.8
+
+This section records the MVP-6.8 boundary between live market data, Strategy
+Engine evaluation and safe order sizing. It is additive to the MVP-6.6/6.7
+work; things that are not wired are reported as explicit boundaries (no
+fabricated values).
+
+### Target path
+
+```
+Market Data -> MarketContext -> StrategyEngine -> DCA/Grid -> Plan
+             -> safe ExecutionIntent -> RiskManager -> OrderManager -> BrokerAdapter
+```
+
+### Production MarketContext source
+
+- `app/trading/market_context.py` provides the smallest broker-neutral
+  integration: `build_market_context(market_data, instrument_figi)` fetches the
+  real last trade price via the existing broker-neutral
+  `MarketDataService.get_last_price()` and builds a `MarketContext(price,
+  timestamp)`. No T-Invest types leak; `MarketContext.price` is `Decimal ->
+  float`, and no hardcoded price, synthetic candle or fake timestamp is used.
+- A missing/non-positive live price raises `MarketContextUnavailable`, so live
+  strategy execution is blocked rather than built on fabricated data.
+- **Documented missing dependency:** the candle/snapshot source (needed by the
+  Entry Engine filter evaluation) and the per-bot `timeframe` are not wired. The
+  strategy evaluation that requires a live `Snapshot` remains blocked until a
+  candle/timeframe source is configured. This boundary supplies a real last
+  price and its timestamp only.
+
+### Position-sizing source
+
+- `app/trading/sizing.py` defines the typed broker-neutral boundary:
+  `PositionSizing(base_nominal)` and `SizingNotConfigured`.
+  `PositionSizing.resolve_base_nominal()` returns the positive base nominal or
+  raises `SizingNotConfigured`.
+- There is **no authoritative sizing source** in the Bot/trading configuration,
+  so the production per-bot `TradingEngine` is created without a sizing source
+  and `TradingEngine.process()` raises `SizingNotConfigured` until a sizing
+  source is configured. **No financial default is invented** (the
+  `Decimal("100")` engine default and `1.0`/`100` placeholders are never used
+  as live values).
+
+### Strategy -> DCA/Grid
+
+- `StrategyEngine.evaluate(config, context, *, base_nominal=None)` now builds
+  the DCA/Grid plan items through the existing `DCAGridEngine` only when an
+  explicit live sizing source (`base_nominal`) is supplied and the entry signal
+  fires; `Plan.grid` is populated from the grid state's eligible orders. The
+  `Decimal("100")` default is never relied upon by the live path.
+- When `base_nominal` is `None` the engine keeps its previous behaviour (no
+  grid items), so Backtest and the existing strategy tests are unchanged.
+
+### Entry intent / boundaries
+
+- A live **entry intent** is created only when all fields are real and valid:
+  `bot_id`, `instrument`, `side`, positive quantity, MARKET or valid LIMIT price
+  and a deterministic intent id (content hash) via `plan_to_intents`. The path
+  stays `BotRuntime -> TradingEngine -> RiskManager -> OrderManager`.
+- **Entry signals** are still not converted (no order quantity in the domain).
+- **Exit plans** with the `position_qty=1.0` placeholder remain blocked (no
+  live exit conversion) until the Position Manager supplies a real quantity.
+
+### Lifecycle / risk-slot
+
+MVP-6.5 semantics are preserved: a strategy/engine-factory failure (including a
+missing sizing source) during START transitions the bot to ERROR and does not
+consume the Risk Manager concurrent-bot slot; START rejection remains an
+explicit error; STOP and EMERGENCY_STOP are unchanged.
+
+### Broker neutrality
+
+No `app.brokers.tinvest*` import, T-Invest protocol type or T-Invest transport
+code is present inside the Strategy Engine, DCA/Grid, sizing domain or Trading
+Engine. Market data is acquired through the broker-neutral `MarketDataService`.
+
+### Testing
+
+`tests/test_mvp68_market_context_sizing.py` covers: real MarketContext built
+from broker data, market-data unavailability blocking execution, no fabricated
+MarketContext outside the boundary module, per-bot sizing source usage, missing
+sizing blocking execution, explicit sizing reaching the DCA/Grid engine, the
+`100` default never used by the live path, positive real entry intents,
+non-positive quantity rejected before the Order Manager, full path remaining
+Risk-Manager-gated, exit placeholder remaining blocked, and sizing failure at
+START not consuming a Risk Manager slot.
+
 
 

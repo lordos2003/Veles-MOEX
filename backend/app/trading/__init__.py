@@ -21,6 +21,7 @@ from app.trading.domain import (
 )
 from app.trading.engine import TradingEngine, compose_strategy_engine
 from app.trading.live_execution import LiveExecutionBlocked, LiveExecutionService
+from app.trading.market_context import MarketContextUnavailable, build_market_context
 from app.trading.order_manager import OrderManager, OrderStateError
 from app.trading.plan_intent import plan_to_intents
 from app.trading.position_manager import Position, PositionManager
@@ -32,6 +33,7 @@ from app.trading.repository import (
     InMemoryPositionRepository,
 )
 from app.trading.risk_manager import RiskLimits, RiskManager, RiskRejected
+from app.trading.sizing import PositionSizing, SizingNotConfigured
 from app.trading.state import InMemoryLiveStateStore, LiveStateSnapshot, LiveStateStore
 
 __all__ = [
@@ -53,20 +55,24 @@ __all__ = [
     "LiveRecoveryCoordinator",
     "LiveStateSnapshot",
     "LiveStateStore",
+    "MarketContextUnavailable",
     "OrderManager",
     "OrderState",
     "OrderStateError",
     "OrderUpdate",
     "Position",
     "PositionManager",
+    "PositionSizing",
     "PositionUpdate",
     "RecoveryResult",
     "RecoveryStatus",
     "RiskManager",
     "RiskRejected",
     "RiskLimits",
+    "SizingNotConfigured",
     "TradeFill",
     "TradingEngine",
+    "build_market_context",
     "can_transition",
     "compose_strategy_engine",
     "plan_to_intents",

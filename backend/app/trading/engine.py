@@ -26,6 +26,7 @@ from app.trading.domain import ExecutionIntent
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
 from app.trading.risk_manager import RiskManager
+from app.trading.sizing import PositionSizing, SizingNotConfigured
 
 
 def compose_strategy_engine() -> StrategyEngine:
@@ -56,6 +57,7 @@ class TradingEngine:
             Callable[[Plan, MarketContext], ExecutionIntent | list[ExecutionIntent] | None]
             | None
         ) = None,
+        sizing: PositionSizing | None = None,
     ) -> None:
         self.broker = broker
         self.strategy_engine = strategy_engine
@@ -64,6 +66,7 @@ class TradingEngine:
         self.risk_manager = risk_manager
         self._strategy_config = strategy_config
         self._intent_factory = intent_factory
+        self._sizing = sizing
         self._started = False
 
     @property
@@ -98,9 +101,12 @@ class TradingEngine:
         """Evaluate the strategy and route execution through the Risk Manager.
 
         This is the integration seam for the Strategy -> TradingEngine ->
-        RiskManager -> OrderManager pipeline. It requires a StrategyEngine and a
-        strategy config; production live execution goes through
-        :meth:`submit_intent` and must not invoke this with ``None``.
+        RiskManager -> OrderManager pipeline. It requires a StrategyEngine, a
+        strategy config and an explicit sizing source; a missing sizing source
+        raises |SizingNotConfigured| so live execution is blocked until a sizing
+        source is configured (no fabricated order quantity). Production live
+        execution goes through :meth:`submit_intent` and must not invoke this
+        with ``None``.
 
         ``intent_factory`` may return a single intent, a list of intents, or
         None; every returned intent is submitted through :meth:`submit_intent`,
@@ -113,7 +119,15 @@ class TradingEngine:
                 "TradingEngine.process() requires a StrategyEngine and a strategy "
                 "config; the live execution path uses submit_intent() instead"
             )
-        plan = self.strategy_engine.evaluate(self._strategy_config, context)
+        if self._sizing is None:
+            raise SizingNotConfigured(
+                "TradingEngine.process() requires an explicit position-sizing "
+                "source to build a safe live order quantity"
+            )
+        base_nominal = self._sizing.resolve_base_nominal()
+        plan = self.strategy_engine.evaluate(
+            self._strategy_config, context, base_nominal=base_nominal
+        )
         if self._intent_factory is not None:
             result = self._intent_factory(plan, context)
             if result is not None:

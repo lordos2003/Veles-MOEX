@@ -36,6 +36,7 @@ from app.trading import (
     BotRuntime,
     BotStateError,
     OrderManager,
+    PositionSizing,
     RiskLimits,
     RiskManager,
     RiskRejected,
@@ -171,6 +172,7 @@ def _runtime_with_strategy(
             intent_factory=lambda plan, ctx: plan_to_intents(
                 plan, instrument_figi=figi, bot_id=bot_id, account_id="acc-1"
             ),
+            sizing=PositionSizing(base_nominal=Decimal("1000")),
         )
         await engine.start()
         return engine
@@ -190,7 +192,7 @@ class _StubStrategyEngine:
     def __init__(self) -> None:
         self.evaluate_calls = 0
 
-    def evaluate(self, config, context) -> Plan:
+    def evaluate(self, config, context, **kwargs) -> Plan:
         self.evaluate_calls += 1
         return Plan(grid=[GridOrder(side=OrderSide.BUY, quantity=2.0, price=100.0)])
 
