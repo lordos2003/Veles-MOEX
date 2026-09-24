@@ -19,9 +19,10 @@ from app.trading.domain import (
     TradeFill,
     can_transition,
 )
-from app.trading.engine import TradingEngine
+from app.trading.engine import TradingEngine, compose_strategy_engine
 from app.trading.live_execution import LiveExecutionBlocked, LiveExecutionService
 from app.trading.order_manager import OrderManager, OrderStateError
+from app.trading.plan_intent import plan_to_intents
 from app.trading.position_manager import Position, PositionManager
 from app.trading.recovery import LiveRecoveryCoordinator, RecoveryResult, RecoveryStatus
 from app.trading.repository import (
@@ -67,4 +68,6 @@ __all__ = [
     "TradeFill",
     "TradingEngine",
     "can_transition",
+    "compose_strategy_engine",
+    "plan_to_intents",
 ]

@@ -96,7 +96,7 @@ def _runtime(risk: RiskManager, submit_cb=None, om: OrderManager | None = None) 
 async def test_valid_start_transition_to_running() -> None:
     rt = _runtime(RiskManager())
     assert rt.state is BotState.STOPPED
-    rt.start()
+    await rt.start()
     assert rt.state is BotState.RUNNING
     assert rt.can_submit() is True
 
@@ -106,7 +106,7 @@ async def test_check_start_blocks_start() -> None:
     risk = RiskManager(limits=RiskLimits(max_concurrent_bots=0))
     rt = _runtime(risk)
     with pytest.raises(BotStartRejected):
-        rt.start()
+        await rt.start()
     assert rt.state is BotState.ERROR
 
 
@@ -114,14 +114,14 @@ async def test_successful_start_registers_active_bot() -> None:
     # max_concurrent_bots == 1: the first bot can start, a second cannot.
     risk = RiskManager(limits=RiskLimits(max_concurrent_bots=1))
     first = _runtime(risk)
-    first.start()
+    await first.start()
     assert first.state is BotState.RUNNING
     second = BotRuntime(2, risk)
     with pytest.raises(BotStartRejected):
-        second.start()
+        await second.start()
     # Stopping frees the slot.
     await first.stop()
-    second.start()
+    await second.start()
     assert second.state is BotState.RUNNING
 
 
@@ -140,7 +140,7 @@ async def test_stop_blocks_new_intents() -> None:
         )
 
     rt = _runtime(RiskManager(), submit_cb=_submit)
-    rt.start()
+    await rt.start()
     await rt.stop()
     assert rt.state is BotState.STOPPED
     with pytest.raises(BotStateError):
@@ -155,7 +155,7 @@ async def test_normal_stop_does_not_close_position() -> None:
     om.positions().apply_fill("BBG000", OrderSide.BUY, Decimal("5"), Decimal("100"))
     risk = RiskManager(position_manager=om.positions())
     rt = BotRuntime(1, risk, submit_cb=om.submit, order_manager=om)
-    rt.start()
+    await rt.start()
     await rt.stop()
     assert rt.state is BotState.STOPPED
     position = om.positions().get("BBG000")
@@ -178,7 +178,7 @@ async def test_emergency_stop_blocks_new_intents() -> None:
         )
 
     rt = _runtime(RiskManager(), submit_cb=_submit)
-    rt.start()
+    await rt.start()
     await rt.emergency_stop()
     assert rt.state is BotState.EMERGENCY_STOP
     with pytest.raises(BotStateError):
@@ -191,7 +191,7 @@ async def test_emergency_stop_cancels_active_orders() -> None:
     om = OrderManager(broker)
     risk = RiskManager()
     rt = BotRuntime(1, risk, submit_cb=om.submit, order_manager=om)
-    rt.start()
+    await rt.start()
     order = await om.submit(_intent(om))
     await rt.emergency_stop()
     assert broker.cancel_calls == [(order.broker_order_id, "acc-1")]
@@ -200,9 +200,9 @@ async def test_emergency_stop_cancels_active_orders() -> None:
 async def test_invalid_state_transitions_are_rejected() -> None:
     rt = _runtime(RiskManager())
     # RUNNING -> STARTING is not allowed.
-    rt.start()
+    await rt.start()
     with pytest.raises(BotStateError):
-        rt.start()
+        await rt.start()
     assert rt.state is BotState.RUNNING
 
 
@@ -379,7 +379,7 @@ async def test_stop_holds_risk_slot_during_cancellation() -> None:
 
     broker.cancel_order = spy_cancel
     rt = BotRuntime(1, risk, submit_cb=om.submit, order_manager=om)
-    rt.start()
+    await rt.start()
     await om.submit(_intent(om))
     await rt.stop()
     # Slot occupied while cancellation was in progress, released afterwards.
@@ -412,7 +412,7 @@ async def test_cancellation_failure_leaves_error_and_releases_slot() -> None:
     om = FailingOrderManager()
     risk = RiskManager()
     rt = BotRuntime(1, risk, submit_cb=None, order_manager=om)
-    rt.start()
+    await rt.start()
     with pytest.raises(RuntimeError):
         await rt.stop()
     assert rt.state is BotState.ERROR
@@ -456,7 +456,7 @@ async def test_emergency_stop_releases_risk_slot() -> None:
     om = OrderManager(broker)
     risk = RiskManager(limits=RiskLimits(max_concurrent_bots=1))
     rt = BotRuntime(1, risk, submit_cb=om.submit, order_manager=om)
-    rt.start()
+    await rt.start()
     await om.submit(_intent(om))
     await rt.emergency_stop()
     assert rt.state is BotState.EMERGENCY_STOP

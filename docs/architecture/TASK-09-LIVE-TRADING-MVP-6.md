@@ -723,5 +723,77 @@ claimed that TradesStream is technically impossible to use — it is simply not
 used, and the single OrderStateStream subscription is the documented,
 non-deprecated live source for order states and executions.
 
+## 25. Strategy live integration — MVP-6.7
+
+The Strategy Engine is now production-wired into the live Bot Runtime and
+Trading Engine:
+
+```
+Bot (strategy_version_id)
+  -> StrategyVersion (immutable JSONB config)
+     -> StrategyConfig (validated, per bot)
+        -> StrategyEngine.evaluate(MarketContext) -> Plan
+           -> BotRuntime.execute_strategy()
+              -> TradingEngine.process() (per-bot engine)
+                 -> plan_to_intents() (orchestration boundary)
+                    -> RiskManager.check_order()
+                       -> OrderManager.submit() -> BrokerAdapter
+```
+
+### StrategyVersion loading
+
+`app/bots/strategy.py` is the minimum repository/service boundary: a Bot's
+referenced `StrategyVersion` is loaded and its JSONB configuration validated
+through the existing `StrategyConfig` model. `StrategyVersion` is never
+mutated. A missing version or an invalid configuration raises
+`StrategyLoadError`, which blocks execution explicitly (the bot stays in ERROR;
+the API reports an explicit 409 start failure).
+
+### Per-bot strategy composition
+
+Each bot runtime loads **its own** immutable `StrategyConfig` on START and
+composes its own `TradingEngine` (shared broker-neutral `StrategyEngine`
+instances via `compose_strategy_engine()`, per-bot `StrategyConfig`). There is
+no global strategy configuration. The bot cannot enter RUNNING unless the
+strategy loads and validates; a failed load never occupies a RiskManager
+concurrent-bot slot. MVP-6.5 restart semantics are unchanged.
+
+### ExecutionIntent conversion boundaries (`app/trading/plan_intent.py`)
+
+Only plan items with safe, real domain values become live intents:
+
+- **DCA/Grid orders** (`GridOrder`): converted (real quantity/price); intent
+  ids are deterministic content hashes, preserving `ExecutionIntent`
+  idempotency (repeated identical plans deduplicate in the OrderManager).
+- **Entry signals** (`EntrySignal`): NOT converted — the domain carries no
+  order quantity (explicit boundary; no fabricated quantity).
+- **Exit plans** (`ExitPlan`): NOT converted — the quantity originates from the
+  `position_qty=1.0` placeholder in `StrategyEngine.evaluate()` (explicit
+  boundary; a live exit quantity must come from real position state).
+
+### MarketContext boundary
+
+`MarketContext` is the broker-neutral input to
+`BotRuntime.execute_strategy(context)`; it is always injected explicitly.
+There is currently **no production market-data source wired** into the runtime
+(no hardcoded prices, no fake candles, no fake positions). Wiring a live
+MarketContext source (market data layer) is a follow-up task.
+
+### Risk configuration limitation
+
+`StrategyConfig.risk` is **not** copied into the execution RiskManager; the
+production RiskManager uses only the typed application settings (`risk_*`).
+Per-bot risk configuration is not yet supported by the RiskManager boundary —
+documented limitation, no precedence rules invented.
+
+### Tests
+
+`tests/test_strategy_live_integration.py` covers: strategy version loading
+(valid / missing / invalid), failed load -> ERROR without a risk slot, no
+strategy execution outside RUNNING, plan -> TradingEngine -> RiskManager ->
+OrderManager, risk rejection before the broker, idempotent plan re-evaluation,
+entry/exit conversion boundaries, broker-neutrality of the strategy code, and
+restart semantics with the strategy path.
+
 
 

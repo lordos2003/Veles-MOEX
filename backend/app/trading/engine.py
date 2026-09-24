@@ -17,12 +17,27 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from app.brokers import BrokerAdapter
+from app.strategies.dca_grid import DCAGridEngine
 from app.strategies.domain import MarketContext, Plan
 from app.strategies.engine import StrategyEngine
+from app.strategies.entry import EntryEngine
+from app.strategies.exit import ExitEngine
 from app.trading.domain import ExecutionIntent
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
 from app.trading.risk_manager import RiskManager
+
+
+def compose_strategy_engine() -> StrategyEngine:
+    """Production composition of the broker-neutral Strategy Engine.
+
+    Constructs the existing Entry / DCA-Grid / Exit engines around a
+    ``StrategyEngine`` without altering their calculations. No broker code is
+    imported; the composed engine remains broker-neutral.
+    """
+    return StrategyEngine(
+        entry=EntryEngine(), dca_grid=DCAGridEngine(), exit_engine=ExitEngine()
+    )
 
 
 class TradingEngine:
@@ -37,7 +52,10 @@ class TradingEngine:
         risk_manager: RiskManager,
         *,
         strategy_config=None,
-        intent_factory: Callable[[Plan, MarketContext], ExecutionIntent | None] | None = None,
+        intent_factory: (
+            Callable[[Plan, MarketContext], ExecutionIntent | list[ExecutionIntent] | None]
+            | None
+        ) = None,
     ) -> None:
         self.broker = broker
         self.strategy_engine = strategy_engine
@@ -83,6 +101,10 @@ class TradingEngine:
         RiskManager -> OrderManager pipeline. It requires a StrategyEngine and a
         strategy config; production live execution goes through
         :meth:`submit_intent` and must not invoke this with ``None``.
+
+        ``intent_factory`` may return a single intent, a list of intents, or
+        None; every returned intent is submitted through :meth:`submit_intent`,
+        so the Risk Manager is always consulted before the Order Manager.
         """
         if not self._started:
             raise RuntimeError("TradingEngine is not started")
@@ -92,8 +114,10 @@ class TradingEngine:
                 "config; the live execution path uses submit_intent() instead"
             )
         plan = self.strategy_engine.evaluate(self._strategy_config, context)
-        if plan.entry is not None and self._intent_factory is not None:
-            intent = self._intent_factory(plan, context)
-            if intent is not None:
-                await self.submit_intent(intent)
+        if self._intent_factory is not None:
+            result = self._intent_factory(plan, context)
+            if result is not None:
+                intents = result if isinstance(result, (list, tuple)) else [result]
+                for intent in intents:
+                    await self.submit_intent(intent)
         return plan

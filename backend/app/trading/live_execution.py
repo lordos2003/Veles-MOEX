@@ -209,14 +209,17 @@ async def build_live_service() -> LiveExecutionService:
     store. The caller owns the returned service; ``shutdown()`` closes the
     underlying session.
 
-    Strategy-path boundary: the live composition wires only the **execution**
-    path (RiskManager -> OrderManager via ``TradingEngine.submit_intent``), with
-    the **bot lifecycle** as the upstream control layer (a bot must be RUNNING
-    before its intents are accepted). A ``StrategyEngine``/``StrategyConfig`` is
-    NOT wired because there is no live bot-strategy configuration source in
-    MVP-6, so ``TradingEngine.process()`` (the Strategy -> TradingEngine path)
-    is *not* integrated and ``strategy_configured`` is ``False`` (``process()``
-    raises if invoked).
+    Strategy path (MVP-6.7): each bot runtime loads **its own** immutable
+    StrategyVersion (validated into a ``StrategyConfig``) on START and gets its
+    own ``TradingEngine`` (shared broker-neutral ``StrategyEngine`` instances,
+    per-bot ``StrategyConfig``). Strategy evaluation is triggered by
+    ``BotRuntime.execute_strategy(MarketContext)``; the ``MarketContext`` is an
+    explicit broker-neutral input and **no production market-data source is
+    wired yet** (documented boundary; no fabricated market data). Plan items
+    are converted to ``ExecutionIntent``s by ``plan_to_intents`` at the
+    orchestration boundary (DCA/Grid orders only; entry signals and exit plans
+    are explicit boundaries — see ``app.trading.plan_intent``). Every intent is
+    risk-gated: ``RiskManager`` is always consulted before ``OrderManager``.
 
     Startup bot-state sync: persisted bot states are restored into the runtime
     manager so DB and runtime never contradict. Persisted RUNNING/STARTING bots
@@ -230,14 +233,28 @@ async def build_live_service() -> LiveExecutionService:
     PostgreSQL behind the async ``InstrumentService`` while the execution gate
     is synchronous, so the check is explicitly unavailable in production
     (documented boundary, no fabricated values).
+
+    Per-bot risk configuration limitation: ``StrategyConfig.risk`` is NOT
+    copied into the global Risk Manager; the execution Risk Manager uses the
+    application settings only (documented boundary, no precedence invented).
     """
     from app.bots.repository import BotRepository
+    from app.bots.strategy import (
+        BotStrategy,
+        StrategyLoadError,
+        load_bot_strategy_by_id,
+    )
     from app.brokers import TInvestAdapter
     from app.core.config import get_settings
     from app.core.db import SessionLocal
+    from app.models.account import Account
     from app.models.enums import BotState
+    from app.models.instrument import Instrument
     from app.persistence.execution_state import SqlAlchemyLiveStateStore
+    from app.strategies.domain import MarketContext, Plan
     from app.trading.bot_lifecycle import BotRuntime
+    from app.trading.engine import compose_strategy_engine
+    from app.trading.plan_intent import plan_to_intents
 
     broker = TInvestAdapter()
     session = SessionLocal()
@@ -251,21 +268,64 @@ async def build_live_service() -> LiveExecutionService:
     trading_engine = TradingEngine(
         broker, None, order_manager, position_manager, risk_manager
     )
+    strategy_engine = compose_strategy_engine()
+    bot_repository = BotRepository(session)
 
     async def _submit_cb(intent: ExecutionIntent) -> InternalOrder:
         return await trading_engine.submit_intent(intent)
 
     def _make_runtime(bot_id: int, state: BotState = BotState.STOPPED) -> BotRuntime:
+        async def _load_strategy() -> BotStrategy:
+            return await load_bot_strategy_by_id(session, bot_id)
+
+        async def _make_bot_engine(bot_strategy: BotStrategy) -> TradingEngine:
+            bot = await bot_repository.get(bot_id)
+            if bot is None:
+                raise StrategyLoadError(f"bot {bot_id} not found")
+            instrument = await session.get(Instrument, bot.instrument_id)
+            if instrument is None:
+                raise StrategyLoadError(
+                    f"bot {bot_id} references missing instrument "
+                    f"{bot.instrument_id}"
+                )
+            account = await session.get(Account, bot.account_id)
+
+            def _intent_factory(
+                plan: Plan, context: MarketContext
+            ) -> list[ExecutionIntent]:
+                return plan_to_intents(
+                    plan,
+                    instrument_figi=instrument.figi,
+                    bot_id=bot_id,
+                    account_id=(
+                        account.external_account_id if account is not None else None
+                    ),
+                )
+
+            engine = TradingEngine(
+                broker,
+                strategy_engine,
+                order_manager,
+                position_manager,
+                risk_manager,
+                strategy_config=bot_strategy.config,
+                intent_factory=_intent_factory,
+            )
+            await engine.start()
+            return engine
+
         return BotRuntime(
             bot_id,
             risk_manager,
             submit_cb=_submit_cb,
             order_manager=order_manager,
             state=state,
+            strategy_loader=_load_strategy,
+            trading_engine_factory=_make_bot_engine,
         )
 
     bot_runtime_manager = BotRuntimeManager(risk_manager, runtime_factory=_make_runtime)
-    await bot_runtime_manager.restore_persisted_states(BotRepository(session))
+    await bot_runtime_manager.restore_persisted_states(bot_repository)
 
     service = LiveExecutionService(
         broker,

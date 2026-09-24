@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import get_bot_repository, get_bot_runtime_manager
 from app.bots.repository import BotRepository
 from app.bots.schemas import BotResponse
+from app.bots.strategy import StrategyLoadError
 from app.models.bot import Bot
 from app.trading.bot_lifecycle import BotRuntimeManager, BotStartRejected, BotStateError
 
@@ -82,6 +83,12 @@ async def _apply(
         await _persist_current_state(repo, bot, runtime)
         raise HTTPException(
             status_code=409, detail=f"bot start rejected by risk manager: {exc}"
+        ) from exc
+    except StrategyLoadError as exc:
+        await _persist_current_state(repo, bot, runtime)
+        raise HTTPException(
+            status_code=409,
+            detail=f"bot start failed: strategy could not be loaded/validated: {exc}",
         ) from exc
     except BotStateError as exc:
         await _persist_current_state(repo, bot, runtime)
