@@ -126,3 +126,10 @@ required input for `TradingEngine.process()`:
   invented financial default.
 - No candle/snapshot source or per-bot timeframe: live entry-filter evaluation
   that needs a `Snapshot` remains blocked.
+
+## Acceptance / publication
+
+MVP-6.8 **ACCEPTED by ChatGPT** and published to `origin/master`:
+`origin/master` is at `b2c4ee27cdd1bcf67bb69c2f22374cb062bebb52`
+(fast-forward `57b192d..b2c4ee2`). No further push/merge is required.
+
