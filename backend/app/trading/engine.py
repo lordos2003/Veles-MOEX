@@ -139,6 +139,8 @@ class TradingEngine:
             base_nominal=base_nominal,
             position_qty=position_qty,
         )
+        if self._position_gates_execution(position_qty):
+            return plan
         if self._intent_factory is not None:
             result = self._intent_factory(plan, context)
             if result is not None:
@@ -147,14 +149,28 @@ class TradingEngine:
                     await self.submit_intent(intent)
         return plan
 
+    def _position_gates_execution(self, position_qty: Decimal | None) -> bool:
+        """Whether a missing/invalid position must block all live intents.
+
+        For a live per-bot engine (``instrument_figi`` set), the PositionManager
+        is the only authoritative quantity source: when it cannot resolve a real,
+        positive position, **no** live ExecutionIntent may be created/submitted
+        for this processing cycle (no position / zero / sign-mismatch => no live
+        order at all). Generic/Backtest engines (no ``instrument_figi``) are not
+        gated here.
+        """
+        if self._instrument_figi is None:
+            return False
+        return position_qty is None
+
     def _exit_position_quantity(self) -> Decimal | None:
         """Resolve the authoritative live exit quantity from the PositionManager.
 
         The PositionManager is the only authoritative quantity source: the broker
-        is never queried here. A missing or invalid position is not an error for
-        the overall plan — it simply yields ``None`` so no live exit order is
-        generated (no position / zero / sign-mismatch => no live exit). The
-        broker-neutral domain errors are caught and mapped to ``None``.
+        is never queried here. A missing or invalid position yields ``None`` (no
+        position / zero / sign-mismatch), which also makes
+        :meth:`_position_gates_execution` block **all** live intents for this
+        cycle. The broker-neutral domain errors are caught and mapped to ``None``.
         """
         if self._instrument_figi is None:
             return None

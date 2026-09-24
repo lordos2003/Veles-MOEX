@@ -164,7 +164,7 @@ async def test_real_quantity_reaches_execution_intent() -> None:
 # --- 7-8: no order without a valid position; no fallback ---------------------
 
 
-async def test_no_live_exit_order_when_position_absent() -> None:
+async def test_no_live_order_when_position_absent() -> None:
     broker = FakeBroker()
     om = OrderManager(broker)
     pm = om.positions()  # empty
@@ -185,8 +185,63 @@ async def test_no_live_exit_order_when_position_absent() -> None:
     )
     await engine.start()
     await engine.process(_market_context())
-    # No position => no live exit order may be generated.
-    assert [o for o in om.list_orders() if o.side is OrderSide.SELL] == []
+    # No position => no live order at all for this cycle.
+    assert om.list_orders() == []
+
+
+async def test_no_live_order_when_zero_quantity() -> None:
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_position_update(
+        _update(FIGI, quantity=Decimal("0"), average_price=Decimal("100"))
+    )
+
+    def factory(plan, ctx):
+        return plan_to_intents(plan, instrument_figi=FIGI, bot_id=1, account_id="acc-1")
+
+    engine = TradingEngine(
+        broker,
+        StrategyEngine(EntryEngine(), DCAGridEngine(), ExitEngine()),
+        om,
+        pm,
+        RiskManager(position_manager=pm),
+        strategy_config=_strategy(),
+        intent_factory=factory,
+        sizing=PositionSizing(base_nominal=Decimal("5000")),
+        instrument_figi=FIGI,
+    )
+    await engine.start()
+    await engine.process(_market_context())
+    # Zero position quantity => no live order at all for this cycle.
+    assert om.list_orders() == []
+
+
+async def test_no_live_order_when_sign_mismatched() -> None:
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    # A short position is sign-inconsistent with the LONG strategy.
+    pm.apply_fill(FIGI, OrderSide.SELL, Decimal("5"), Decimal("100"))
+
+    def factory(plan, ctx):
+        return plan_to_intents(plan, instrument_figi=FIGI, bot_id=1, account_id="acc-1")
+
+    engine = TradingEngine(
+        broker,
+        StrategyEngine(EntryEngine(), DCAGridEngine(), ExitEngine()),
+        om,
+        pm,
+        RiskManager(position_manager=pm),
+        strategy_config=_strategy(),
+        intent_factory=factory,
+        sizing=PositionSizing(base_nominal=Decimal("5000")),
+        instrument_figi=FIGI,
+    )
+    await engine.start()
+    await engine.process(_market_context())
+    # Sign-inconsistent position => no live order at all for this cycle.
+    assert om.list_orders() == []
 
 
 async def test_no_fallback_quantity() -> None:
