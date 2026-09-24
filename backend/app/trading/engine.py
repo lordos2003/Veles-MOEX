@@ -15,6 +15,7 @@ here; financial decisions come only from the Strategy/Risk configuration.
 from __future__ import annotations
 
 from collections.abc import Callable
+from decimal import Decimal
 
 from app.brokers import BrokerAdapter
 from app.strategies.dca_grid import DCAGridEngine
@@ -24,7 +25,11 @@ from app.strategies.entry import EntryEngine
 from app.strategies.exit import ExitEngine
 from app.trading.domain import ExecutionIntent
 from app.trading.order_manager import OrderManager
-from app.trading.position_manager import PositionManager
+from app.trading.position_manager import (
+    InvalidPositionQuantity,
+    PositionManager,
+    PositionUnavailable,
+)
 from app.trading.risk_manager import RiskManager
 from app.trading.sizing import PositionSizing, SizingNotConfigured
 
@@ -58,6 +63,7 @@ class TradingEngine:
             | None
         ) = None,
         sizing: PositionSizing | None = None,
+        instrument_figi: str | None = None,
     ) -> None:
         self.broker = broker
         self.strategy_engine = strategy_engine
@@ -67,6 +73,7 @@ class TradingEngine:
         self._strategy_config = strategy_config
         self._intent_factory = intent_factory
         self._sizing = sizing
+        self._instrument_figi = instrument_figi
         self._started = False
 
     @property
@@ -125,9 +132,15 @@ class TradingEngine:
                 "source to build a safe live order quantity"
             )
         base_nominal = self._sizing.resolve_base_nominal()
+        position_qty = self._exit_position_quantity()
         plan = self.strategy_engine.evaluate(
-            self._strategy_config, context, base_nominal=base_nominal
+            self._strategy_config,
+            context,
+            base_nominal=base_nominal,
+            position_qty=position_qty,
         )
+        if self._position_gates_execution(position_qty):
+            return plan
         if self._intent_factory is not None:
             result = self._intent_factory(plan, context)
             if result is not None:
@@ -135,3 +148,35 @@ class TradingEngine:
                 for intent in intents:
                     await self.submit_intent(intent)
         return plan
+
+    def _position_gates_execution(self, position_qty: Decimal | None) -> bool:
+        """Whether a missing/invalid position must block all live intents.
+
+        For a live per-bot engine (``instrument_figi`` set), the PositionManager
+        is the only authoritative quantity source: when it cannot resolve a real,
+        positive position, **no** live ExecutionIntent may be created/submitted
+        for this processing cycle (no position / zero / sign-mismatch => no live
+        order at all). Generic/Backtest engines (no ``instrument_figi``) are not
+        gated here.
+        """
+        if self._instrument_figi is None:
+            return False
+        return position_qty is None
+
+    def _exit_position_quantity(self) -> Decimal | None:
+        """Resolve the authoritative live exit quantity from the PositionManager.
+
+        The PositionManager is the only authoritative quantity source: the broker
+        is never queried here. A missing or invalid position yields ``None`` (no
+        position / zero / sign-mismatch), which also makes
+        :meth:`_position_gates_execution` block **all** live intents for this
+        cycle. The broker-neutral domain errors are caught and mapped to ``None``.
+        """
+        if self._instrument_figi is None:
+            return None
+        try:
+            return self.position_manager.resolve_quantity(
+                self._instrument_figi, self._strategy_config.direction
+            )
+        except (PositionUnavailable, InvalidPositionQuantity):
+            return None

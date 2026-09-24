@@ -24,7 +24,12 @@ from app.trading.live_execution import LiveExecutionBlocked, LiveExecutionServic
 from app.trading.market_context import MarketContextUnavailable, build_market_context
 from app.trading.order_manager import OrderManager, OrderStateError
 from app.trading.plan_intent import plan_to_intents
-from app.trading.position_manager import Position, PositionManager
+from app.trading.position_manager import (
+    InvalidPositionQuantity,
+    Position,
+    PositionManager,
+    PositionUnavailable,
+)
 from app.trading.recovery import LiveRecoveryCoordinator, RecoveryResult, RecoveryStatus
 from app.trading.repository import (
     InMemoryFillRepository,
@@ -50,6 +55,7 @@ __all__ = [
     "InMemoryOrderRepository",
     "InMemoryPositionRepository",
     "InternalOrder",
+    "InvalidPositionQuantity",
     "LiveExecutionBlocked",
     "LiveExecutionService",
     "LiveRecoveryCoordinator",
@@ -63,6 +69,7 @@ __all__ = [
     "Position",
     "PositionManager",
     "PositionSizing",
+    "PositionUnavailable",
     "PositionUpdate",
     "RecoveryResult",
     "RecoveryStatus",

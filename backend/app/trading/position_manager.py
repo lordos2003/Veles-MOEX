@@ -1,8 +1,9 @@
-"""Position Manager (broker-neutral, MVP-6.1).
+"""Position Manager (broker-neutral, MVP-6.1 / MVP-6.9).
 
 The Position Manager is the authoritative local representation of a position.
 Positions change only from actual fills (or explicit position updates), never
-from the mere fact that an order was submitted.
+from the mere fact that an order was submitted. It is the ONLY authoritative
+source of live execution quantity.
 
 Average price uses the weighted mean: sum(quantity_i * price_i) / sum(quantity_i)
 with ``Decimal``. Reducing/closing adjusts quantity and realizes P&L.
@@ -15,11 +16,24 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from app.models.enums import OrderSide
+from app.strategies.config import Direction
 from app.trading.domain import PositionUpdate
 
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+class PositionUnavailable(RuntimeError):
+    """Raised when no authoritative position exists for an instrument."""
+
+
+class InvalidPositionQuantity(RuntimeError):
+    """Raised when a position exists but its quantity is not valid for an exit.
+
+    This covers a zero quantity and a quantity whose sign is inconsistent with
+    the strategy direction (e.g. a LONG strategy holding a short position).
+    """
 
 
 @dataclass
@@ -55,6 +69,32 @@ class PositionManager:
 
     def get(self, instrument_figi: str) -> Position | None:
         return self._positions.get(instrument_figi)
+
+    def resolve_quantity(self, instrument_figi: str, direction: Direction) -> Decimal:
+        """Return the authoritative live exit quantity for an instrument.
+
+        The Position Manager is the only authoritative quantity source. This
+        raises |PositionUnavailable| when no position exists for ``figi`` and
+        |InvalidPositionQuantity| when the position cannot be exited (zero
+        quantity, or a sign inconsistent with ``direction``). The returned value
+        is always a positive magnitude; the exit side is derived from
+        ``direction`` by the Exit Engine. No fabricated/default quantity is
+        ever returned.
+        """
+        pos = self._positions.get(instrument_figi)
+        if pos is None:
+            raise PositionUnavailable(f"no position for {instrument_figi}")
+        qty = pos.quantity
+        if qty == 0:
+            raise InvalidPositionQuantity(
+                f"position {instrument_figi} has zero quantity"
+            )
+        if not _sign_matches(qty, direction):
+            raise InvalidPositionQuantity(
+                f"position {instrument_figi} quantity {qty} is inconsistent "
+                f"with direction {direction.value}"
+            )
+        return abs(qty)
 
     def list(self) -> list[Position]:
         return list(self._positions.values())
@@ -154,6 +194,12 @@ class PositionManager:
 
 def _same_sign(a: Decimal, b: Decimal) -> bool:
     return (a > 0 and b > 0) or (a < 0 and b < 0)
+
+
+def _sign_matches(quantity: Decimal, direction: Direction) -> bool:
+    if direction == Direction.LONG:
+        return quantity > 0
+    return quantity < 0
 
 
 def _weighted_avg(

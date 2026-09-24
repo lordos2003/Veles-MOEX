@@ -334,12 +334,14 @@ async def test_full_path_remains_risk_manager_gated() -> None:
     assert om.list_orders() == []
 
 
-# --- 11: exit placeholder boundary --------------------------------------------
+# --- 11: exit non-positive quantity boundary ----------------------------------
 
 
-async def test_live_exit_plan_with_placeholder_quantity_remains_blocked() -> None:
+async def test_live_exit_plan_with_non_positive_quantity_remains_blocked() -> None:
+    # MVP-6.9: an exit plan is converted only when it carries a real, positive
+    # position quantity; a non-positive quantity must never become a live order.
     plan = Plan(
-        exits=[ExitPlan(side=OrderSide.SELL, quantity=1.0, price=Decimal("100"))]
+        exits=[ExitPlan(side=OrderSide.SELL, quantity=0.0, price=Decimal("100"))]
     )
     intents = plan_to_intents(plan, instrument_figi=FIGI, bot_id=1)
     assert intents == []
