@@ -179,3 +179,14 @@ Existing tests were updated only where behavior intentionally changed:
   the position average price; MVP-6.9 makes only the quantity authoritative.
 - `PositionManager` is populated from broker facts during recovery; there is no
   live order submission/position streaming in this MVP (read-only).
+
+
+## ChatGPT acceptance / publication
+
+- Independent ChatGPT review: **ACCEPTED**.
+- Acceptance: 2026-09-24.
+- Pull Request: #2 — `MVP-6.9: Position State & Authoritative Quantity`.
+- Published to `master` by merge commit `cdc10296e32509f2d716c85c1b58e62a9b01b2cf`.
+- Review branch head before publication: `5b4c42be4d49d700e8750315c1da81b17bc04a1d`.
+- `master` now contains the accepted MVP-6.9 implementation.
+- No further merge/push is required for MVP-6.9.
