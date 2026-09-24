@@ -8,7 +8,7 @@ Base commit:
 
 `b2b199e2d73f7d1ec32abd4f7128e6f7a5a04f1b`
 
-Do not push or merge `master).
+Do not push or merge `master`.
 
 ## 1. Goal
 
@@ -226,15 +226,14 @@ Do not implement:
 - StrategyVersion is immutable.
 - No T-Invest dependency enters Strategy Engine or Trading Engine.
 - RiskManager remains mandatory before order submission.
-- No direct StrategyEngine -> OrderManager path.
+- The execution path is Strategy -> TradingEngine -> RiskManager -> OrderManager. Strategy Engine must not submit orders directly.
 
 ### Lifecycle
 
-- Existing MVP-6.5 tests remain green.
 - A Bot with valid StrategyVersion can load its StrategyConfig.
 - A Bot with missing/invalid StrategyVersion cannot enter RUNNING.
 - Failed strategy loading does not consume a RiskManager concurrent-bot slot.
-- Restart semantics remain unchanged.
+- Existing MVP-6.5 lifecycle behavior remains unchanged. Existing tests are the regression check for this contract.
 
 ### Market data
 
@@ -251,7 +250,9 @@ Do not implement:
 
 ### Tests
 
-At minimum cover:
+Add only focused tests for new MVP-6.7 behavior. Target approximately 10–12 new tests.
+
+Cover:
 
 1. valid Bot -> StrategyVersion -> StrategyConfig;
 2. missing StrategyVersion;
@@ -261,10 +262,14 @@ At minimum cover:
 6. valid strategy cannot execute while Bot is not RUNNING;
 7. Strategy plan reaches TradingEngine;
 8. RiskManager rejects before OrderManager;
-9. no direct StrategyEngine -> OrderManager call;
-10. no fabricated MarketContext;
-11. restart semantics remain green;
-12. existing MVP-6.5 and MVP-6.6 tests remain green.
+9. no direct StrategyEngine -> OrderManager submission path, covered by the end-to-end execution-path test;
+10. no fabricated MarketContext.
+
+Do not add separate tests for restart semantics or full MVP-6.5/MVP-6.6 regression. Those are already covered by the existing suite.
+
+The full existing test suite remains mandatory as a regression command, but it is not a reason to add duplicate MVP-6.7 tests.
+
+Do not expand the test scope with additional cases unless a new implementation branch introduces a genuinely new contract.
 
 ## 8. Git / reporting rules
 
