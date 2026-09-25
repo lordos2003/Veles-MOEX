@@ -219,40 +219,29 @@ class StrategyConfig(BaseModel):
     risk: RiskConfig = Field(default_factory=RiskConfig)
 
 
-# Conservative warmup (bars) per indicator name, matching the warmup of the
-# indicator implementations in app.strategies.indicators (used only to derive
-# the minimum real candle history a strategy's filters need; MACD uses
-# slow+signal, ADX needs ~2*period).
-_INDICATOR_WARMUP_BARS: dict[str, int] = {
-    "SMA": 20,
-    "EMA": 9,
-    "RSI": 14,
-    "BOLLINGER": 20,
-    "ATR": 14,
-    "CCI": 20,
-    "WILLIAMS_R": 14,
-    "WILLIAMS%R": 14,
-    "CMO": 14,
-    "MFI": 14,
-    "STOCHASTIC": 14,
-    "ADX": 28,
-}
-
-
 def _argument_required_bars(arg) -> int:
-    """Minimum bars a single filter argument needs to be evaluable."""
+    """Minimum bars derived ONLY from the argument's explicit contract values.
+
+    The official Veles documentation defines flexible indicators through
+    explicit user parameters (period/length, timeframe, method, shift) and
+    does not define a universal warmup/history requirement. This project
+    therefore does NOT infer indicator warmup: only explicitly configured
+    values contribute to the required history — the explicit indicator
+    ``period`` and the explicit ``shift``. An argument without an explicit
+    period contributes only its shift (+1); if the fetched history is
+    insufficient for the indicator, the strategy engine's existing
+    insufficient-data semantics apply (an undefined indicator value evaluates
+    the condition as False — no signal). Establishing an exact per-indicator
+    warmup specification is a documented boundary pending the Veles
+    specification, not an implementation assumption.
+    """
     if isinstance(arg, ConstantValue):
         return 0
     if isinstance(arg, CandleSpec):
         return arg.shift + 1
-    # IndicatorSpec
-    name = arg.name.upper()
-    if name == "MACD":
-        base = int(arg.params.get("slow", 26)) + int(arg.params.get("signal", 9))
-    elif arg.period is not None:
-        base = arg.period
-    else:
-        base = _INDICATOR_WARMUP_BARS.get(name, 20)
+    # IndicatorSpec: the explicit period parameter only (no inferred warmup,
+    # no default period substitution, no indicator-specific assumptions).
+    base = arg.period if arg.period is not None else 0
     # +1: cross operators also read the previous value.
     return base + arg.shift + 1
 
@@ -272,10 +261,11 @@ def _groups_required_bars(groups: list[FilterGroup]) -> int:
 def required_bars(config: StrategyConfig) -> int:
     """Minimum candle history (bars) the live path must fetch for this strategy.
 
-    Derived from the strategy's own entry/signal filter contracts (indicator
-    warmup + shifts), so the MarketDataService fetches the minimum real data
-    the strategy can evaluate — no invented default lookback. Always >= 2
-    (current bar + one previous for cross detection).
+    Derived ONLY from the strategy's own entry/signal filter contracts —
+    explicit indicator periods and explicit shifts (no inferred indicator
+    warmup; see ``_argument_required_bars``) — so the MarketDataService
+    fetches the market data required by the explicitly defined strategy
+    contract. Always >= 2 (current bar + one previous for cross detection).
     """
     required = _groups_required_bars(config.entry.groups)
     if config.dca_grid.mode is TradingMode.SIGNAL:

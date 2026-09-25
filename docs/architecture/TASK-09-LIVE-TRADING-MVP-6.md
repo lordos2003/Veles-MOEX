@@ -982,7 +982,7 @@ position sizing remains governed by the MVP-6.9 PositionManager boundary.
 
 ### Per-bot timeframe
 
-- `StrategyConfig.timeframe: Timeframe | None = None` — the bot's own
+- `StrategyConfig.timeframe: Timeframe | None = None` ï¿½ the bot's own
   market-data timeframe, part of the immutable StrategyVersion configuration
   (`Bot/StrategyVersion -> timeframe`). **No global runtime timeframe and no
   implicit production default exist:**
@@ -991,8 +991,18 @@ position sizing remains governed by the MVP-6.9 PositionManager boundary.
   - an invalid timeframe fails strategy configuration validation at load
     time (`StrategyLoadError`).
 - `required_bars(StrategyConfig)` derives the minimum real candle history
-  from the strategy's own entry/signal filter contracts (indicator warmup +
-  shifts; no invented default lookback).
+  ONLY from the strategy's own entry/signal filter contracts: explicit
+  indicator `period` values and explicit `shift` values (+1 for the previous
+  bar used by cross operators; always >= 2). The official Veles documentation
+  defines flexible indicators through explicit user parameters
+  (period/length, timeframe, method, shift) and does not define a universal
+  warmup/history requirement, so **no indicator warmup is inferred** (no
+  warmup table, no default-period substitution). An argument without an
+  explicit period contributes only its shift; if the fetched history is
+  insufficient for the indicator, the strategy engine's existing
+  insufficient-data semantics apply (undefined indicator value -> condition
+  False -> no signal). An exact per-indicator warmup specification is a
+  documented boundary pending the Veles specification.
 
 ### Live runtime integration
 
@@ -1035,6 +1045,7 @@ strategy contract), explicit failure on a missing timeframe (boundary and
 live cycle), invalid timeframe rejection (config validation and strategy
 load), missing/invalid market snapshots (non-positive price, empty history,
 unknown instrument, runtime cycle block, snapshot without the bot-timeframe
-series, empty series, missing snapshot), and the preserved MVP-6.9
-position-state invariant (no order without a position; real quantity with a
-valid snapshot + position).
+series, empty series, missing snapshot), no inferred indicator warmup
+(required history from explicit period/shift only), and the preserved
+MVP-6.9 position-state invariant (no order without a position; real
+quantity with a valid snapshot + position).

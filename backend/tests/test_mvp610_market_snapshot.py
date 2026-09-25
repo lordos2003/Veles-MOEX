@@ -349,7 +349,44 @@ async def test_snapshot_request_uses_required_bars_from_config() -> None:
     # The lookback derives from the strategy's own filter contract, not a
     # global default.
     assert provider.requests == [(FIGI, TF, required_bars(config))]
-    assert required_bars(config) == 21  # SMA(20) warmup + 1 for the previous bar
+    # The explicit SMA period (20) + 1 for the previous bar (cross operators).
+    assert required_bars(config) == 21
+
+
+def test_required_bars_does_not_infer_indicator_warmup() -> None:
+    # An indicator argument without an explicit period parameter must NOT add
+    # an inferred warmup/history requirement (Veles documentation defines no
+    # universal warmup contract): only the explicit shift contributes.
+    groups = [
+        FilterGroup(
+            conditions=[
+                FilterCondition(
+                    arg1=IndicatorSpec(kind="indicator", name="RSI", timeframe=TF),
+                    operator=Operator.GREATER_THAN,
+                    arg2=ConstantValue(kind="constant", value=0.0),
+                )
+            ]
+        )
+    ]
+    assert required_bars(_strategy(entry=EntryConfig(groups=groups))) == 2
+
+
+def test_required_bars_uses_explicit_period_and_shift_only() -> None:
+    groups = [
+        FilterGroup(
+            conditions=[
+                FilterCondition(
+                    arg1=IndicatorSpec(
+                        kind="indicator", name="EMA", timeframe=TF, period=9, shift=3
+                    ),
+                    operator=Operator.GREATER_THAN,
+                    arg2=ConstantValue(kind="constant", value=0.0),
+                )
+            ]
+        )
+    ]
+    # Explicit period 9 + explicit shift 3 + 1 for the previous bar.
+    assert required_bars(_strategy(entry=EntryConfig(groups=groups))) == 13
 
 
 # --- 4: missing timeframe -------------------------------------------------------
