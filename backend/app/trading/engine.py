@@ -18,12 +18,14 @@ from collections.abc import Callable
 from decimal import Decimal
 
 from app.brokers import BrokerAdapter
+from app.domain.marketdata import Timeframe
 from app.strategies.dca_grid import DCAGridEngine
 from app.strategies.domain import MarketContext, Plan
 from app.strategies.engine import StrategyEngine
 from app.strategies.entry import EntryEngine
 from app.strategies.exit import ExitEngine
 from app.trading.domain import ExecutionIntent
+from app.trading.market_context import TimeframeNotConfigured
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import (
     InvalidPositionQuantity,
@@ -118,6 +120,13 @@ class TradingEngine:
         ``intent_factory`` may return a single intent, a list of intents, or
         None; every returned intent is submitted through :meth:`submit_intent`,
         so the Risk Manager is always consulted before the Order Manager.
+
+        Live per-bot engines (``instrument_figi`` set) additionally require a
+        per-bot timeframe in the strategy config (a missing one raises
+        |TimeframeNotConfigured|) and a non-empty bar series for that timeframe
+        in the market context, plus a resolvable position (MVP-6.9): when any
+        of them is missing/invalid, no live ExecutionIntent is created or
+        submitted for this cycle.
         """
         if not self._started:
             raise RuntimeError("TradingEngine is not started")
@@ -132,6 +141,7 @@ class TradingEngine:
                 "source to build a safe live order quantity"
             )
         base_nominal = self._sizing.resolve_base_nominal()
+        timeframe = self._require_live_timeframe()
         position_qty = self._exit_position_quantity()
         plan = self.strategy_engine.evaluate(
             self._strategy_config,
@@ -140,6 +150,8 @@ class TradingEngine:
             position_qty=position_qty,
         )
         if self._position_gates_execution(position_qty):
+            return plan
+        if self._snapshot_gates_execution(context, timeframe):
             return plan
         if self._intent_factory is not None:
             result = self._intent_factory(plan, context)
@@ -162,6 +174,42 @@ class TradingEngine:
         if self._instrument_figi is None:
             return False
         return position_qty is None
+
+    def _require_live_timeframe(self) -> Timeframe | None:
+        """Enforce the per-bot timeframe for a live strategy cycle (MVP-6.10).
+
+        Returns the configured timeframe, or ``None`` for a generic/Backtest
+        engine (no ``instrument_figi``; no live timeframe requirement). A live
+        per-bot engine without a configured timeframe raises
+        |TimeframeNotConfigured|: the processing cycle fails explicitly, no
+        global runtime timeframe or implicit production default is substituted.
+        """
+        if self._instrument_figi is None:
+            return None
+        timeframe = self._strategy_config.timeframe
+        if timeframe is None:
+            raise TimeframeNotConfigured(
+                "live strategy cycle requires a per-bot timeframe in the "
+                "strategy configuration (no implicit default)"
+            )
+        return timeframe
+
+    def _snapshot_gates_execution(self, context: MarketContext, timeframe) -> bool:
+        """Whether a missing/invalid market snapshot must block all live intents.
+
+        For a live per-bot engine, the market context must carry a non-empty
+        bar series for the bot's own configured timeframe: a missing or empty
+        snapshot blocks **all** live ExecutionIntent creation/submission for
+        this cycle. Generic/Backtest engines (``timeframe is None``) are not
+        gated here.
+        """
+        if timeframe is None:
+            return False
+        snapshot = context.snapshot
+        if snapshot is None:
+            return True
+        series = snapshot.get(timeframe)
+        return series is None or not series.bars
 
     def _exit_position_quantity(self) -> Decimal | None:
         """Resolve the authoritative live exit quantity from the PositionManager.

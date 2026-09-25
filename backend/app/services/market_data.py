@@ -16,7 +16,13 @@ from app.brokers.tinvest_errors import (
     InvalidRequestError,
     ResourceNotFoundError,
 )
-from app.domain.marketdata import Candle, LastPrice, Timeframe
+from app.domain.marketdata import (
+    Candle,
+    LastPrice,
+    MarketDataUnavailable,
+    MarketSnapshot,
+    Timeframe,
+)
 
 # Maximum range (seconds) fetched per broker request for a given timeframe.
 # Based on the external provider's per-interval maximum so that a single request
@@ -35,6 +41,19 @@ _TIMEFRAME_CHUNK_SECONDS = {
 
 # Candidate interval (fallback used to validate supported timeframes).
 _SUPPORTED = set(Timeframe)
+
+# Seconds per timeframe, used to size the snapshot retrieval window.
+_TIMEFRAME_SECONDS = {
+    Timeframe.MIN_1: 60,
+    Timeframe.MIN_5: 300,
+    Timeframe.MIN_15: 900,
+    Timeframe.MIN_30: 1800,
+    Timeframe.HOUR_1: 3600,
+    Timeframe.HOUR_4: 14400,
+    Timeframe.DAY_1: 86400,
+    Timeframe.WEEK_1: 7 * 86400,
+    Timeframe.MONTH_1: 30 * 86400,
+}
 
 
 class MarketDataService:
@@ -76,6 +95,40 @@ class MarketDataService:
             raise InstrumentNotFoundError(f"Instrument not found: {figi}") from exc
 
         return self._sort_and_dedupe(merged)
+
+    async def get_snapshot(
+        self, figi: str, timeframe: Timeframe, lookback_bars: int
+    ) -> MarketSnapshot:
+        """Return a broker-neutral live market snapshot (last price + candles).
+
+        Assembled exclusively from real broker data: the last trade price and
+        the most recent ``lookback_bars`` candles for the instrument and
+        timeframe. No synthetic value is substituted: a missing or
+        non-positive last price, or an empty candle history, raises
+        |MarketDataUnavailable| instead.
+        """
+        if timeframe not in _SUPPORTED:
+            raise InvalidRequestError(f"Unsupported timeframe: {timeframe}")
+        if lookback_bars is None or lookback_bars < 1:
+            raise InvalidRequestError("lookback_bars must be a positive integer")
+        last = await self.get_last_price(figi)
+        if last is None or last.price is None or last.price <= 0:
+            raise MarketDataUnavailable(f"no usable last price for {figi}")
+        now = datetime.now(UTC)
+        # One extra bar of width so the currently forming candle is included.
+        window = timedelta(seconds=_TIMEFRAME_SECONDS[timeframe] * (lookback_bars + 1))
+        candles = await self.get_candles(figi, timeframe, now - window, now)
+        if not candles:
+            raise MarketDataUnavailable(
+                f"no candle history for {figi} @ {timeframe.value}"
+            )
+        return MarketSnapshot(
+            figi=figi,
+            timeframe=timeframe,
+            timestamp=last.timestamp or candles[-1].timestamp,
+            last_price=last.price,
+            candles=tuple(candles),
+        )
 
     @staticmethod
     def _split_range(

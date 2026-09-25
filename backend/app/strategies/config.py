@@ -14,7 +14,13 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.strategies.filters import CalculationMethod, FilterGroup
+from app.domain.marketdata import Timeframe
+from app.strategies.filters import (
+    CalculationMethod,
+    CandleSpec,
+    ConstantValue,
+    FilterGroup,
+)
 
 
 class Direction(StrEnum):
@@ -201,7 +207,77 @@ class StrategyConfig(BaseModel):
     name: str = ""
     direction: Direction = Direction.LONG
     instrument_id: int | None = None
+    # The bot's own market-data timeframe for the live strategy path
+    # (MVP-6.10). No implicit production default: ``None`` (missing) blocks the
+    # live processing cycle explicitly (TimeframeNotConfigured); an invalid
+    # value fails strategy configuration validation (StrategyLoadError).
+    # Backtest timeframes live on BacktestConfig, not here.
+    timeframe: Timeframe | None = None
     entry: EntryConfig = Field(default_factory=EntryConfig)
     dca_grid: DCAGridConfig = Field(default_factory=DCAGridConfig)
     exit: ExitConfig
     risk: RiskConfig = Field(default_factory=RiskConfig)
+
+
+# Conservative warmup (bars) per indicator name, matching the warmup of the
+# indicator implementations in app.strategies.indicators (used only to derive
+# the minimum real candle history a strategy's filters need; MACD uses
+# slow+signal, ADX needs ~2*period).
+_INDICATOR_WARMUP_BARS: dict[str, int] = {
+    "SMA": 20,
+    "EMA": 9,
+    "RSI": 14,
+    "BOLLINGER": 20,
+    "ATR": 14,
+    "CCI": 20,
+    "WILLIAMS_R": 14,
+    "WILLIAMS%R": 14,
+    "CMO": 14,
+    "MFI": 14,
+    "STOCHASTIC": 14,
+    "ADX": 28,
+}
+
+
+def _argument_required_bars(arg) -> int:
+    """Minimum bars a single filter argument needs to be evaluable."""
+    if isinstance(arg, ConstantValue):
+        return 0
+    if isinstance(arg, CandleSpec):
+        return arg.shift + 1
+    # IndicatorSpec
+    name = arg.name.upper()
+    if name == "MACD":
+        base = int(arg.params.get("slow", 26)) + int(arg.params.get("signal", 9))
+    elif arg.period is not None:
+        base = arg.period
+    else:
+        base = _INDICATOR_WARMUP_BARS.get(name, 20)
+    # +1: cross operators also read the previous value.
+    return base + arg.shift + 1
+
+
+def _groups_required_bars(groups: list[FilterGroup]) -> int:
+    required = 1
+    for group in groups:
+        for condition in group.conditions:
+            required = max(
+                required,
+                _argument_required_bars(condition.arg1),
+                _argument_required_bars(condition.arg2),
+            )
+    return required
+
+
+def required_bars(config: StrategyConfig) -> int:
+    """Minimum candle history (bars) the live path must fetch for this strategy.
+
+    Derived from the strategy's own entry/signal filter contracts (indicator
+    warmup + shifts), so the MarketDataService fetches the minimum real data
+    the strategy can evaluate — no invented default lookback. Always >= 2
+    (current bar + one previous for cross detection).
+    """
+    required = _groups_required_bars(config.entry.groups)
+    if config.dca_grid.mode is TradingMode.SIGNAL:
+        required = max(required, _groups_required_bars(config.dca_grid.signal_groups))
+    return max(required, 2)

@@ -21,7 +21,13 @@ from app.trading.domain import (
 )
 from app.trading.engine import TradingEngine, compose_strategy_engine
 from app.trading.live_execution import LiveExecutionBlocked, LiveExecutionService
-from app.trading.market_context import MarketContextUnavailable, build_market_context
+from app.trading.market_context import (
+    MarketContextUnavailable,
+    TimeframeNotConfigured,
+    build_market_context,
+    build_market_snapshot_context,
+    market_snapshot_to_context,
+)
 from app.trading.order_manager import OrderManager, OrderStateError
 from app.trading.plan_intent import plan_to_intents
 from app.trading.position_manager import (
@@ -77,10 +83,13 @@ __all__ = [
     "RiskRejected",
     "RiskLimits",
     "SizingNotConfigured",
+    "TimeframeNotConfigured",
     "TradeFill",
     "TradingEngine",
     "build_market_context",
+    "build_market_snapshot_context",
     "can_transition",
     "compose_strategy_engine",
+    "market_snapshot_to_context",
     "plan_to_intents",
 ]

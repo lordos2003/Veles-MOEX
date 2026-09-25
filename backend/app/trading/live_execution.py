@@ -14,7 +14,11 @@ from decimal import Decimal
 from app.trading.bot_lifecycle import BotRuntimeManager, BotStateError
 from app.trading.domain import ExecutionIntent, InternalOrder
 from app.trading.engine import TradingEngine
-from app.trading.market_context import MarketContextUnavailable, build_market_context
+from app.trading.market_context import (
+    MarketContextUnavailable,
+    build_market_context,
+    build_market_snapshot_context,
+)
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
 from app.trading.recovery import LiveRecoveryCoordinator, RecoveryResult
@@ -61,11 +65,13 @@ class LiveExecutionService:
         self._bot_runtime_manager = bot_runtime_manager
 
     async def build_context(self, instrument_figi: str):
-        """Construct a live MarketContext from broker-neutral market data.
+        """Construct a last-price-only live MarketContext from broker data.
 
         Uses the wired ``MarketDataService``-like provider (if any); raises
         |MarketContextUnavailable| when no usable live price is available. The
-        candle/snapshot source is not wired in MVP-6.8 (documented boundary).
+        per-bot strategy-cycle path (snapshot + per-bot timeframe) goes
+        through the bot runtime's market-context provider (MVP-6.10, see
+        ``build_live_service``).
         """
         if self._market_data is None:
             raise MarketContextUnavailable(
@@ -229,9 +235,10 @@ async def build_live_service() -> LiveExecutionService:
     StrategyVersion (validated into a ``StrategyConfig``) on START and gets its
     own ``TradingEngine`` (shared broker-neutral ``StrategyEngine`` instances,
     per-bot ``StrategyConfig``). Strategy evaluation is triggered by
-    ``BotRuntime.execute_strategy(MarketContext)``; the ``MarketContext`` is an
-    explicit broker-neutral input and **no production market-data source is
-    wired yet** (documented boundary; no fabricated market data). Plan items
+    ``BotRuntime.execute_strategy(MarketContext)``; the ``MarketContext`` is
+    an explicit broker-neutral input — built by the bot runtime's
+    market-context provider from real broker-neutral market data (MVP-6.10) or
+    supplied explicitly — and no market data is ever fabricated. Plan items
     are converted to ``ExecutionIntent``s by ``plan_to_intents`` at the
     orchestration boundary (DCA/Grid orders only; entry signals and exit plans
     are explicit boundaries — see ``app.trading.plan_intent``). Every intent is
@@ -257,8 +264,7 @@ async def build_live_service() -> LiveExecutionService:
     Market-context / sizing boundary (MVP-6.8): a broker-neutral
     ``MarketDataService`` is wired into the service and a live MarketContext is
     built via ``build_market_context()`` from the real last price (no fabricated
-    prices/candles/timestamps); the candle/snapshot source and per-bot timeframe
-    are not wired (documented dependency). No authoritative position-sizing
+    prices/candles/timestamps). No authoritative position-sizing
     source exists yet, so the per-bot ``TradingEngine`` is created without a
     sizing source and ``process()`` blocks live strategy execution with
     ``SizingNotConfigured`` until a sizing source is configured.
@@ -271,6 +277,20 @@ async def build_live_service() -> LiveExecutionService:
     authoritative positions are reconciled from the broker-neutral adapter
     (``get_open_positions``) during recovery; the broker is never queried inside
     the strategy/exit/trading layers.
+
+    Market snapshot / per-bot timeframe (MVP-6.10): the bot runtime's
+    market-context provider builds the live MarketContext for a strategy cycle
+    from the bot's own configured timeframe
+    (``StrategyConfig.timeframe``) and the minimum real candle history
+    (``required_bars``) via ``MarketDataService.get_snapshot`` ->
+    ``build_market_snapshot_context``. The Strategy path stays broker-neutral:
+    T-Invest-specific mapping remains inside ``TInvestAdapter``; prices stay
+    ``Decimal`` and timestamps timezone-aware UTC. No global runtime timeframe
+    or implicit default exists: a missing timeframe fails the cycle with
+    ``TimeframeNotConfigured`` and a missing/invalid snapshot blocks live
+    intent creation (``MarketDataUnavailable``). The MVP-6.9 position-state
+    invariant is preserved (unresolved position state still blocks all live
+    intents); Backtest semantics are untouched.
     """
     from app.bots.repository import BotRepository
     from app.bots.strategy import (
@@ -313,6 +333,26 @@ async def build_live_service() -> LiveExecutionService:
     def _make_runtime(bot_id: int, state: BotState = BotState.STOPPED) -> BotRuntime:
         async def _load_strategy() -> BotStrategy:
             return await load_bot_strategy_by_id(session, bot_id)
+
+        async def _make_market_context(bot_strategy: BotStrategy) -> MarketContext:
+            # MVP-6.10: the live MarketContext for this bot's strategy cycle is
+            # built from the bot's own configured timeframe and the minimum
+            # real candle history (required_bars) via the broker-neutral
+            # MarketDataService. A missing timeframe or a missing/invalid
+            # snapshot fails the cycle explicitly (no fabricated market data,
+            # no implicit default timeframe).
+            bot = await bot_repository.get(bot_id)
+            if bot is None:
+                raise StrategyLoadError(f"bot {bot_id} not found")
+            instrument = await session.get(Instrument, bot.instrument_id)
+            if instrument is None:
+                raise StrategyLoadError(
+                    f"bot {bot_id} references missing instrument "
+                    f"{bot.instrument_id}"
+                )
+            return await build_market_snapshot_context(
+                market_data, instrument.figi, bot_strategy.config
+            )
 
         async def _make_bot_engine(bot_strategy: BotStrategy) -> TradingEngine:
             bot = await bot_repository.get(bot_id)
@@ -366,6 +406,7 @@ async def build_live_service() -> LiveExecutionService:
             state=state,
             strategy_loader=_load_strategy,
             trading_engine_factory=_make_bot_engine,
+            market_context_provider=_make_market_context,
         )
 
     bot_runtime_manager = BotRuntimeManager(risk_manager, runtime_factory=_make_runtime)
