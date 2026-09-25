@@ -281,16 +281,20 @@ async def build_live_service() -> LiveExecutionService:
     Market snapshot / per-bot timeframe (MVP-6.10): the bot runtime's
     market-context provider builds the live MarketContext for a strategy cycle
     from the bot's own configured timeframe
-    (``StrategyConfig.timeframe``) and the minimum real candle history
-    (``required_bars``) via ``MarketDataService.get_snapshot`` ->
+    (``StrategyConfig.timeframe``) and the explicitly configured snapshot
+    lookback (``StrategyConfig.lookback_bars``) via
+    ``MarketDataService.get_snapshot`` ->
     ``build_market_snapshot_context``. The Strategy path stays broker-neutral:
     T-Invest-specific mapping remains inside ``TInvestAdapter``; prices stay
     ``Decimal`` and timestamps timezone-aware UTC. No global runtime timeframe
     or implicit default exists: a missing timeframe fails the cycle with
-    ``TimeframeNotConfigured`` and a missing/invalid snapshot blocks live
-    intent creation (``MarketDataUnavailable``). The MVP-6.9 position-state
-    invariant is preserved (unresolved position state still blocks all live
-    intents); Backtest semantics are untouched.
+    ``TimeframeNotConfigured``, a missing explicit lookback fails the cycle
+    with ``LookbackNotConfigured`` (no lookback is inferred from indicator
+    periods/shifts — the Veles documentation defines no universal
+    warmup/history rule), and a missing/invalid snapshot blocks live intent
+    creation (``MarketDataUnavailable``). The MVP-6.9 position-state invariant
+    is preserved (unresolved position state still blocks all live intents);
+    Backtest semantics are untouched.
     """
     from app.bots.repository import BotRepository
     from app.bots.strategy import (
@@ -336,11 +340,12 @@ async def build_live_service() -> LiveExecutionService:
 
         async def _make_market_context(bot_strategy: BotStrategy) -> MarketContext:
             # MVP-6.10: the live MarketContext for this bot's strategy cycle is
-            # built from the bot's own configured timeframe and the minimum
-            # real candle history (required_bars) via the broker-neutral
-            # MarketDataService. A missing timeframe or a missing/invalid
-            # snapshot fails the cycle explicitly (no fabricated market data,
-            # no implicit default timeframe).
+            # built from the bot's own configured timeframe and the explicitly
+            # configured snapshot lookback (lookback_bars) via the broker-
+            # neutral MarketDataService. A missing timeframe, a missing
+            # explicit lookback, or a missing/invalid snapshot fails the cycle
+            # explicitly (no fabricated market data, no implicit defaults, no
+            # lookback inferred from indicator semantics).
             bot = await bot_repository.get(bot_id)
             if bot is None:
                 raise StrategyLoadError(f"bot {bot_id} not found")

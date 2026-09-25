@@ -990,25 +990,32 @@ position sizing remains governed by the MVP-6.9 PositionManager boundary.
     (`TimeframeNotConfigured`);
   - an invalid timeframe fails strategy configuration validation at load
     time (`StrategyLoadError`).
-- `required_bars(StrategyConfig)` derives the minimum real candle history
-  ONLY from the strategy's own entry/signal filter contracts: explicit
-  indicator `period` values and explicit `shift` values (+1 for the previous
-  bar used by cross operators; always >= 2). The official Veles documentation
-  defines flexible indicators through explicit user parameters
-  (period/length, timeframe, method, shift) and does not define a universal
-  warmup/history requirement, so **no indicator warmup is inferred** (no
-  warmup table, no default-period substitution). An argument without an
-  explicit period contributes only its shift; if the fetched history is
-  insufficient for the indicator, the strategy engine's existing
-  insufficient-data semantics apply (undefined indicator value -> condition
-  False -> no signal). An exact per-indicator warmup specification is a
-  documented boundary pending the Veles specification.
+- `StrategyConfig.lookback_bars: int | None = None` (>= 1) is the **explicitly
+  configured** number of candle bars the live market snapshot fetches for the
+  bot's timeframe. This is a **project-level contract parameter, not a Veles
+  indicator/warmup semantic**: the official Veles documentation defines
+  flexible indicators through explicit user parameters (period/length,
+  timeframe, method, shift) and does **not** define a universal
+  warmup/history/lookback rule, so **no lookback is derived from indicator
+  periods/shifts, cross operators, or any other Veles semantic** (no formula,
+  no `+1`, no period-as-history). **No implicit default exists:**
+  - a missing lookback fails the live cycle explicitly
+    (`LookbackNotConfigured`);
+  - a non-positive value fails strategy configuration validation at load time
+    (`StrategyLoadError`).
+- Documented limitation: an indicator whose internal warmup needs more bars
+  than the explicitly configured `lookback_bars` may evaluate as undefined ->
+  condition False -> no signal (the strategy engine's existing
+  insufficient-data semantics, unchanged). Establishing an exact per-indicator
+  warmup specification is a boundary pending the Veles specification; this
+  project does not invent one.
 
 ### Live runtime integration
 
 ```
-Bot/StrategyVersion -> timeframe -> MarketDataService.get_snapshot
-  -> MarketSnapshot -> build_market_snapshot_context -> MarketContext
+Bot/StrategyVersion -> (timeframe, lookback_bars)
+  -> MarketDataService.get_snapshot -> MarketSnapshot
+  -> build_market_snapshot_context -> MarketContext
   -> BotRuntime.execute_strategy -> StrategyEngine -> DCA/Grid/Exit
   -> TradingEngine -> RiskManager -> OrderManager
 ```
@@ -1016,7 +1023,9 @@ Bot/StrategyVersion -> timeframe -> MarketDataService.get_snapshot
 - `BotRuntime` gains a `market_context_provider`
   (`(BotStrategy) -> Awaitable[MarketContext]`); `execute_strategy()` uses it
   when called without an explicit context. A missing/invalid snapshot fails
-  the cycle explicitly (no fabricated market data).
+  the cycle explicitly (no fabricated market data). A missing per-bot
+  timeframe (`TimeframeNotConfigured`) or a missing explicit lookback
+  (`LookbackNotConfigured`) also fails the cycle explicitly.
 - `TradingEngine.process()` enforces the live invariants for a per-bot engine
   (`instrument_figi` set):
   - a missing per-bot timeframe raises `TimeframeNotConfigured` (the cycle
@@ -1040,12 +1049,15 @@ path (MarketDataService snapshot) is separable from backtest data.
 `tests/test_mvp610_market_snapshot.py` covers: a valid MarketSnapshot from
 broker data, value preservation into the MarketContext, per-bot timeframe
 propagation from the strategy configuration and from the bot runtime, the
-correct snapshot retrieval request (FIGI/timeframe/window, lookback from the
-strategy contract), explicit failure on a missing timeframe (boundary and
-live cycle), invalid timeframe rejection (config validation and strategy
-load), missing/invalid market snapshots (non-positive price, empty history,
-unknown instrument, runtime cycle block, snapshot without the bot-timeframe
-series, empty series, missing snapshot), no inferred indicator warmup
-(required history from explicit period/shift only), and the preserved
+correct snapshot retrieval request (FIGI/timeframe/window, explicit
+`lookback_bars`), that the lookback is **not** inferred from indicator
+period/shift (a config with period/shift but no explicit lookback fails with
+`LookbackNotConfigured`), non-positive lookback rejection (config validation),
+explicit failure on a missing timeframe (boundary and live cycle) and on a
+missing explicit lookback (boundary and live cycle), invalid timeframe
+rejection (config validation and strategy load), missing/invalid market
+snapshots (non-positive price, empty history, unknown instrument, runtime
+cycle block, snapshot without the bot-timeframe series, empty series, missing
+snapshot), and the preserved
 MVP-6.9 position-state invariant (no order without a position; real
 quantity with a valid snapshot + position).

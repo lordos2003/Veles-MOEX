@@ -49,7 +49,6 @@ from app.strategies.config import (
     ExitConfig,
     FixedPercentageTP,
     StrategyConfig,
-    required_bars,
 )
 from app.strategies.dca_grid import DCAGridEngine
 from app.strategies.domain import MarketContext
@@ -65,6 +64,7 @@ from app.strategies.filters import (
 )
 from app.trading import (
     BotRuntime,
+    LookbackNotConfigured,
     OrderManager,
     PositionSizing,
     RiskManager,
@@ -120,7 +120,7 @@ def _strategy(timeframe: Timeframe | None = TF, **overrides) -> StrategyConfig:
     return StrategyConfig(**cfg)
 
 
-def _strategy_with_sma(period: int = 20) -> StrategyConfig:
+def _strategy_with_sma(period: int = 20, lookback_bars: int | None = None) -> StrategyConfig:
     groups = [
         FilterGroup(
             conditions=[
@@ -134,7 +134,10 @@ def _strategy_with_sma(period: int = 20) -> StrategyConfig:
             ]
         )
     ]
-    return _strategy(entry=EntryConfig(groups=groups))
+    overrides = dict(entry=EntryConfig(groups=groups))
+    if lookback_bars is not None:
+        overrides["lookback_bars"] = lookback_bars
+    return _strategy(**overrides)
 
 
 def _context(timeframe: Timeframe = TF, *, bars: int = 1, price: float = 100.0) -> MarketContext:
@@ -270,7 +273,9 @@ async def test_timeframe_propagates_from_strategy_config() -> None:
         candles=_candles(5),
     )
     ctx = await build_market_snapshot_context(
-        MarketDataService(broker), FIGI, _strategy(timeframe=Timeframe.MIN_15)
+        MarketDataService(broker),
+        FIGI,
+        _strategy(timeframe=Timeframe.MIN_15, lookback_bars=5),
     )
     assert broker.candle_calls[0][1] is Timeframe.MIN_15
     series = ctx.snapshot.get(Timeframe.MIN_15)
@@ -342,36 +347,20 @@ async def test_correct_snapshot_retrieval_request() -> None:
     assert to - from_ == timedelta(seconds=300 * 11)
 
 
-async def test_snapshot_request_uses_required_bars_from_config() -> None:
+async def test_snapshot_request_uses_explicit_lookback_from_config() -> None:
     provider = FakeSnapshotProvider(snapshot=_snapshot())
-    config = _strategy_with_sma(20)
+    config = _strategy(lookback_bars=7)
     await build_market_snapshot_context(provider, FIGI, config)
-    # The lookback derives from the strategy's own filter contract, not a
-    # global default.
-    assert provider.requests == [(FIGI, TF, required_bars(config))]
-    # The explicit SMA period (20) + 1 for the previous bar (cross operators).
-    assert required_bars(config) == 21
+    # The lookback is the strategy's own explicitly configured parameter,
+    # never derived from indicator periods/shifts.
+    assert provider.requests == [(FIGI, TF, 7)]
 
 
-def test_required_bars_does_not_infer_indicator_warmup() -> None:
-    # An indicator argument without an explicit period parameter must NOT add
-    # an inferred warmup/history requirement (Veles documentation defines no
-    # universal warmup contract): only the explicit shift contributes.
-    groups = [
-        FilterGroup(
-            conditions=[
-                FilterCondition(
-                    arg1=IndicatorSpec(kind="indicator", name="RSI", timeframe=TF),
-                    operator=Operator.GREATER_THAN,
-                    arg2=ConstantValue(kind="constant", value=0.0),
-                )
-            ]
-        )
-    ]
-    assert required_bars(_strategy(entry=EntryConfig(groups=groups))) == 2
-
-
-def test_required_bars_uses_explicit_period_and_shift_only() -> None:
+async def test_lookback_is_not_inferred_from_indicator_period_or_shift() -> None:
+    # The lookback must not be derivable from the strategy's filter contract:
+    # a config with indicator period/shift but no explicit lookback is missing
+    # a lookback, and the boundary must fail explicitly instead of computing
+    # one (no warmup, no period-as-history, no cross-operator +1).
     groups = [
         FilterGroup(
             conditions=[
@@ -385,8 +374,20 @@ def test_required_bars_uses_explicit_period_and_shift_only() -> None:
             ]
         )
     ]
-    # Explicit period 9 + explicit shift 3 + 1 for the previous bar.
-    assert required_bars(_strategy(entry=EntryConfig(groups=groups))) == 13
+    config = _strategy(entry=EntryConfig(groups=groups))
+    assert config.lookback_bars is None
+    with pytest.raises(LookbackNotConfigured):
+        await build_market_snapshot_context(
+            FakeSnapshotProvider(snapshot=_snapshot()), FIGI, config
+        )
+
+
+def test_non_positive_lookback_rejected_by_strategy_config() -> None:
+    with pytest.raises(ValidationError):
+        StrategyConfig(
+            lookback_bars=0,
+            exit=ExitConfig(take_profit=FixedPercentageTP(percent=10.0)),
+        )
 
 
 # --- 4: missing timeframe -------------------------------------------------------
@@ -415,6 +416,63 @@ async def test_missing_timeframe_fails_live_cycle_explicitly() -> None:
         await engine.process(_context())
     assert broker.place_calls == 0
     assert om.list_orders() == []
+
+
+# --- 4b: missing explicit lookback ----------------------------------------------
+
+
+async def test_missing_lookback_fails_snapshot_context_explicitly() -> None:
+    broker = RecordingBroker()
+    with pytest.raises(LookbackNotConfigured):
+        await build_market_snapshot_context(
+            MarketDataService(broker), FIGI, _strategy()
+        )
+    # No broker request is issued: the cycle fails before any data fetch.
+    assert broker.last_price_calls == []
+    assert broker.candle_calls == []
+
+
+async def test_missing_lookback_fails_live_cycle_explicitly() -> None:
+    broker = RecordingBroker()
+    om = OrderManager(broker)
+    bot_strategy = BotStrategy(
+        strategy_version_id=1, version=1, config=_strategy()
+    )
+
+    async def _provider(bs: BotStrategy) -> MarketContext:
+        raise LookbackNotConfigured("no explicit snapshot lookback configured")
+
+    async def _load() -> BotStrategy:
+        return bot_strategy
+
+    async def _make_engine(s: BotStrategy) -> TradingEngine:
+        engine = TradingEngine(
+            broker,
+            StrategyEngine(EntryEngine(), DCAGridEngine(), ExitEngine()),
+            om,
+            om.positions(),
+            RiskManager(position_manager=om.positions()),
+            strategy_config=s.config,
+            intent_factory=lambda plan, ctx: plan_to_intents(
+                plan, instrument_figi=FIGI, bot_id=1, account_id="acc-1"
+            ),
+            sizing=PositionSizing(base_nominal=Decimal("5000")),
+        )
+        await engine.start()
+        return engine
+
+    rt = BotRuntime(
+        1,
+        RiskManager(),
+        state=BotState.STOPPED,
+        strategy_loader=_load,
+        trading_engine_factory=_make_engine,
+        market_context_provider=_provider,
+    )
+    await rt.start()
+    with pytest.raises(LookbackNotConfigured):
+        await rt.execute_strategy()
+    assert broker.place_calls == 0
 
 
 # --- 5: invalid timeframe -------------------------------------------------------
@@ -580,7 +638,7 @@ async def test_snapshot_bars_drive_entry_filter_evaluation() -> None:
         last_price=LastPrice(figi=FIGI, price=Decimal("104.5"), timestamp=T0),
         candles=_candles(25),
     )
-    config = _strategy_with_sma(20)
+    config = _strategy_with_sma(20, lookback_bars=25)
     ctx = await build_market_snapshot_context(MarketDataService(broker), FIGI, config)
     se = StrategyEngine(EntryEngine(), DCAGridEngine(), ExitEngine())
     plan = se.evaluate(config, ctx, base_nominal=Decimal("5000"))

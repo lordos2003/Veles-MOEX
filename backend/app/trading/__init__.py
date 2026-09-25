@@ -22,6 +22,7 @@ from app.trading.domain import (
 from app.trading.engine import TradingEngine, compose_strategy_engine
 from app.trading.live_execution import LiveExecutionBlocked, LiveExecutionService
 from app.trading.market_context import (
+    LookbackNotConfigured,
     MarketContextUnavailable,
     TimeframeNotConfigured,
     build_market_context,
@@ -67,6 +68,7 @@ __all__ = [
     "LiveRecoveryCoordinator",
     "LiveStateSnapshot",
     "LiveStateStore",
+    "LookbackNotConfigured",
     "MarketContextUnavailable",
     "OrderManager",
     "OrderState",

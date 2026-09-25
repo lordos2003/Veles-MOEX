@@ -15,12 +15,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.domain.marketdata import Timeframe
-from app.strategies.filters import (
-    CalculationMethod,
-    CandleSpec,
-    ConstantValue,
-    FilterGroup,
-)
+from app.strategies.filters import CalculationMethod, FilterGroup
 
 
 class Direction(StrEnum):
@@ -213,61 +208,16 @@ class StrategyConfig(BaseModel):
     # value fails strategy configuration validation (StrategyLoadError).
     # Backtest timeframes live on BacktestConfig, not here.
     timeframe: Timeframe | None = None
+    # The explicitly configured number of candle bars the live market
+    # snapshot must fetch for this bot's timeframe (MVP-6.10). This is a
+    # project-level contract parameter, NOT a Veles indicator/warmup
+    # semantic: the official Veles documentation does not define a
+    # universal required-history/lookback rule, so no lookback is derived
+    # from indicator periods/shifts. ``None`` (missing) blocks the live
+    # processing cycle explicitly (LookbackNotConfigured); a non-positive
+    # value fails strategy configuration validation (StrategyLoadError).
+    lookback_bars: int | None = Field(default=None, ge=1)
     entry: EntryConfig = Field(default_factory=EntryConfig)
     dca_grid: DCAGridConfig = Field(default_factory=DCAGridConfig)
     exit: ExitConfig
     risk: RiskConfig = Field(default_factory=RiskConfig)
-
-
-def _argument_required_bars(arg) -> int:
-    """Minimum bars derived ONLY from the argument's explicit contract values.
-
-    The official Veles documentation defines flexible indicators through
-    explicit user parameters (period/length, timeframe, method, shift) and
-    does not define a universal warmup/history requirement. This project
-    therefore does NOT infer indicator warmup: only explicitly configured
-    values contribute to the required history — the explicit indicator
-    ``period`` and the explicit ``shift``. An argument without an explicit
-    period contributes only its shift (+1); if the fetched history is
-    insufficient for the indicator, the strategy engine's existing
-    insufficient-data semantics apply (an undefined indicator value evaluates
-    the condition as False — no signal). Establishing an exact per-indicator
-    warmup specification is a documented boundary pending the Veles
-    specification, not an implementation assumption.
-    """
-    if isinstance(arg, ConstantValue):
-        return 0
-    if isinstance(arg, CandleSpec):
-        return arg.shift + 1
-    # IndicatorSpec: the explicit period parameter only (no inferred warmup,
-    # no default period substitution, no indicator-specific assumptions).
-    base = arg.period if arg.period is not None else 0
-    # +1: cross operators also read the previous value.
-    return base + arg.shift + 1
-
-
-def _groups_required_bars(groups: list[FilterGroup]) -> int:
-    required = 1
-    for group in groups:
-        for condition in group.conditions:
-            required = max(
-                required,
-                _argument_required_bars(condition.arg1),
-                _argument_required_bars(condition.arg2),
-            )
-    return required
-
-
-def required_bars(config: StrategyConfig) -> int:
-    """Minimum candle history (bars) the live path must fetch for this strategy.
-
-    Derived ONLY from the strategy's own entry/signal filter contracts —
-    explicit indicator periods and explicit shifts (no inferred indicator
-    warmup; see ``_argument_required_bars``) — so the MarketDataService
-    fetches the market data required by the explicitly defined strategy
-    contract. Always >= 2 (current bar + one previous for cross detection).
-    """
-    required = _groups_required_bars(config.entry.groups)
-    if config.dca_grid.mode is TradingMode.SIGNAL:
-        required = max(required, _groups_required_bars(config.dca_grid.signal_groups))
-    return max(required, 2)

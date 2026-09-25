@@ -14,13 +14,21 @@ production default exists. A missing timeframe raises
 |TimeframeNotConfigured| and blocks the live processing cycle explicitly; an
 invalid timeframe fails strategy configuration validation at load time
 (StrategyLoadError).
+
+The snapshot candle-history length is a separate, explicitly configured
+project-level parameter (``StrategyConfig.lookback_bars``). The official
+Veles documentation does not define a universal warmup/history/lookback rule,
+so no lookback is derived from indicator periods/shifts or any other Veles
+semantic. A missing lookback raises |LookbackNotConfigured| and blocks the
+live processing cycle explicitly; a non-positive value fails strategy
+configuration validation at load time (StrategyLoadError).
 """
 
 from __future__ import annotations
 
 from app.domain.marketdata import MarketSnapshot
 from app.strategies.bars import Bar, BarSeries, Snapshot
-from app.strategies.config import StrategyConfig, required_bars
+from app.strategies.config import StrategyConfig
 from app.strategies.domain import MarketContext
 
 
@@ -33,6 +41,16 @@ class TimeframeNotConfigured(RuntimeError):
 
     The live path never falls back to a global or implicit default timeframe:
     the cycle is blocked explicitly.
+    """
+
+
+class LookbackNotConfigured(RuntimeError):
+    """Raised when a live strategy cycle has no explicitly configured lookback.
+
+    The snapshot candle-history length is an explicit project-level contract
+    parameter (``StrategyConfig.lookback_bars``); no lookback is inferred from
+    indicator periods/shifts or any other Veles semantic. The live path never
+    substitutes a default: the cycle is blocked explicitly.
     """
 
 
@@ -90,14 +108,15 @@ async def build_market_snapshot_context(
 ) -> MarketContext:
     """Build the live MarketContext for one bot's strategy cycle (MVP-6.10).
 
-    The timeframe and the required candle history originate from the bot's own
-    strategy configuration (per-bot timeframe; no global/implicit default; the
-    minimum real history per ``required_bars``). ``market_data`` is any
-    broker-neutral provider exposing ``get_snapshot(figi, timeframe,
-    lookback_bars)`` (e.g. the existing ``MarketDataService``), so this
-    boundary stays broker-neutral.
+    The per-bot timeframe and the explicitly configured snapshot lookback
+    (``StrategyConfig.lookback_bars``) originate from the bot's own strategy
+    configuration; no global/implicit defaults exist and no lookback is
+    derived from indicator semantics. ``market_data`` is any broker-neutral
+    provider exposing ``get_snapshot(figi, timeframe, lookback_bars)`` (e.g.
+    the existing ``MarketDataService``), so this boundary stays broker-neutral.
 
-    Raises |TimeframeNotConfigured| when the per-bot timeframe is missing, and
+    Raises |TimeframeNotConfigured| when the per-bot timeframe is missing,
+    |LookbackNotConfigured| when no explicit lookback is configured, and
     |MarketDataUnavailable| when no usable live market data exists; no
     synthetic market data is ever substituted.
     """
@@ -107,7 +126,14 @@ async def build_market_snapshot_context(
             f"no per-bot timeframe configured for {instrument_figi}; the live "
             "strategy cycle is blocked (no implicit default timeframe)"
         )
+    lookback_bars = strategy_config.lookback_bars
+    if lookback_bars is None:
+        raise LookbackNotConfigured(
+            f"no explicit snapshot lookback configured for {instrument_figi}; "
+            "the live strategy cycle is blocked (no lookback is inferred from "
+            "indicator periods/shifts)"
+        )
     snapshot = await market_data.get_snapshot(
-        instrument_figi, timeframe, required_bars(strategy_config)
+        instrument_figi, timeframe, lookback_bars
     )
     return market_snapshot_to_context(snapshot)
