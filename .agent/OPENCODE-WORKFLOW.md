@@ -65,16 +65,23 @@ Control branch:
 Implementation/review branch:
 `agent/review/mvp-6.9`
 
-Base:
+Base before implementation:
 `master @ b2c4ee27cdd1bcf67bb69c2f22374cb062bebb52`
 
 Control task commit:
 `5349bd4f89862e68740998340fa6a3754c383bdc`
 
+Publication:
+`agent/review/mvp-6.9 @ 5b4c42be4d49d700e8750315c1da81b17bc04a1d`
+→ PR #2
+→ `master @ 2280075e9309f3468d0e7529d5cc9e3d14363cc1`
+
 Current status:
 - task recorded in `agent/control`;
-- implementation must be performed in `agent/review/mvp-6.9`;
-- `master` must not be changed until independent ChatGPT review and explicit acceptance.
+- implementation was performed in `agent/review/mvp-6.9`;
+- independent ChatGPT review completed and MVP-6.9 accepted;
+- MVP-6.9 is published in `master`;
+- no further merge/push is required for MVP-6.9.
 
 ## Important invariant
 
