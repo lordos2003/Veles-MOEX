@@ -73,3 +73,25 @@ MVP-6.10 can return for review after:
 6. `master` remains unchanged.
 
 **No publication to master.**
+
+
+## Round 2 — Acceptance
+
+Date: 2026-09-28  
+Accepted implementation: `c7429fdee1792962a679f1924230d99c62573efc`  
+Control acceptance record: round 2  
+Publication merge commit: `14168ca798c00b8a28ef278bb245391a07bce958`
+
+### Evidence / re-run
+
+The round-1 blocking finding was corrected by replacing inferred indicator-history requirements with an explicit `StrategyConfig.lookback_bars` contract. The market snapshot boundary was then corrected to preserve exactly the latest configured `lookback_bars` candles.
+
+The regression coverage verifies that an over-returning broker result is trimmed to the exact requested lookback while retaining the newest candle. Existing MVP-6.9 position-state blocking coverage remains intact.
+
+### Round-1 block
+
+**CLOSED.**
+
+### Verdict
+
+**ACCEPT**
