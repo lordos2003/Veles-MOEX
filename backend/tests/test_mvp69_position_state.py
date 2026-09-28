@@ -63,8 +63,11 @@ class FakeBroker:
 
 
 def _strategy() -> StrategyConfig:
+    # MVP-6.10: live per-bot engines require the bot's own configured
+    # timeframe in the strategy config (no implicit default).
     return StrategyConfig(
         direction=Direction.LONG,
+        timeframe=Timeframe.MIN_5,
         entry=EntryConfig(),
         exit=ExitConfig(take_profit=FixedPercentageTP(percent=10.0)),
         dca_grid=DCAGridConfig(levels=1),

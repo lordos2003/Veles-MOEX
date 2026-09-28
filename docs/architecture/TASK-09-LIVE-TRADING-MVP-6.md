@@ -954,3 +954,110 @@ absent, no fallback quantity, and unchanged Backtest / DCA behavior.
 
 
 
+## 28. Market snapshot & per-bot timeframe - MVP-6.10
+
+This section records MVP-6.10: the live Strategy path now receives a real
+broker-neutral market snapshot (last price + candle history) built with the
+timeframe configured by the bot's own strategy. The MVP-6.8
+candle/snapshot source and per-bot timeframe boundary is closed. Production
+position sizing remains governed by the MVP-6.9 PositionManager boundary.
+
+### MarketSnapshot contract
+
+- `app/domain/marketdata.py` adds the broker-neutral `MarketSnapshot`
+  (FIGI, timeframe, timezone-aware UTC timestamp, `Decimal` last price,
+  recent `Candle` history) and the domain error `MarketDataUnavailable`.
+  Existing domain types (`Candle`, `LastPrice`, `Timeframe`) are reused; no
+  parallel representation is introduced.
+
+### MarketDataService
+
+- `MarketDataService.get_snapshot(figi, timeframe, lookback_bars)` assembles
+  the snapshot exclusively from real broker data (last trade price + the most
+  recent `lookback_bars` candles for the instrument/timeframe; one extra bar
+  of width covers the currently forming candle). A missing/non-positive last
+  price or an empty candle history raises `MarketDataUnavailable` instead of
+  substituting a synthetic value. The Strategy path never sees T-Invest
+  types; T-Invest-specific mapping stays inside `TInvestAdapter`.
+
+### Per-bot timeframe
+
+- `StrategyConfig.timeframe: Timeframe | None = None` � the bot's own
+  market-data timeframe, part of the immutable StrategyVersion configuration
+  (`Bot/StrategyVersion -> timeframe`). **No global runtime timeframe and no
+  implicit production default exist:**
+  - a missing timeframe fails the live cycle explicitly
+    (`TimeframeNotConfigured`);
+  - an invalid timeframe fails strategy configuration validation at load
+    time (`StrategyLoadError`).
+- `StrategyConfig.lookback_bars: int | None = None` (>= 1) is the **explicitly
+  configured** number of candle bars the live market snapshot fetches for the
+  bot's timeframe. This is a **project-level contract parameter, not a Veles
+  indicator/warmup semantic**: the official Veles documentation defines
+  flexible indicators through explicit user parameters (period/length,
+  timeframe, method, shift) and does **not** define a universal
+  warmup/history/lookback rule, so **no lookback is derived from indicator
+  periods/shifts, cross operators, or any other Veles semantic** (no formula,
+  no `+1`, no period-as-history). **No implicit default exists:**
+  - a missing lookback fails the live cycle explicitly
+    (`LookbackNotConfigured`);
+  - a non-positive value fails strategy configuration validation at load time
+    (`StrategyLoadError`).
+- Documented limitation: an indicator whose internal warmup needs more bars
+  than the explicitly configured `lookback_bars` may evaluate as undefined ->
+  condition False -> no signal (the strategy engine's existing
+  insufficient-data semantics, unchanged). Establishing an exact per-indicator
+  warmup specification is a boundary pending the Veles specification; this
+  project does not invent one.
+
+### Live runtime integration
+
+```
+Bot/StrategyVersion -> (timeframe, lookback_bars)
+  -> MarketDataService.get_snapshot -> MarketSnapshot
+  -> build_market_snapshot_context -> MarketContext
+  -> BotRuntime.execute_strategy -> StrategyEngine -> DCA/Grid/Exit
+  -> TradingEngine -> RiskManager -> OrderManager
+```
+
+- `BotRuntime` gains a `market_context_provider`
+  (`(BotStrategy) -> Awaitable[MarketContext]`); `execute_strategy()` uses it
+  when called without an explicit context. A missing/invalid snapshot fails
+  the cycle explicitly (no fabricated market data). A missing per-bot
+  timeframe (`TimeframeNotConfigured`) or a missing explicit lookback
+  (`LookbackNotConfigured`) also fails the cycle explicitly.
+- `TradingEngine.process()` enforces the live invariants for a per-bot engine
+  (`instrument_figi` set):
+  - a missing per-bot timeframe raises `TimeframeNotConfigured` (the cycle
+    fails explicitly);
+  - a market context without a non-empty bar series for the bot's timeframe
+    blocks **all** live ExecutionIntent creation/submission for the cycle
+    (same blocking semantics as the MVP-6.9 position-state gate).
+- The MVP-6.9 position-state invariant remains mandatory: the
+  PositionManager is still the only authoritative live quantity source and an
+  unresolved position state still blocks all live intents.
+
+### Backtest isolation
+
+BacktestBroker/Backtest semantics, DCA/Grid mathematics and Veles
+Filter/Signal semantics are unchanged; the backtest keeps its own
+`BacktestConfig.timeframe` and broker position state. The live market-data
+path (MarketDataService snapshot) is separable from backtest data.
+
+### Testing
+
+`tests/test_mvp610_market_snapshot.py` covers: a valid MarketSnapshot from
+broker data, value preservation into the MarketContext, per-bot timeframe
+propagation from the strategy configuration and from the bot runtime, the
+correct snapshot retrieval request (FIGI/timeframe/window, explicit
+`lookback_bars`), that the lookback is **not** inferred from indicator
+period/shift (a config with period/shift but no explicit lookback fails with
+`LookbackNotConfigured`), non-positive lookback rejection (config validation),
+explicit failure on a missing timeframe (boundary and live cycle) and on a
+missing explicit lookback (boundary and live cycle), invalid timeframe
+rejection (config validation and strategy load), missing/invalid market
+snapshots (non-positive price, empty history, unknown instrument, runtime
+cycle block, snapshot without the bot-timeframe series, empty series, missing
+snapshot), and the preserved
+MVP-6.9 position-state invariant (no order without a position; real
+quantity with a valid snapshot + position).

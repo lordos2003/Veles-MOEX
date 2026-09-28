@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.domain.marketdata import Timeframe
 from app.strategies.filters import CalculationMethod, FilterGroup
 
 
@@ -201,6 +202,21 @@ class StrategyConfig(BaseModel):
     name: str = ""
     direction: Direction = Direction.LONG
     instrument_id: int | None = None
+    # The bot's own market-data timeframe for the live strategy path
+    # (MVP-6.10). No implicit production default: ``None`` (missing) blocks the
+    # live processing cycle explicitly (TimeframeNotConfigured); an invalid
+    # value fails strategy configuration validation (StrategyLoadError).
+    # Backtest timeframes live on BacktestConfig, not here.
+    timeframe: Timeframe | None = None
+    # The explicitly configured number of candle bars the live market
+    # snapshot must fetch for this bot's timeframe (MVP-6.10). This is a
+    # project-level contract parameter, NOT a Veles indicator/warmup
+    # semantic: the official Veles documentation does not define a
+    # universal required-history/lookback rule, so no lookback is derived
+    # from indicator periods/shifts. ``None`` (missing) blocks the live
+    # processing cycle explicitly (LookbackNotConfigured); a non-positive
+    # value fails strategy configuration validation (StrategyLoadError).
+    lookback_bars: int | None = Field(default=None, ge=1)
     entry: EntryConfig = Field(default_factory=EntryConfig)
     dca_grid: DCAGridConfig = Field(default_factory=DCAGridConfig)
     exit: ExitConfig

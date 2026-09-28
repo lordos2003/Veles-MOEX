@@ -19,7 +19,11 @@ Strategy execution (MVP-6.7) goes through the bot's own TradingEngine:
 ``execute_strategy(MarketContext)`` evaluates the bot's StrategyConfig via the
 Strategy Engine and submits the resulting intents through
 ``RiskManager -> OrderManager``. A MarketContext is always an explicit
-broker-neutral input; no market data is fabricated.
+broker-neutral input; no market data is fabricated. When called without an
+explicit context, the runtime's market-context provider builds a live
+snapshot for the bot's own configured timeframe from real broker-neutral
+market data (MVP-6.10); a missing/invalid snapshot or timeframe fails the
+cycle explicitly.
 
 T-Invest is never imported here; the runtime only depends on broker-neutral
 domain objects.
@@ -107,19 +111,26 @@ class BotRuntime:
         state: BotState = BotState.STOPPED,
         strategy_loader: Any | None = None,
         trading_engine_factory: Any | None = None,
+        market_context_provider: Any | None = None,
     ) -> None:
         self.bot_id = bot_id
         self._risk_manager = risk_manager
         self._submit_cb = submit_cb
         self._order_manager = order_manager
         self._state = state
-        # MVP-6.7 strategy path (both optional; production wires both):
+        # MVP-6.7 strategy path (all optional; production wires all):
         #   strategy_loader: () -> Awaitable[BotStrategy]
         #       loads this bot's immutable, validated strategy version;
         #   trading_engine_factory: (BotStrategy) -> Awaitable[TradingEngine]
-        #       builds this bot's own TradingEngine (per-bot StrategyConfig).
+        #       builds this bot's own TradingEngine (per-bot StrategyConfig);
+        #   market_context_provider: (BotStrategy) -> Awaitable[MarketContext]
+        #       (MVP-6.10) builds the live broker-neutral MarketContext for
+        #       this bot's own timeframe from real market data; a missing or
+        #       invalid snapshot fails the cycle explicitly (no fabricated
+        #       market data).
         self._strategy_loader = strategy_loader
         self._trading_engine_factory = trading_engine_factory
+        self._market_context_provider = market_context_provider
         self._strategy: BotStrategy | None = None
         self._trading_engine: TradingEngine | None = None
 
@@ -224,13 +235,19 @@ class BotRuntime:
             raise RuntimeError("bot runtime has no execution path wired")
         return await self._submit_cb(intent)
 
-    async def execute_strategy(self, context: MarketContext) -> Plan:
+    async def execute_strategy(self, context: MarketContext | None = None) -> Plan:
         """Evaluate this bot's strategy and submit the resulting intents.
 
         The |MarketContext| is an explicit broker-neutral input (no fabricated
-        market data). Evaluation and all intent submissions go through the
-        bot's own TradingEngine, so the Risk Manager is always authoritative
-        before the Order Manager. Only RUNNING bots may execute their strategy.
+        market data). When no explicit context is given, this bot's
+        market-context provider is used (MVP-6.10): a live broker-neutral
+        snapshot for the bot's own configured timeframe, built from real
+        market data. A missing provider/strategy or a missing/invalid snapshot
+        fails the processing cycle explicitly (no fabricated market data, no
+        implicit default). Evaluation and all intent submissions go through
+        the bot's own TradingEngine, so the Risk Manager is always
+        authoritative before the Order Manager. Only RUNNING bots may execute
+        their strategy.
         """
         if not self.can_submit():
             raise BotStateError(
@@ -241,6 +258,18 @@ class BotRuntime:
             raise RuntimeError(
                 f"bot {self.bot_id} has no strategy execution path wired"
             )
+        if context is None:
+            if self._market_context_provider is None:
+                raise RuntimeError(
+                    f"bot {self.bot_id} was called without an explicit market "
+                    "context and has no market-context source wired"
+                )
+            if self._strategy is None:
+                raise RuntimeError(
+                    f"bot {self.bot_id} has no loaded strategy for the "
+                    "market-context source"
+                )
+            context = await self._market_context_provider(self._strategy)
         return await self._trading_engine.process(context)
 
     async def _cancel_active_orders(self) -> None:

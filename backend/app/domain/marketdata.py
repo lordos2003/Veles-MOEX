@@ -45,3 +45,30 @@ class LastPrice:
     price: Decimal
     timestamp: datetime | None = None
     ticker: str | None = None
+
+
+@dataclass(frozen=True)
+class MarketSnapshot:
+    """A broker-neutral live market snapshot for one instrument/timeframe.
+
+    Assembled exclusively from real broker data: the instrument identity
+    (FIGI), the timeframe, the snapshot timestamp (timezone-aware UTC), the
+    last trade price (``Decimal``) and the recent candle history. No value is
+    fabricated; a snapshot without a usable price/history is not produced
+    (see ``MarketDataUnavailable``).
+    """
+
+    figi: str
+    timeframe: Timeframe
+    timestamp: datetime  # timezone-aware UTC
+    last_price: Decimal
+    candles: tuple[Candle, ...] = ()
+
+
+class MarketDataUnavailable(RuntimeError):
+    """Raised when a live market snapshot cannot be assembled from broker data.
+
+    Broker-neutral domain error: a missing or non-positive last price, or an
+    empty candle history, blocks the live processing cycle instead of being
+    replaced by a synthetic value.
+    """
