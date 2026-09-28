@@ -1,6 +1,20 @@
 # Veles-MOEX — Project Control Rules
 
-## 1. Задания кодеру публикуются напрямую
+## 1. Canonical working/audit reference
+
+**`agent/control` is the canonical control branch and the default source of truth for current project tasks, audit instructions, specifications under review, control records, REPORTs, and acceptance status.**
+
+When starting any new task, review, audit, or new chat:
+- start from `agent/control`;
+- inspect the relevant task/specification and `PROJECT_STATE.md`;
+- use the current `agent/control` state as the baseline;
+- inspect `agent/review/mvp-X` or `master` only when the task requires comparison.
+
+**The user must not be asked to tell the coder where to find the current task or audit instructions.**
+
+This rule applies to both implementation tasks and independent audits.
+
+## 2. Задания кодеру публикуются напрямую
 
 **Обязательное правило проекта:** если ChatGPT формирует готовое задание для OpenCode/кодера, пользователь не должен копировать текст вручную.
 
@@ -14,22 +28,39 @@
 
 Для текущего workflow контрольная ветка — `agent/control`.
 
-## 2. Не заставлять пользователя переносить инструкции вручную
+## 3. Не заставлять пользователя переносить инструкции вручную
 
 Текст задания в сообщении ChatGPT может быть показан для пояснения, но это не является основным способом передачи задания кодеру.
 
 Основной источник истины для задания — опубликованный GitHub-артефакт проекта.
 
-## 3. Восстановление в новом чате
+## 4. Восстановление в новом чате
 
-При начале нового чата по Veles-MOEX необходимо учитывать это правило вместе с `.agent/OPENCODE-WORKFLOW.md` и актуальным состоянием `agent/control`.
+При начале нового чата по Veles-MOEX необходимо учитывать:
+- `.agent/OPENCODE-WORKFLOW.md`;
+- этот файл;
+- `PROJECT_STATE.md`;
+- актуальное состояние `agent/control`.
 
 Если создаётся новое задание кодеру, сначала публиковать его в GitHub, затем давать пользователю ссылку.
 
-## 4. Контроль и принятие
+Если начинается аудит или review, сначала читать текущий `agent/control` и искать задание/спеку там.
+
+## 5. Контроль и принятие
 
 Стандартный поток остаётся:
 
 `agent/control -> agent/review/mvp-X -> независимая проверка ChatGPT -> master`
 
 ChatGPT не принимает работу только на основании заявления кодера. Проверяется фактический diff, тесты, архитектура, scope и REPORT.
+
+## 6. Правило для спецификаций и аудитов
+
+Если для MVP существует specification в `docs/architecture/`, аудит должен сверять:
+- acceptance criteria спецификации;
+- фактическую реализацию;
+- тесты;
+- текущий `PROJECT_STATE.md`;
+- устаревшие README/документацию.
+
+Если спецификации нет, это должно быть явно отмечено в audit report; фактический код и git history проверяются по текущему `agent/control` baseline.
