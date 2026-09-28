@@ -73,3 +73,33 @@ MVP-6.10 can return for review after:
 6. `master` remains unchanged.
 
 **No publication to master.**
+
+
+---
+
+## Round 2 (2026-09-28) — independent re-review
+
+Reviewed implementation: `c7429fdee1792962a679f1924230d99c62573efc` (final, `agent/review/mvp-6.10`, in sync with origin).
+
+### Round-1 blocking finding — RESOLVED
+
+- `_INDICATOR_WARMUP_BARS`, `required_bars()`, `_argument_required_bars()`, `_groups_required_bars()` — removed; `git grep` returns 0 matches in `backend/`.
+- No lookback is derived from indicator period / shift / crossing. Snapshot history length is the explicit `StrategyConfig.lookback_bars` (`ge=1`, no default). Missing value raises `LookbackNotConfigured` and blocks the cycle.
+- Per-bot timeframe comes from `StrategyConfig.timeframe` (no global/implicit default); missing raises `TimeframeNotConfigured`.
+
+### Independent evidence (re-run, not taken from REPORT)
+
+- `git diff cdc1029..c7429fd` = exactly 11 files, +1198 / -24 (matches REPORT); no unrelated changes.
+- `strategies/` and `trading/engine.py`: 0 T-Invest imports (broker only wired in the `live_execution.py` composition seam).
+- `TradingEngine.process()`: position gate (MVP-6.9) -> snapshot gate -> risk-gated `submit_intent()` (RiskManager consulted before OrderManager).
+- `pytest`: 373 passed, 1 skipped. `ruff check app tests scripts`: All checks passed.
+
+### Non-blocking observations
+
+1. `services/market_data.py` imports `brokers.tinvest_errors` (broker-specific error types) inside a broker-neutral service — pre-existing, out of MVP-6.10 scope; recommend a neutral error module later.
+2. The review branch is based on `cdc1029` and does not contain `master@2280075` (AGENTS.md docs). Rebase/merge onto current master before publication.
+3. Multi-timeframe filter arguments remain a documented limitation (round-1); confirm the entry engine does not silently evaluate foreign-timeframe filters against the bot timeframe.
+
+### Verdict
+
+**ACCEPT (round 2).** `master` remains unchanged. Publication to master is a separate, explicitly authorized step.

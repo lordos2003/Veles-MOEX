@@ -2,7 +2,7 @@
 
 ## Status
 
-**READY FOR IMPLEMENTATION**
+**ACCEPTED — round 2 (2026-09-28)** — independent re-review passed; ready to publish to master (separate authorized step).
 
 Control branch: `agent/control`  
 Implementation branch: `agent/review/mvp-6.10`  
