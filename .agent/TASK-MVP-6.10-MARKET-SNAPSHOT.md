@@ -2,11 +2,13 @@
 
 ## Status
 
-**READY FOR IMPLEMENTATION**
+**ACCEPTED (round 2, 2026-09-28)**
 
 Control branch: `agent/control`  
 Implementation branch: `agent/review/mvp-6.10`  
-Base: `master @ cdc10296e32509f2d716c85c1b58e62a9b01b2cf`
+Accepted implementation: `c7429fdee1792962a679f1924230d99c62573efc`  
+Published to: `master`  
+Publication merge commit: `14168ca798c00b8a28ef278bb245391a07bce958`
 
 ## Objective
 
@@ -120,17 +122,8 @@ Add focused regression tests covering:
 - Paper Trading;
 - direct MOEX API.
 
-## Acceptance criteria
+## Acceptance record
 
-The MVP is ready for ChatGPT review only when:
+Round 2 independent review accepted the implementation after the lookback-boundary correction. The accepted implementation is `c7429fd`; publication to current `master` was completed as merge commit `14168ca`.
 
-- implementation is on `agent/review/mvp-6.10`;
-- `agent/control` contains an implementation REPORT;
-- actual diff is limited to MVP-6.10 scope;
-- tests cover the new boundaries;
-- full test suite passes;
-- lint/type/build checks used by the repository pass;
-- no fabricated/default market data, timeframe, or quantity exists in the live path;
-- MVP-6.9 position-state invariant remains intact.
-
-OpenCode must not publish to `master`. ChatGPT performs the independent review first.
+OpenCode must not publish directly to `master`. ChatGPT performs the independent review and publication step.
