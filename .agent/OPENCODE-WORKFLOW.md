@@ -83,6 +83,14 @@ Current status:
 - MVP-6.9 is published in `master`;
 - no further merge/push is required for MVP-6.9.
 
+## Mandatory task-publication rule
+
+**When ChatGPT prepares a task for OpenCode/coder, the task must be published directly to GitHub. The user must not be required to copy the task text manually.**
+
+The GitHub task artifact is the source of truth. In the normal workflow, ChatGPT publishes the task to the repository (typically as a GitHub Issue), gives the user the direct link, and the coder works from that published task. This rule must be preserved when restoring the project in a new chat.
+
+Detailed project control rules: `.agent/PROJECT-CONTROL-RULES.md`.
+
 ## Important invariant
 
 The control branch is not the product implementation branch.
