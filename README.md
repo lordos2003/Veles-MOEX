@@ -10,6 +10,13 @@ Backtest / Trading Engine) — следующие этапы, ещё не реа
 > Архитектурные решения и объём MVP зафиксированы в
 > `Veles-MOEX — Architecture & Product Specification v1.0.md`.
 
+> **Рабочий контур и источник истины для текущих заданий, аудитов, review и
+> контрольных записей — ветка [`agent/control`](https://github.com/lordos2003/Veles-MOEX/tree/agent/control).**
+> При продолжении разработки или новом аудите сначала проверяйте актуальное
+> состояние `agent/control`, затем при необходимости сравнивайте его с
+> `agent/review/mvp-X` и `master`. Пользователь не должен вручную
+> передавать кодеру расположение задания.
+
 ## Что это за проект
 
 - Модульный монолит, без микросервисов.
@@ -179,7 +186,7 @@ veles-moex/
 ```powershell
 cd backend
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+.venv\\Scripts\\Activate.ps1
 pip install -e ".[dev]"
 uvicorn app.main:app --reload --port 8000
 ```
