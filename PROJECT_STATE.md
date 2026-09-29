@@ -22,6 +22,7 @@
 
 - Reviewed: `e036c0e`; review record: `.agent/REVIEW-MVP-6.11.md`; report: `.agent/REPORT-MVP-6.11.md`
 - B1: exits of an OPEN position must not depend on entry sizing (deposit / SIGNAL / CUSTOM errors currently block TP).
+- C6 (owner decision 2026-09-29, Veles semantics): deposit edits apply from the next deal — deposit is read at each FLAT entry; an open deal is unaffected. Added to correction round 1.
 
 - Control task: `.agent/TASK-MVP-6.11-BOT-DEPOSIT-SIZING.md`
 - Implementation branch: `agent/review/mvp-6.11` (from `master` @ `10d445e`)

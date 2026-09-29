@@ -72,7 +72,7 @@ This contradicts C4: *OPEN → existing MVP-6.9 behaviour (exits with real quant
 
 ## Observations (non-blocking; for the owner / follow-up MVPs)
 
-1. **Deposit edits on a running bot.** `PATCH` does not check the bot state, while the engine reads `Bot.deposit` only when the per-bot engine is built. A running bot keeps its old deposit while the DB already shows the new one. Veles: "Editing an active bot applies new settings from the next deal". The project should choose between rejecting the edit (409) while the bot is active and applying it from the next deal. **Owner decision required; not part of this correction.**
+1. **Deposit edits on a running bot.** `PATCH` does not check the bot state, while the engine reads `Bot.deposit` only when the per-bot engine is built. A running bot keeps its old deposit while the DB already shows the new one. Veles: "Editing an active bot applies new settings from the next deal". The project should choose between rejecting the edit (409) while the bot is active and applying it from the next deal. **Owner decision (2026-09-29): apply from the next deal, as in Veles → contract C6, added to correction round 1 (see the task).**
 2. **`PATCH {}` clears the deposit.** A missing `deposit` field is treated as `null`. Consider requiring the key explicitly (`model_fields_set`). This can be done in the same correction round if trivial; not blocking.
 3. **C3 checks only `plan.grid`** (the currently active levels). With `active_limit`, later levels of the same deal are not checked. They are never submitted in MVP-6.11, but the deal-continuation MVP must re-apply C3 to every level it places.
 4. **Position state is per FIGI, not per bot.** Two bots on the same instrument, or a manual trade, share one position. Pre-existing architecture; relevant for multi-bot and "include existing position" features.
@@ -82,6 +82,7 @@ This contradicts C4: *OPEN → existing MVP-6.9 behaviour (exits with real quant
 ## Acceptance conditions (round 2)
 
 1. B1 corrected as described, with the regression tests.
+1a. C6 implemented as specified in the task (deposit read at each FLAT entry), with its tests.
 2. Full `pytest`, `ruff check app tests scripts`, `npm run build` re-run.
 3. New commit on `agent/review/mvp-6.11` **pushed to GitHub**; REPORT rev1 (`.agent/REPORT-MVP-6.11-REV1.md`) committed **and pushed** to `agent/control`, citing the pushed SHA.
 4. `master` unchanged.

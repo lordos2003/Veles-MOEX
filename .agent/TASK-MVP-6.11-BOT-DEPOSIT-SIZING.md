@@ -147,6 +147,23 @@ Do not publish to `master`. Do not self-declare acceptance. Acceptance is by ind
 
 Review: `.agent/REVIEW-MVP-6.11.md` — **REJECTED**, one blocking finding (B1): exits of an OPEN position are blocked by entry-sizing errors (`SizingNotConfigured` / `SignalSizingUnsupported` / `CustomDepositExceeded`). Fix exactly as described in the review: resolve the C2 sizing only on the FLAT entry path, add the listed regression tests, update `§29`. REPORT → `.agent/REPORT-MVP-6.11-REV1.md`.
 
+### C6. Deposit edits apply from the next deal (owner decision, 2026-09-29)
+
+Veles source: "Editing an active bot applies new settings from the next deal" (Veles Help Center; `Veles Help Center — engineering reference.md`, bot configuration semantics).
+
+- `PATCH /api/bots/{id}` stays allowed in any bot state (no 409).
+- The deposit is read **at the moment of each FLAT entry** (the start of a new deal), not once when the per-bot `TradingEngine` is built. Replace the build-time `PositionSizing(deposit=bot.deposit, …)` snapshot with a broker-neutral deposit source (e.g. an async provider reading `Bot.deposit` from the repository) that is resolved only on the FLAT entry path together with B1.
+- A deal already OPEN is **not** affected by a deposit edit (after B1, OPEN never reads the deposit).
+- Clearing the deposit (`null`) blocks only the **next** entry with `SizingNotConfigured`; exits of an open deal continue (B1).
+- Record for the future deal-continuation MVP (do not implement now): averaging orders of an open deal must use the deposit captured at that deal's entry, not the latest value.
+
+Tests:
+1. deposit changed while the bot is RUNNING and FLAT → the next entry uses the new deposit (no restart);
+2. deposit changed while OPEN → exits unchanged; after the position closes (FLAT), the next entry uses the new deposit;
+3. deposit cleared while OPEN → exit submitted; next FLAT entry → `SizingNotConfigured`.
+
+Optional in the same round (observation 2): `PATCH` without the `deposit` key must not clear it; only explicit `"deposit": null` clears.
+
 ## Publication (mandatory, see `.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule")
 
 ```
