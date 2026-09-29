@@ -9,9 +9,9 @@
    (MVP-6.9 review blocker)" (focused correction, see "Review blocker fix"
    below).
 
-- Base: `master @ b2c4ee2` (current accepted master).
-- Review branch HEAD: `5b4c42b` (published to `origin/agent/review/mvp-6.9`).
-- `master` NOT modified; no merge/rebase.
+- Base before MVP-6.9: `master @ b2c4ee27`.
+- Review branch implementation HEAD before publication: `5b4c42be4d49d700e8750315c1da81b17bc04a1d`.
+- Published to `master` via PR #2, merge commit `cdc10296e32509f2d716c85c1b58e62a9b01b2cf`.
 
 ## Objective
 
@@ -166,9 +166,10 @@ Existing tests were updated only where behavior intentionally changed:
 
 ## Git state
 
-- Review branch `agent/review/mvp-6.9` -> `5b4c42b` (published).
-- `master` unchanged at `b2c4ee2`; no merge/rebase; working tree clean.
-- `agent/control` updated with this report only.
+- Review branch `agent/review/mvp-6.9` -> `5b4c42be` (implementation, now behind published master).
+- `master` -> `2280075e9309f3468d0e7529d5cc9e3d14363cc1` after PR #2 merge.
+- Publication was performed only after independent ChatGPT acceptance.
+- `agent/control` contains the acceptance/publication record.
 
 ## Known limitations / boundaries
 

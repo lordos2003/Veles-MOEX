@@ -1,8 +1,12 @@
 # OpenCode / Git Workflow
 
-## Canonical control branch
+## Canonical control branch and audit source
 
-`agent/control` is the canonical control branch for the Veles-MOEX development workflow.
+`agent/control` is the canonical control branch for the Veles-MOEX development workflow **and the mandatory source of truth for current tasks, audit instructions, control records, implementation REPORTs, review/acceptance records, and publication records**.
+
+**When ChatGPT or OpenCode needs to find the current task or audit assignment, start on `agent/control`. Do not require the user to tell the coder where the task is located.**
+
+The current working repository state for audit/review is always taken from `agent/control` unless a task explicitly names another ref for comparison.
 
 It contains:
 - tasks for OpenCode;
@@ -36,6 +40,7 @@ master — только после принятия
    - OpenCode writes implementation REPORTs here.
    - Acceptance/review records are kept here.
    - This branch is the control/audit trail.
+   - **All new audit/review work starts by reading the relevant task/specification and current project state from this branch.**
 
 2. **agent/review/mvp-X**
    - OpenCode performs the actual product implementation in the dedicated MVP review branch.
@@ -54,27 +59,23 @@ master — только после принятия
    - No rebase as a substitute for the established publication workflow.
    - After publication, the resulting SHA and publication status are recorded in `agent/control`.
 
-## Current example: MVP-6.9
+## Mandatory task-publication rule
 
-Task:
-`.agent/TASK-MVP-6.9-POSITION-STATE.md`
+**When ChatGPT prepares a task for OpenCode/coder, the task must be published directly to GitHub. The user must not be required to copy the task text manually.**
 
-Control branch:
-`agent/control`
+The GitHub task artifact is the source of truth. In the normal workflow, ChatGPT publishes the task to the repository (typically as a GitHub Issue), gives the user the direct link, and the coder works from that published task. This rule must be preserved when restoring the project in a new chat.
 
-Implementation/review branch:
-`agent/review/mvp-6.9`
+## Mandatory audit-location rule
 
-Base:
-`master @ b2c4ee27cdd1bcf67bb69c2f22374cb062bebb52`
+**All repository audits, specification audits, acceptance audits, and cross-checks must use the current `agent/control` branch as the starting/current reference unless the task explicitly specifies another ref.**
 
-Control task commit:
-`5349bd4f89862e68740998340fa6a3754c383bdc`
+The user must not be required to repeat or explain where the current task is located. ChatGPT/OpenCode must:
+1. inspect `agent/control`;
+2. locate the relevant task/specification/control record there;
+3. use the current `agent/control` state as the audit baseline;
+4. only then inspect implementation/review branches or `master` when required for comparison.
 
-Current status:
-- task recorded in `agent/control`;
-- implementation must be performed in `agent/review/mvp-6.9`;
-- `master` must not be changed until independent ChatGPT review and explicit acceptance.
+Detailed project control rules: `.agent/PROJECT-CONTROL-RULES.md`.
 
 ## Important invariant
 
