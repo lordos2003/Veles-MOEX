@@ -4,10 +4,12 @@
 
 Before changing code, the agent MUST independently recover the current project state from the repository and Git:
 
-1. Read `PROJECT_STATE.md`.
-2. Check the current branch, HEAD, working tree, and `master`.
-3. Read the current MVP task in `.agent/TASK-*.md`.
-4. Read the applicable `.agent/REVIEW-*.md` and latest `.agent/REPORT-*.md`.
+1. Switch/read the canonical `agent/control` recovery contour.
+2. Read `agent/control:PROJECT_STATE.md`.
+3. Check the current branch, HEAD, working tree, and `master`.
+4. Read the current task in `agent/control:.agent/TASK-*.md`.
+5. Read the applicable `agent/control:.agent/REVIEW-*.md` and latest `agent/control:.agent/REPORT-*.md`.
+6. For accepted work, use the mirrored task/review/report and `PROJECT_STATE.md` on `master` as publication snapshots only.
 5. Inspect the relevant architecture/product documentation before implementation.
 
 Do not rely on chat history, assumptions, or remembered project state when repository documentation is available.
