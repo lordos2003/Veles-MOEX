@@ -37,6 +37,10 @@ class GridOrder:
     quantity: float
     price: float | None = None
     offset_percent: float = 0.0
+    # The currency nominal of this level as planned by the DCA/Grid engine
+    # (MVP-6.11 C3 carries it so live sizing errors can name the level nominal;
+    # it is a data carrier, not a calculation).
+    nominal: float = 0.0
 
 
 @dataclass

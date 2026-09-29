@@ -33,6 +33,7 @@ from app.trading.order_manager import OrderManager, OrderStateError
 from app.trading.plan_intent import plan_to_intents
 from app.trading.position_manager import (
     InvalidPositionQuantity,
+    LivePositionState,
     Position,
     PositionManager,
     PositionUnavailable,
@@ -45,7 +46,18 @@ from app.trading.repository import (
     InMemoryPositionRepository,
 )
 from app.trading.risk_manager import RiskLimits, RiskManager, RiskRejected
-from app.trading.sizing import PositionSizing, SizingNotConfigured
+from app.trading.sizing import (
+    CurrencyUnavailable,
+    CustomDepositExceeded,
+    LotSizeUnavailable,
+    PositionSizing,
+    SignalSizingUnsupported,
+    SizingBelowLot,
+    SizingError,
+    SizingNotConfigured,
+    deposit_to_base_nominal,
+    round_grid_to_lot,
+)
 from app.trading.state import InMemoryLiveStateStore, LiveStateSnapshot, LiveStateStore
 
 __all__ = [
@@ -54,6 +66,8 @@ __all__ = [
     "BotRuntimeManager",
     "BotStateError",
     "BotStartRejected",
+    "CurrencyUnavailable",
+    "CustomDepositExceeded",
     "ExecutionIntent",
     "Fill",
     "InMemoryFillRepository",
@@ -65,10 +79,12 @@ __all__ = [
     "InvalidPositionQuantity",
     "LiveExecutionBlocked",
     "LiveExecutionService",
+    "LivePositionState",
     "LiveRecoveryCoordinator",
     "LiveStateSnapshot",
     "LiveStateStore",
     "LookbackNotConfigured",
+    "LotSizeUnavailable",
     "MarketContextUnavailable",
     "OrderManager",
     "OrderState",
@@ -84,6 +100,9 @@ __all__ = [
     "RiskManager",
     "RiskRejected",
     "RiskLimits",
+    "SignalSizingUnsupported",
+    "SizingBelowLot",
+    "SizingError",
     "SizingNotConfigured",
     "TimeframeNotConfigured",
     "TradeFill",
@@ -92,6 +111,8 @@ __all__ = [
     "build_market_snapshot_context",
     "can_transition",
     "compose_strategy_engine",
+    "deposit_to_base_nominal",
     "market_snapshot_to_context",
     "plan_to_intents",
+    "round_grid_to_lot",
 ]

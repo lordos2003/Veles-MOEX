@@ -619,13 +619,18 @@ async def test_position_invariant_valid_snapshot_and_position() -> None:
     om = OrderManager(broker)
     pm = om.positions()
     pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
+    # MVP-6.11 C4: the OPEN live position state is established by a successful
+    # reconciliation. While OPEN, only exit intents are submitted — no new
+    # grid/entry intents from a fresh evaluation (deal continuation is out of
+    # scope), so exactly one order (the exit SELL) is expected.
+    pm.mark_reconciled()
     engine = _live_engine(broker, positions=pm)
     om = engine.order_manager
     await engine.start()
     await engine.process(_context())
     orders = om.list_orders()
     sells = [o for o in orders if o.side is OrderSide.SELL]
-    assert len(orders) == 2  # grid BUY + exit SELL
+    assert len(orders) == 1  # exit SELL only; no new grid entry while OPEN
     assert len(sells) == 1
     assert sells[0].requested_quantity == Decimal("10")
 

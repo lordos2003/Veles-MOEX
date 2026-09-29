@@ -7,8 +7,9 @@ instance. Status transitions are owned by the Trading Engine / Bot lifecycle.
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -35,6 +36,10 @@ class Bot(TimestampMixin, Base):
         String(32), default=BotState.STOPPED.value, nullable=False
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Bot deposit (MVP-6.11 C5): the amount within which the bot trades. A bot
+    # setting, not a strategy setting. Nullable: an unset deposit means no
+    # authoritative sizing source (live execution stays blocked, no default).
+    deposit: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

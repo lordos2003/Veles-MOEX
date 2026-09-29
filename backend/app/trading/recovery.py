@@ -126,6 +126,9 @@ class LiveRecoveryCoordinator:
             broker_positions = await self._broker.get_open_positions(account_id)
         except Exception as exc:  # noqa: BLE001 - integration failure is not SAFE
             self._blocked_reason = f"position reconciliation failed: {exc}"
+            # MVP-6.11 C4: a failed position reconciliation makes the live
+            # position state UNKNOWN until the next successful one.
+            self._position_manager.invalidate_reconciliation()
             await self.persist_snapshot()
             return RecoveryResult(
                 status=RecoveryStatus.BLOCKED,
@@ -150,6 +153,10 @@ class LiveRecoveryCoordinator:
                 )
             )
             recovered_positions += 1
+        # MVP-6.11 C4: broker facts are applied and stale local positions are
+        # dropped above; only now is the live position state (FLAT/OPEN)
+        # established for this process.
+        self._position_manager.mark_reconciled()
 
         try:
             deals = await self._broker.get_deals(account_id)

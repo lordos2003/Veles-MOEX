@@ -66,6 +66,7 @@ class StrategyEngine:
                         quantity=float(plan.quantity),
                         price=None if plan.is_market else float(plan.price),
                         offset_percent=plan.offset_percent,
+                        nominal=float(plan.nominal),
                     )
                     for plan in grid_state.active_orders()
                 ]

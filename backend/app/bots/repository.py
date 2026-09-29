@@ -8,6 +8,8 @@ persistence subsystem is introduced.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +33,13 @@ class BotRepository:
     async def update_state(self, bot: Bot, state: BotState) -> Bot:
         """Persist a new bot-state value on the existing ORM entity."""
         bot.status = state.value
+        await self._session.commit()
+        await self._session.refresh(bot)
+        return bot
+
+    async def update_deposit(self, bot: Bot, deposit: Decimal | None) -> Bot:
+        """Persist a new bot-deposit value on the existing ORM entity (C5)."""
+        bot.deposit = deposit
         await self._session.commit()
         await self._session.refresh(bot)
         return bot

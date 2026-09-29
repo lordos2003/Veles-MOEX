@@ -12,6 +12,7 @@ import pytest
 
 from app.brokers.base import BrokerAccount, BrokerOrder
 from app.models.enums import OrderSide, OrderStatus, OrderType
+from app.strategies.config import DCAGridConfig
 from app.trading import (
     LiveExecutionBlocked,
     LiveExecutionService,
@@ -183,6 +184,11 @@ async def test_trading_engine_process_routes_through_risk() -> None:
 
             return Plan(entry=EntrySignal(action="enter", direction=OrderSide.BUY))
 
+    class _Config:
+        # Minimal strategy-config stub: the engine reads ``dca_grid`` for the
+        # MVP-6.11 C2 deposit->base-nominal conversion.
+        dca_grid = DCAGridConfig()
+
     def intent_factory(_plan, _context):
         return _intent(om)
 
@@ -192,7 +198,7 @@ async def test_trading_engine_process_routes_through_risk() -> None:
         om,
         pm,
         risk,
-        strategy_config=object(),
+        strategy_config=_Config(),
         intent_factory=intent_factory,
         sizing=PositionSizing(base_nominal=Decimal("1000")),
     )

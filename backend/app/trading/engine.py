@@ -24,16 +24,21 @@ from app.strategies.domain import MarketContext, Plan
 from app.strategies.engine import StrategyEngine
 from app.strategies.entry import EntryEngine
 from app.strategies.exit import ExitEngine
-from app.trading.domain import ExecutionIntent
+from app.trading.domain import TERMINAL_STATES, ExecutionIntent
 from app.trading.market_context import TimeframeNotConfigured
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import (
     InvalidPositionQuantity,
+    LivePositionState,
     PositionManager,
     PositionUnavailable,
 )
 from app.trading.risk_manager import RiskManager
-from app.trading.sizing import PositionSizing, SizingNotConfigured
+from app.trading.sizing import (
+    PositionSizing,
+    SizingNotConfigured,
+    round_grid_to_lot,
+)
 
 
 def compose_strategy_engine() -> StrategyEngine:
@@ -66,6 +71,7 @@ class TradingEngine:
         ) = None,
         sizing: PositionSizing | None = None,
         instrument_figi: str | None = None,
+        bot_id: int | None = None,
     ) -> None:
         self.broker = broker
         self.strategy_engine = strategy_engine
@@ -76,6 +82,9 @@ class TradingEngine:
         self._intent_factory = intent_factory
         self._sizing = sizing
         self._instrument_figi = instrument_figi
+        # The owning bot, used to correlate active (non-terminal) orders for the
+        # MVP-6.11 C4 FLAT-entry precondition.
+        self._bot_id = bot_id
         self._started = False
 
     @property
@@ -124,9 +133,19 @@ class TradingEngine:
         Live per-bot engines (``instrument_figi`` set) additionally require a
         per-bot timeframe in the strategy config (a missing one raises
         |TimeframeNotConfigured|) and a non-empty bar series for that timeframe
-        in the market context, plus a resolvable position (MVP-6.9): when any
-        of them is missing/invalid, no live ExecutionIntent is created or
-        submitted for this cycle.
+        in the market context. The live position state (MVP-6.11 C4, established
+        only by a successful broker reconciliation and kept by fills) governs
+        which intents may be created:
+
+        - UNKNOWN / SIGN_MISMATCH: **no** live ExecutionIntent at all for this
+          cycle (the MVP-6.9 blocking behavior is preserved);
+        - FLAT: entry only — the grid built from the current snapshot, rounded
+          down to whole lots (C3, |SizingBelowLot| blocks the whole entry when
+          any level rounds to 0 lots), submitted only when the bot has no
+          active (non-terminal) orders; no exit intents;
+        - OPEN: exits only (real quantity via |PositionManager.resolve_quantity|);
+          no new grid/entry intents from a fresh evaluation (deal continuation /
+          grid state persistence is out of scope).
         """
         if not self._started:
             raise RuntimeError("TradingEngine is not started")
@@ -140,8 +159,9 @@ class TradingEngine:
                 "TradingEngine.process() requires an explicit position-sizing "
                 "source to build a safe live order quantity"
             )
-        base_nominal = self._sizing.resolve_base_nominal()
+        base_nominal = self._sizing.resolve_base_nominal(self._strategy_config.dca_grid)
         timeframe = self._require_live_timeframe()
+        position_state = self._live_position_state()
         position_qty = self._exit_position_quantity()
         plan = self.strategy_engine.evaluate(
             self._strategy_config,
@@ -149,10 +169,21 @@ class TradingEngine:
             base_nominal=base_nominal,
             position_qty=position_qty,
         )
-        if self._position_gates_execution(position_qty):
+        if self._position_gates_execution(position_state):
             return plan
         if self._snapshot_gates_execution(context, timeframe):
             return plan
+        if position_state is LivePositionState.FLAT:
+            if self._entry_blocked_by_active_orders():
+                return plan
+            plan.grid = round_grid_to_lot(
+                plan.grid,
+                lot_size=self._sizing.lot_size,
+                currency=self._sizing.currency,
+            )
+            plan.exits = []
+        elif position_state is LivePositionState.OPEN:
+            plan.grid = []
         if self._intent_factory is not None:
             result = self._intent_factory(plan, context)
             if result is not None:
@@ -161,19 +192,50 @@ class TradingEngine:
                     await self.submit_intent(intent)
         return plan
 
-    def _position_gates_execution(self, position_qty: Decimal | None) -> bool:
-        """Whether a missing/invalid position must block all live intents.
+    def _position_gates_execution(self, position_state: LivePositionState | None) -> bool:
+        """Whether the live position state must block all live intents (C4).
 
         For a live per-bot engine (``instrument_figi`` set), the PositionManager
-        is the only authoritative quantity source: when it cannot resolve a real,
-        positive position, **no** live ExecutionIntent may be created/submitted
-        for this processing cycle (no position / zero / sign-mismatch => no live
-        order at all). Generic/Backtest engines (no ``instrument_figi``) are not
-        gated here.
+        is the only authoritative quantity source. UNKNOWN (never reconciled,
+        reconciliation failed, or stale) and SIGN_MISMATCH block **all** live
+        ExecutionIntents for this processing cycle (MVP-6.9 behavior preserved:
+        no position / zero / sign-mismatch => no live order at all). FLAT and
+        OPEN are permitted states, governed further by the entry/exit rules in
+        :meth:`process`. Generic/Backtest engines (no ``instrument_figi``) are
+        not gated here.
         """
         if self._instrument_figi is None:
             return False
-        return position_qty is None
+        return position_state not in (
+            LivePositionState.FLAT,
+            LivePositionState.OPEN,
+        )
+
+    def _live_position_state(self) -> LivePositionState | None:
+        """The live position state for this engine's instrument (C4), or None
+        for a generic/Backtest engine (no ``instrument_figi``)."""
+        if self._instrument_figi is None:
+            return None
+        return self.position_manager.position_state(
+            self._instrument_figi, self._strategy_config.direction
+        )
+
+    def _entry_blocked_by_active_orders(self) -> bool:
+        """Whether a FLAT entry must be blocked for this cycle (MVP-6.11 C4).
+
+        Entry from FLAT is allowed only if the bot has **no active
+        (non-terminal) orders** in the OrderManager; otherwise the bot would
+        re-enter on every cycle while a limit first order or grid is still
+        working. When the bot cannot be correlated (no ``bot_id``), the
+        precondition cannot be verified and the entry is blocked (no
+        fabricated safety assumption).
+        """
+        if self._bot_id is None:
+            return True
+        return any(
+            order.bot_id == self._bot_id and order.status not in TERMINAL_STATES
+            for order in self.order_manager.list_orders()
+        )
 
     def _require_live_timeframe(self) -> Timeframe | None:
         """Enforce the per-bot timeframe for a live strategy cycle (MVP-6.10).
@@ -215,12 +277,15 @@ class TradingEngine:
         """Resolve the authoritative live exit quantity from the PositionManager.
 
         The PositionManager is the only authoritative quantity source: the broker
-        is never queried here. A missing or invalid position yields ``None`` (no
-        position / zero / sign-mismatch), which also makes
+        is never queried here. The quantity is resolved only for the OPEN live
+        position state (MVP-6.11 C4); every other state yields ``None`` (no
+        position / zero / sign-mismatch / unknown), which also makes
         :meth:`_position_gates_execution` block **all** live intents for this
         cycle. The broker-neutral domain errors are caught and mapped to ``None``.
         """
         if self._instrument_figi is None:
+            return None
+        if self._live_position_state() is not LivePositionState.OPEN:
             return None
         try:
             return self.position_manager.resolve_quantity(

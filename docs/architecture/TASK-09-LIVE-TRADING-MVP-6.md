@@ -1061,3 +1061,138 @@ cycle block, snapshot without the bot-timeframe series, empty series, missing
 snapshot), and the preserved
 MVP-6.9 position-state invariant (no order without a position; real
 quantity with a valid snapshot + position).
+
+## 29. Bot deposit sizing & entry from confirmed flat — MVP-6.11
+
+This section records MVP-6.11 (approved contracts C1–C5, 2026-09-29): the
+authoritative live sizing source is the **bot deposit**, the MOEX lot
+rounding contract is enforced at the entry boundary, and the live position
+state is three-valued so a **confirmed flat** position can start a deal while
+an unknown/unreconciled state keeps blocking everything.
+
+### C1. Deposit is a bot setting (Veles "Full list of bot settings")
+
+- The Veles Help Center "Full list of bot settings" lists the bot deposit
+  ("The amount within which the bot trades") among the bot-level settings
+  (bot name, bot direction, instrument, strategy, timeframe), separate from
+  the strategy settings. This MVP follows that: `Bot.deposit` (nullable
+  `Numeric(20,8)`, migration `0004_bot_deposit`) is a **bot** field, not a
+  `StrategyVersion` field.
+- API: `deposit` is exposed in the bot API schema read/write:
+  `GET /api/bots/{id}` returns it; `PATCH /api/bots/{id}` sets or clears it.
+  Validation is `> 0` (`BotDepositUpdate.deposit: Decimal | None = Field(gt=0)`;
+  a non-positive value is rejected, `None` clears). No default deposit is
+  invented; an unset deposit keeps the existing `SizingNotConfigured`
+  behavior for the live cycle.
+- Frontend: no bot form exists yet; no UI change was required (build stays
+  green).
+
+### C2. Deposit -> base nominal (broker-neutral, one function)
+
+- `app/trading/sizing.py:deposit_to_base_nominal(deposit, dca_grid)` is the
+  single broker-neutral conversion; the sum of the nominals of **all** grid
+  orders of one deal (first order included) equals the deposit `D`:
+  - SIMPLE: `n = dca_grid.levels`, `k = 1 + martingale/100` (`k = 1` when
+    martingale is off), `first_nominal = D / sum(k**i, i=0..n-1)`; level
+    `i` nominal = `first_nominal * k**i` — the existing `DCAGridEngine`
+    martingale math is unchanged, only the base nominal is derived from `D`.
+  - CUSTOM: level nominal = `D * nominal_percent / 100` (the existing
+    `_build_custom` math with `base_nominal = D`). When the level
+    percentages sum to more than 100 the deal would exceed the deposit:
+    explicit `CustomDepositExceeded`.
+  - SIGNAL: the existing SIGNAL engine does **not** use
+    `DCAGridConfig.levels` as a maximum order-count limit (subsequent
+    averaging orders are unbounded), so **no limit is invented**: live SIGNAL
+    sizing blocks with an explicit `SignalSizingUnsupported` (documented gap,
+    pending a separately approved contract).
+- Spot semantics only: the deposit is used 1:1; there is no
+  leverage/margin field in the configuration and none is added (the Veles
+  bot-settings list contains no such field). No FX conversion: the deposit
+  currency is the instrument's trading/price currency.
+- `PositionSizing` now carries the deposit (plus the instrument lot size and
+  currency) and `resolve_base_nominal(dca_grid)` applies C2; the
+  MVP-6.8 `base_nominal` path is unchanged and the `SizingNotConfigured`
+  semantics are unchanged (unset/non-positive deposit -> the same error).
+- Known boundary: the Backtest path sizes orders from its own `BacktestConfig`
+  and does not use the bot deposit; the Veles backtest sizing semantics are
+  not defined in the documentation inspected, so no backtest deposit rule is
+  invented (documented in the MVP-6.11 REPORT).
+
+### C3. MOEX lot rounding (project contract, not a Veles rule)
+
+- `app/trading/sizing.py:round_grid_to_lot(grid, lot_size, currency)` rounds
+  each grid level quantity (units = nominal / order_price) **down** to a
+  whole number of lots (`lot_size` from the instrument). If **any** order of
+  the deal rounds to 0 lots, the **whole entry** is blocked with
+  `SizingBelowLot` naming the level, its nominal, price and lot size; no
+  partial grid is submitted and the remainder of the deposit after rounding
+  stays unused (no redistribution).
+- A missing/non-positive `lot_size` or an unresolvable instrument currency
+  blocks the entry explicitly (`LotSizeUnavailable` / `CurrencyUnavailable`);
+  no default lot or currency is substituted.
+- `GridOrder` carries the planned `nominal` (a data carrier added to
+  `app/strategies/domain.py`); no DCA/Grid mathematics changed.
+- The rounding is applied in `TradingEngine.process()` on the live FLAT
+  entry path only; Backtest and the DCA engine math are untouched.
+
+### C4. Confirmed-flat entry (three-valued position state)
+
+- `app/trading/position_manager.py:LivePositionState` — `UNKNOWN`, `FLAT`,
+  `OPEN`, plus `SIGN_MISMATCH` — with the gating contract:
+  | State | Meaning | Live intents |
+  |---|---|---|
+  | `UNKNOWN` | never reconciled, reconciliation failed, or stale | none (MVP-6.9 behavior preserved) |
+  | `FLAT` | latest **successful** reconciliation confirmed zero/no position | entry only — no exit intents; no re-entry while the bot has active (non-terminal) orders |
+  | `OPEN` | reconciled non-zero position, sign matching the direction | exits only (unchanged MVP-6.9); no new grid/entry intents from a fresh evaluation |
+  | sign mismatch | reconciled position with the opposite sign | none |
+- The state is established **only** by a successful broker position
+  reconciliation: `LiveRecoveryCoordinator.recover()` calls
+  `PositionManager.mark_reconciled()` after applying
+  `BrokerAdapter.get_open_positions` facts (stale local positions are dropped
+  first) and `invalidate_reconciliation()` when that call fails. Restored
+  (durable) positions from a snapshot are **not** a reconciliation
+  (`load_state` resets the state to UNKNOWN); fill-driven position changes
+  keep the state updated afterwards (Architecture & Product Specification
+  section 8: positions change only from actual fills/updates).
+- Entry precondition (FLAT): the bot must have **no active (non-terminal)
+  orders** in the OrderManager (correlated by `bot_id`); otherwise the entry
+  is blocked for the cycle (a working limit first order / grid is not
+  duplicated on the next cycle). When the bot cannot be correlated (no
+  `bot_id`) the entry is blocked (the precondition cannot be verified; no
+  fabricated safety assumption).
+- `TradingEngine` gains `bot_id` for the correlation; the `process()` gating
+  follows the table above. The MVP-6.9 invariants are preserved: the
+  PositionManager remains the only authoritative live quantity source and an
+  unknown/unresolved state still blocks all live intents.
+- Documented boundaries (out of scope, separate MVPs): cross-cycle deal
+  continuation / grid state persistence (an OPEN position does not resume a
+  partially built grid), and the periodic live-cycle scheduler.
+
+### C5. Production wiring
+
+- `build_live_service()` per-bot engine factory wires
+  `PositionSizing(deposit=Bot.deposit, lot_size=Instrument.lot_size,
+  currency=Instrument.currency)` and `bot_id` into the per-bot
+  `TradingEngine`. `Bot.deposit: None` keeps the MVP-6.8 behavior
+  (`SizingNotConfigured` on the live cycle; START failure does not consume a
+  RiskManager slot). T-Invest stays read-only: this MVP changes no
+  `place_order`/transport code and enables no live order submission.
+
+### Testing
+
+`tests/test_mvp611_deposit_sizing.py` (30 tests) covers the approved
+contracts: SIMPLE split with/without martingale (nominals and the sum == D),
+CUSTOM split and the >100% block, the explicit SIGNAL block, sizing
+independence from the DCA engine math, lot rounding down, the below-lot
+whole-entry block (error message content), missing lot/currency blocks,
+deposit None/0/negative -> `SizingNotConfigured`, API validation (422 for
+non-positive, persist/clear), UNKNOWN -> no intents, FLAT + no active orders
+-> entry via the Risk Manager (with lot-rounded quantities), FLAT + active
+bot orders -> no entry (and re-entry after the order is filled/terminal),
+absent position without reconciliation -> UNKNOWN, OPEN -> exit only, sign
+mismatch -> no intents, and unchanged Backtest-style evaluation.
+`tests/test_mvp69_position_state.py` and
+`tests/test_mvp610_market_snapshot.py` were updated for the explicit
+reconciliation (the OPEN state now requires `mark_reconciled`; an OPEN cycle
+submits the exit only, no new grid).
+
