@@ -217,3 +217,14 @@ own timeframe).
   (documented boundary; higher-timeframe series fetching is a follow-up).
 - No actual live order submission is added (T-Invest read-only), per the
   MVP scope.
+
+
+## Round-2 correction and final acceptance
+
+The original implementation report above reflects round 1 and is retained as historical implementation evidence. Round 1 was rejected during independent review because inferred indicator warmup rules introduced undocumented Veles semantics.
+
+Round 2 replaced that design with explicit `StrategyConfig.lookback_bars` and added the exact-lookback regression correction: `MarketDataService.get_snapshot()` retains exactly the latest configured `lookback_bars` candles even when the broker returns more.
+
+Accepted implementation: `c7429fdee1792962a679f1924230d99c62573efc`.
+Publication merge commit: `14168ca798c00b8a28ef278bb245391a07bce958`.
+Final verdict: **ACCEPTED**.
