@@ -65,6 +65,31 @@ master — только после принятия
 
 The GitHub task artifact is the source of truth. In the normal workflow, ChatGPT publishes the task to the repository (typically as a GitHub Issue), gives the user the direct link, and the coder works from that published task. This rule must be preserved when restoring the project in a new chat.
 
+## Mandatory push rule (work is not delivered until it is on GitHub)
+
+**OpenCode work counts as delivered only when it is published to GitHub.** Local commits are not reviewable: the independent reviewer works from the remote repository only.
+
+Before reporting completion, OpenCode MUST:
+
+1. Push the implementation branch:
+   ```
+   git push origin agent/review/mvp-X
+   ```
+2. Commit the REPORT to `agent/control` and push it:
+   ```
+   git push origin agent/control
+   ```
+3. Plain push only: **no `--force`**, no rebase. If a push is rejected because the remote branch moved, run `git fetch origin`, then `git merge origin/<branch>`, resolve conflicts, and push again.
+4. Verify that the remote SHAs equal the local ones:
+   ```
+   git ls-remote origin agent/review/mvp-X agent/control
+   ```
+5. In the REPORT, cite the **pushed** implementation SHA and state "pushed, in sync with origin". A REPORT that says "no push performed" is incomplete and will not be reviewed.
+
+`master` is never pushed by OpenCode (publication happens only after acceptance).
+
+Each `TASK-*.md` ends with a "Publication" block repeating these commands for its own branch.
+
 ## Mandatory audit-location rule
 
 **All repository audits, specification audits, acceptance audits, and cross-checks must use the current `agent/control` branch as the starting/current reference unless the task explicitly specifies another ref.**

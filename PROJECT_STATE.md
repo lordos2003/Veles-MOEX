@@ -3,7 +3,7 @@
 ## Project
 - Repository: `lordos2003/Veles-MOEX`
 - Goal: Veles-like web trading application for MOEX using T-Invest as the initial broker integration.
-- Initial broker boundary: T-Invest read-only; no direct MOEX API and no live order submission in current MVP.
+- Initial broker boundary: no direct MOEX API. `TInvestAdapter.place_order()` (PostOrder, MVP-6.2) exists behind `RiskManager -> OrderManager`, but no live strategy cycle is scheduled/enabled in production yet (see Known boundaries).
 
 ## Canonical workflow
 `agent/control -> agent/review/mvp-X -> independent ChatGPT review -> master`
@@ -18,7 +18,11 @@
 ## Current task
 
 ### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
-**Status: OPEN — assigned to OpenCode.**
+**Status: IN REVIEW — round 1 REJECTED (B1), correction assigned to OpenCode.**
+
+- Reviewed: `e036c0e`; review record: `.agent/REVIEW-MVP-6.11.md`; report: `.agent/REPORT-MVP-6.11.md`
+- B1: exits of an OPEN position must not depend on entry sizing (deposit / SIGNAL / CUSTOM errors currently block TP).
+- C6 (owner decision 2026-09-29, Veles semantics): deposit edits apply from the next deal — deposit is read at each FLAT entry; an open deal is unaffected. Added to correction round 1.
 
 - Control task: `.agent/TASK-MVP-6.11-BOT-DEPOSIT-SIZING.md`
 - Implementation branch: `agent/review/mvp-6.11` (from `master` @ `10d445e`)
@@ -46,7 +50,7 @@ Round-2 corrections:
 Validation recorded for MVP-6.10: `pytest 369 passed, 1 skipped`; `ruff check app tests scripts` passed; `npm run build` passed.
 
 Known boundaries:
-- T-Invest order submission is not implemented;
+- T-Invest order placement exists at adapter level (`TInvestAdapter.place_order`, MVP-6.2) behind Risk/Order Manager; production live trading is not enabled (no scheduled live cycle, no deal continuation);
 - live cycle scheduling is outside MVP-6.10;
 - multi-timeframe filter series require a separately specified implementation;
 - authoritative production sizing remains governed by the accepted PositionManager boundary.
@@ -61,13 +65,16 @@ Known boundaries:
 
 ## Architecture
 - Broker integration is behind `BrokerAdapter`.
-- `TInvestAdapter` provides read-only access through the official REST API.
+- `TInvestAdapter` uses the official REST API: read access plus `PostOrder`-based `place_order` (MVP-6.2) behind the Risk/Order Manager.
 - Domain prices/monetary values use `Decimal`.
 - Market timestamps are timezone-aware UTC.
 - Instrument identity uses FIGI.
 - `MarketCandle` uniqueness: `(figi, timeframe, timestamp)`.
 - Veles Filter/Signal semantics: Argument1 + Operator + Argument2; AND within group, OR between groups; state operators `>`/`<`, event operators for crossings.
 - DCA/Grid and Backtest semantics are preserved across live-market-data work.
+
+## Workflow rule: push before review
+Work is delivered only when `agent/review/mvp-X` and the REPORT on `agent/control` are pushed to GitHub (plain push, no `--force`/rebase). See `.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule". `AGENTS.md` (on `master`) receives the same rule with the next publication.
 
 ## Recovery
 For a new ChatGPT/OpenCode session:
