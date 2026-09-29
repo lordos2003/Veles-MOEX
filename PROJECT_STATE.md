@@ -15,6 +15,16 @@
 - Only independently accepted work is published to `master`.
 - `PROJECT_STATE.md`, current task, review and reports are maintained on `agent/control`; accepted records are mirrored to `master` for repository recovery.
 
+## Current task
+
+### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
+**Status: OPEN — assigned to OpenCode.**
+
+- Control task: `.agent/TASK-MVP-6.11-BOT-DEPOSIT-SIZING.md`
+- Implementation branch: `agent/review/mvp-6.11` (from `master` @ `10d445e`)
+- Closes the two remaining blockers of the live path: no sizing source (`SizingNotConfigured`) and the MVP-6.9 gate blocking entry from a flat position.
+- New contracts C1–C5 (deposit semantics, deposit → order nominals, MOEX lot rounding down, confirmed-flat entry, `Bot.deposit`) approved by the project owner on 2026-09-29.
+
 ## Current accepted MVP
 
 ### MVP-6.10 — Live Market Snapshot & Per-Bot Timeframe
