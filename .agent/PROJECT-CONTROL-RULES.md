@@ -54,6 +54,18 @@ This rule applies to both implementation tasks and independent audits.
 
 ChatGPT не принимает работу только на основании заявления кодера. Проверяется фактический diff, тесты, архитектура, scope и REPORT.
 
+## 5a. Работа сдана только после push в GitHub
+
+Ревью проводится только по состоянию GitHub. Работа кодера считается сданной, когда:
+
+- ветка `agent/review/mvp-X` запушена;
+- REPORT закоммичен и запушен в `agent/control`;
+- в REPORT указан запушенный SHA с пометкой «pushed, in sync with origin».
+
+Push обычный, без `--force` и без rebase. При расхождении с GitHub: `git fetch origin` → `git merge origin/<ветка>` → push. `master` кодер не пушит никогда.
+
+Каждое задание (`TASK-*.md`) заканчивается блоком «Publication» с командами push для своей ветки. Подробно: `.agent/OPENCODE-WORKFLOW.md`, раздел «Mandatory push rule».
+
 ## 6. Правило для спецификаций и аудитов
 
 Если для MVP существует specification в `docs/architecture/`, аудит должен сверять:

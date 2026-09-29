@@ -142,3 +142,17 @@ Before reporting: full `pytest`, `ruff check app tests scripts`, `npm run build`
 REPORT → `agent/control:.agent/REPORT-MVP-6.11.md` with: task, branch, commit SHA, exact changes, validation results, known limitations, documentation/specification gaps, AGENTS.md compliance.
 
 Do not publish to `master`. Do not self-declare acceptance. Acceptance is by independent review.
+
+## Correction round 1 (review 2026-09-29)
+
+Review: `.agent/REVIEW-MVP-6.11.md` — **REJECTED**, one blocking finding (B1): exits of an OPEN position are blocked by entry-sizing errors (`SizingNotConfigured` / `SignalSizingUnsupported` / `CustomDepositExceeded`). Fix exactly as described in the review: resolve the C2 sizing only on the FLAT entry path, add the listed regression tests, update `§29`. REPORT → `.agent/REPORT-MVP-6.11-REV1.md`.
+
+## Publication (mandatory, see `.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule")
+
+```
+git push origin agent/review/mvp-6.11
+git push origin agent/control
+git ls-remote origin agent/review/mvp-6.11 agent/control
+```
+
+No `--force`, no rebase; if rejected: `git fetch origin`, `git merge origin/<branch>`, push again. The REPORT must cite the pushed SHA ("pushed, in sync with origin"). Never push `master`.
