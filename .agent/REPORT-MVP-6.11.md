@@ -236,17 +236,25 @@ behavior:
 - `pytest` (backend, full suite): **403 passed, 1 skipped** (was 373 passed,
   1 skipped; +30 new tests; the single skip is the opt-in live sandbox
   integration test).
-- `ruff check app tests`: **All checks passed!**
+- `ruff check app tests scripts`: **All checks passed!**
 - `npm run build` (frontend): **built successfully** (no frontend changes).
 - `alembic heads`: single head `0004_bot_deposit` (chain
   `0001_initial -> 0002 -> 0003 -> 0004_bot_deposit`).
+- Diff review against the merge-base (`10d445e`): 18 files; no changes to
+  `app/strategies/dca_grid.py`, `app/backtest/`, `app/brokers/`,
+  `app/strategies/filters.py`, `app/strategies/entry.py`,
+  `app/strategies/exit.py` or `app/trading/plan_intent.py` (the prohibited
+  zones and the existing intent conversion are untouched).
 
 ## Git state
 
 - Implementation branch `agent/review/mvp-6.11` -> `e036c0e74e8ac50f6d4b2bd82842c0a90b845120`
-  (base `master @ 10d445e0af61c617d7484ca38d79a94cb45b0aa0`).
-- `master` unchanged (`10d445e`); `agent/control` contains this report.
-- No push performed; publication requires independent acceptance.
+  (base `master @ 10d445e0af61c617d7484ca38d79a94cb45b0aa0`), pushed to
+  `origin` on 2026-09-29 on the owner's explicit instruction.
+- `agent/control` contains this report (pushed to `origin` on the same
+  instruction).
+- `master` unchanged (`10d445e`); no merge into `master` has been performed.
+  Publication requires independent acceptance first.
 
 ## Known limitations / boundaries
 
@@ -259,9 +267,47 @@ behavior:
 - Exit TP price is still derived from the market-context reference price (the
   pre-existing MVP-6.9 boundary), unchanged by this MVP.
 
+## Documentation / specification gaps (recorded per the task, not fixed here)
+
+- **Live/Backtest sizing contracts differ.** Backtest sizing uses
+  `BacktestConfig.quantity` (first-order units, default `1`,
+  `backend/app/backtest/config.py:30`, consumed at
+  `backend/app/backtest/engine.py:90`) while Live now uses the deposit
+  contract C2 (`Bot.deposit` -> `deposit_to_base_nominal`). Aligning them
+  requires a separate task (spec principle: Backtest and Live share trading
+  logic).
+- **`PROJECT_STATE.md` wording vs the execution path.** `PROJECT_STATE.md`
+  (MVP-6.8 paragraph) says "T-Invest is read-only; no live order submission
+  is enabled", while `TInvestAdapter.place_order()` (PostOrder, MVP-6.2)
+  exists and the OrderManager uses it. Clarification: the adapter/method is
+  **implemented** (MVP-6.2, accepted) but real order submission is **not
+  enabled in the production live runtime** by this MVP — MVP-6.11 produces
+  risk-gated intents only, through the existing accepted
+  `RiskManager -> OrderManager -> BrokerAdapter` path, and changes no
+  `place_order`/transport code. The wording reconciliation belongs to the
+  control-branch documentation owner; it is not changed here.
+
+## AGENTS.md compliance
+
+- Only the requested scope was implemented (C1–C5 + §29 + the 15 test
+  contracts); no refactors, no unrelated changes, no speculative features.
+- `DCAGridEngine` mathematics, Veles Filter/Signal semantics, Backtest
+  behaviour, `Decimal`/UTC handling and broker neutrality are unchanged
+  (verified by the diff review and the unchanged existing suites).
+- T-Invest stays read-only in the live runtime: this MVP produces risk-gated
+  intents; no production order submission is enabled (no
+  `place_order`/transport changes).
+- No invented defaults: deposit, lot, currency, max order count, leverage
+  (the SIGNAL gap is blocked, not defaulted).
+- Everything not covered by C1–C5 stops at the boundary and is documented in
+  this REPORT (SIGNAL block, deal continuation, live-cycle scheduler,
+  backtest deposit gap, PROJECT_STATE wording).
+- The REPORT is written to `agent/control` before any publication; no
+  self-declared acceptance; no merge into `master`.
+
 ## Review request
 
 Ready for independent ChatGPT review on `agent/review/mvp-6.11`
 (`e036c0e74e8ac50f6d4b2bd82842c0a90b845120` against base
-`10d445e0af61c617d7484ca38d79a94cb45b0aa0`). No merge/push has been
-performed; publication to `master` requires acceptance first.
+`10d445e0af61c617d7484ca38d79a94cb45b0aa0`). No merge into `master` has
+been performed; publication requires acceptance first.
