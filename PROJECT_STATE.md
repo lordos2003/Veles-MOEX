@@ -17,15 +17,26 @@
 
 ## Current task
 
-No task is open. Next candidates (to be specified on `agent/control` before assignment):
-- live cycle scheduler (who triggers `BotRuntime.execute_strategy`, per-bot timeframe, "at bar close" / "once per minute" Veles methods);
-- deal continuation across cycles (persisted grid state, averaging after entry with the deposit captured at entry, C3 on every level, TP from the average entry price);
-- clean-up: unreachable duplicate in `make_deposit_provider()` (`live_execution.py`).
+No task is open. Next candidate: **live cycle scheduler** — who triggers `BotRuntime.execute_strategy` per bot and when (per-bot timeframe; Veles "at bar close" / "once per minute" calculation methods). Other follow-ups: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode; recovery TP churn; the misleading `FILLED -> UNKNOWN` error on cancelling an already executed TP.
 
 ## Current accepted MVP
 
-### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
+### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)
 **Status: ACCEPTED (round 3, 2026-09-30) and published to master.**
+
+- Accepted implementation: `418c24e`
+- Publication PR: #8
+- Publication merge commit: `566d79277e3667ea80e3cccba148158248fafd83`
+- Control task: `.agent/TASK-MVP-6.12-DEAL-CONTINUATION.md`; review: `.agent/REVIEW-MVP-6.12.md` (round 1 REJECTED B1/B2, round 2 REJECTED B3, round 3 ACCEPT); reports: `REPORT-MVP-6.12.md`, `-REV1.md`, `-REV2.md`
+- Contracts D1–D7 (owner-approved 2026-09-30): live deals only for SIMPLE/CUSTOM + Simple TP (others rejected at START); event-driven Deal lifecycle; safe-direction tick rounding; TP from the PositionManager average re-armed on every grid fill (never two TPs, never larger than the position); durable Deal (`0005_deal_continuation`) + recovery; no exits from the live cycle; reducing orders exempt from position-size / daily-loss limits.
+- Deal failures move the bot to ERROR (persisted; `deal_error` in `GET /api/bots/{id}`); an OPEN position without an owning Deal errors the bot.
+- Validation (independent, clean env): `pytest 450 passed, 1 skipped`; `ruff` clean; alembic head `0005_deal_continuation`.
+
+Known boundaries: no live cycle scheduler; only Simple TP; position state per FIGI (one bot per instrument); Backtest sizing differs from the Live deposit contract.
+
+
+### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
+**Status: ACCEPTED (round 3, 2026-09-30) and published to master.** (Deal-related boundaries superseded by MVP-6.12.)
 
 - Accepted implementation: `e026886dfdc6f98112dfc214060c5fc2bb2ae075`
 - Publication PR: #6
