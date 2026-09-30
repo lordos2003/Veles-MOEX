@@ -2,7 +2,7 @@
 
 ## Status
 
-**OPEN — assigned to OpenCode**
+**IN REVIEW — round 1 REJECTED (B1, B2); correction round 1 (+ D7) assigned to OpenCode**
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.12` (create from current `master` @ `59a3897`)
@@ -133,6 +133,22 @@ Full `pytest`, `ruff check app tests scripts`, `alembic heads` (single head `000
 REPORT → `agent/control:.agent/REPORT-MVP-6.12.md` with: task, branch, **pushed** commit SHA ("pushed, in sync with origin"), exact changes, validation results, known limitations, documentation/specification gaps, AGENTS.md compliance.
 
 Do not publish to `master`. Do not self-declare acceptance.
+
+## Correction round 1 (review 2026-09-30)
+
+Review: `.agent/REVIEW-MVP-6.12.md` — **REJECTED**:
+- **B1**: the TP re-arm cancels the old TP before the new one passes the Risk Manager, and non-`DealError` failures escape `pump()`. Reproduced: the position is left without a TP.
+- **B2**: deal errors are not surfaced (the bot stays RUNNING); an OPEN position without an owning Deal is silently ignored.
+
+Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.12-REV1.md`.
+
+### D7. Position-reducing orders and the Risk Manager (owner decision, 2026-09-30)
+
+- An intent is **reducing** when the PositionManager position for its FIGI is non-zero, the intent side is opposite to the position sign, and `quantity ≤ |position|`.
+- Reducing intents are **exempt** from `max_position_size` and `daily_loss_limit`. A closing TP must never be blocked by a limit meant to stop risk from growing.
+- Reducing intents still go through `emergency_stop` (emergency stop blocks everything; the position is left for manual control, MVP-6.5 semantics), quantity, price and instrument-permission checks.
+- Non-reducing intents keep the existing MVP-6.6 behaviour unchanged.
+- Document D7 in `§30` and in `§10.1` (Risk Manager preconditions) of `TASK-09-LIVE-TRADING-MVP-6.md`.
 
 ## Publication (mandatory, see `AGENTS.md` §6 and `.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule")
 

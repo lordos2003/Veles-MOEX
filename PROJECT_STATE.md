@@ -18,7 +18,9 @@
 ## Current task
 
 ### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)
-**Status: OPEN — assigned to OpenCode.**
+**Status: IN REVIEW — round 1 REJECTED (B1: a deal can be left without a TP when the Risk Manager rejects the re-armed TP; B2: deal errors not surfaced, the bot stays RUNNING). Correction round 1 + contract D7 (reducing orders exempt from position-size / daily-loss limits) assigned to OpenCode.**
+
+- Reviewed: `a4f792d`; review: `.agent/REVIEW-MVP-6.12.md`; report: `.agent/REPORT-MVP-6.12.md`
 
 - Control task: `.agent/TASK-MVP-6.12-DEAL-CONTINUATION.md`
 - Implementation branch: `agent/review/mvp-6.12` (from `master` @ `59a3897`)
