@@ -14,7 +14,7 @@ here; financial decisions come only from the Strategy/Risk configuration.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
 
 from app.brokers import BrokerAdapter
@@ -72,6 +72,7 @@ class TradingEngine:
         sizing: PositionSizing | None = None,
         instrument_figi: str | None = None,
         bot_id: int | None = None,
+        deposit_provider: Callable[[], Awaitable[Decimal | None]] | None = None,
     ) -> None:
         self.broker = broker
         self.strategy_engine = strategy_engine
@@ -85,6 +86,10 @@ class TradingEngine:
         # The owning bot, used to correlate active (non-terminal) orders for the
         # MVP-6.11 C4 FLAT-entry precondition.
         self._bot_id = bot_id
+        # MVP-6.11 C6: broker-neutral async deposit source read at each FLAT
+        # entry (per-bot production wiring reads ``Bot.deposit`` from the
+        # repository), so a deposit edit applies from the next deal.
+        self._deposit_provider = deposit_provider
         self._started = False
 
     @property
@@ -126,6 +131,18 @@ class TradingEngine:
         execution goes through :meth:`submit_intent` and must not invoke this
         with ``None``.
 
+        Entry sizing is an **entry-only** precondition (review B1): the
+        deposit -> base-nominal conversion (C2) is resolved on the FLAT live
+        entry path (and for a generic engine without a live position state).
+        OPEN / UNKNOWN / SIGN_MISMATCH never read the deposit or the grid mode:
+        exits of an open deal depend only on the |PositionManager| quantity
+        (:meth:`_exit_position_quantity`), so an open position keeps its exit
+        maintenance even when the deposit is unset, cleared or the grid mode is
+        SIGNAL/CUSTOM-over-100% (C6). On the FLAT path the deposit is read at
+        the moment of the entry (C6) via the wired async ``deposit_provider``;
+        a deposit edit therefore applies from the next deal and never affects
+        an open deal.
+
         ``intent_factory`` may return a single intent, a list of intents, or
         None; every returned intent is submitted through :meth:`submit_intent`,
         so the Risk Manager is always consulted before the Order Manager.
@@ -154,15 +171,10 @@ class TradingEngine:
                 "TradingEngine.process() requires a StrategyEngine and a strategy "
                 "config; the live execution path uses submit_intent() instead"
             )
-        if self._sizing is None:
-            raise SizingNotConfigured(
-                "TradingEngine.process() requires an explicit position-sizing "
-                "source to build a safe live order quantity"
-            )
-        base_nominal = self._sizing.resolve_base_nominal(self._strategy_config.dca_grid)
         timeframe = self._require_live_timeframe()
         position_state = self._live_position_state()
         position_qty = self._exit_position_quantity()
+        base_nominal = await self._entry_base_nominal(position_state)
         plan = self.strategy_engine.evaluate(
             self._strategy_config,
             context,
@@ -293,3 +305,48 @@ class TradingEngine:
             )
         except (PositionUnavailable, InvalidPositionQuantity):
             return None
+
+    async def _entry_base_nominal(
+        self, position_state: LivePositionState | None
+    ) -> Decimal | None:
+        """The C2 base nominal, resolved only when an entry can be sized (B1).
+
+        Entry sizing (deposit -> base nominal, C2/C3) is an **entry-only**
+        precondition: it is resolved on the FLAT live entry path, and for a
+        generic engine without a live position state (where it is the only
+        source of grid quantity). OPEN / UNKNOWN / SIGN_MISMATCH yield ``None``
+        — exits of an open deal depend only on the PositionManager quantity and
+        never on the deposit or the grid mode (B1/C6).
+
+        On the FLAT path the deposit is read at the moment of the entry (C6):
+        when a broker-neutral async ``deposit_provider`` is wired (production
+        reads ``Bot.deposit`` from the repository per entry), the latest value
+        is used, so a deposit edit applies from the next deal and an already
+        open deal is unaffected. Without a provider the static sizing source is
+        used (tests / generic engines).
+        """
+        if self._instrument_figi is None:
+            # Generic engine (no live position state): the sizing source remains
+            # the only grid quantity source (MVP-6.8 behavior, unchanged).
+            if self._sizing is None:
+                raise SizingNotConfigured(
+                    "TradingEngine.process() requires an explicit position-sizing "
+                    "source to build a safe live order quantity"
+                )
+            return self._sizing.resolve_base_nominal(self._strategy_config.dca_grid)
+        if position_state is not LivePositionState.FLAT:
+            return None
+        if self._sizing is None:
+            raise SizingNotConfigured(
+                "TradingEngine.process() requires an explicit position-sizing "
+                "source to build a safe live order quantity"
+            )
+        if self._deposit_provider is not None:
+            sizing = PositionSizing(
+                base_nominal=self._sizing.base_nominal,
+                deposit=await self._deposit_provider(),
+                lot_size=self._sizing.lot_size,
+                currency=self._sizing.currency,
+            )
+            return sizing.resolve_base_nominal(self._strategy_config.dca_grid)
+        return self._sizing.resolve_base_nominal(self._strategy_config.dca_grid)

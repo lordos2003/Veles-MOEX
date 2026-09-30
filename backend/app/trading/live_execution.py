@@ -267,14 +267,16 @@ async def build_live_service() -> LiveExecutionService:
     ``build_market_context()`` from the real last price (no fabricated
     prices/candles/timestamps).
 
-    Bot deposit sizing (MVP-6.11 C5): the per-bot ``TradingEngine`` is given
-    ``PositionSizing(deposit=Bot.deposit, lot_size=Instrument.lot_size,
-    currency=Instrument.currency)``: the authoritative sizing source is the
-    bot's own deposit (C2 converts it to the DCA/Grid base nominal; C3 rounds
-    the grid down to whole lots). An unset deposit (``None``) keeps the
-    existing behavior: ``process()`` blocks live strategy execution with
-    ``SizingNotConfigured``. No financial default (100 / 1.0 / a default lot /
-    a default currency) is invented.
+    Bot deposit sizing (MVP-6.11 C5/C6): the per-bot ``TradingEngine`` is given
+    ``PositionSizing(lot_size=Instrument.lot_size, currency=Instrument.currency)``
+    and an async deposit provider reading ``Bot.deposit`` at **each FLAT entry**
+    (C6, review correction B1: entry sizing is an entry-only precondition —
+    OPEN exits never read the deposit). C2 converts the deposit to the DCA/Grid
+    base nominal; C3 rounds the grid down to whole lots. An unset deposit
+    (``None``) keeps the existing behavior: the FLAT entry blocks with
+    ``SizingNotConfigured`` while open-deal exits continue (B1). A deposit edit
+    applies from the next deal (C6). No financial default (100 / 1.0 / a
+    default lot / a default currency) is invented.
 
     Position quantity boundary (MVP-6.9): the wired ``PositionManager`` is the
     only authoritative source of live execution quantity. The per-bot
@@ -399,6 +401,15 @@ async def build_live_service() -> LiveExecutionService:
                     ),
                 )
 
+            async def _deposit_provider() -> Decimal | None:
+                # MVP-6.11 C6: the deposit is read at each FLAT entry, never
+                # snapshotted when the per-bot engine is built, so a deposit
+                # edit applies from the next deal (an open deal is unaffected).
+                # A missing bot blocks the entry explicitly via
+                # SizingNotConfigured (no fabricated deposit).
+                bot = await bot_repository.get(bot_id)
+                return bot.deposit if bot is not None else None
+
             engine = TradingEngine(
                 broker,
                 strategy_engine,
@@ -409,20 +420,22 @@ async def build_live_service() -> LiveExecutionService:
                 intent_factory=_intent_factory,
                 instrument_figi=instrument.figi,
                 bot_id=bot_id,
-                # MVP-6.11 C5: the authoritative sizing source is the bot's own
-                # deposit (Bot.deposit); C2 derives the base nominal from it,
-                # C3 uses the instrument lot size / currency for the MOEX
-                # lot-rounding contract. An unset deposit (None) keeps the
-                # existing behavior: `TradingEngine.process()` blocks live
-                # strategy execution with SizingNotConfigured. No default
-                # (100 / 1.0 / a default lot / a default currency) is used. The
-                # authoritative exit quantity comes from the wired
-                # PositionManager (MVP-6.9), never a placeholder.
+                # MVP-6.11 C5/C6: the sizing source uses the instrument lot
+                # size / currency for the MOEX lot-rounding contract (C3); the
+                # deposit itself is not snapshotted here — it is read from
+                # Bot.deposit at each FLAT entry via the async provider (C6,
+                # review correction B1: entry sizing is entry-only, OPEN exits
+                # never read the deposit). An unset deposit (None) keeps the
+                # existing behavior: the FLAT entry blocks with
+                # SizingNotConfigured. No default (100 / 1.0 / a default lot /
+                # a default currency) is used. The authoritative exit quantity
+                # comes from the wired PositionManager (MVP-6.9), never a
+                # placeholder.
                 sizing=PositionSizing(
-                    deposit=bot.deposit,
                     lot_size=instrument.lot_size,
                     currency=instrument.currency,
                 ),
+                deposit_provider=_deposit_provider,
             )
             await engine.start()
             return engine

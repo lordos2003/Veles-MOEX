@@ -64,7 +64,13 @@ from app.trading import (
     deposit_to_base_nominal,
     round_grid_to_lot,
 )
-from app.trading.domain import TERMINAL_STATES, ExecutionIntent, OrderState, OrderUpdate
+from app.trading.domain import (
+    TERMINAL_STATES,
+    ExecutionIntent,
+    Fill,
+    OrderState,
+    OrderUpdate,
+)
 from app.trading.plan_intent import plan_to_intents
 
 T0 = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
@@ -132,6 +138,7 @@ def _live_engine(
     sizing: PositionSizing | None = None,
     strategy: StrategyConfig | None = None,
     bot_id: int | None = 1,
+    deposit_provider=None,
 ) -> TradingEngine:
     om = om or OrderManager(broker)
     pm = positions if positions is not None else om.positions()
@@ -150,8 +157,19 @@ def _live_engine(
         sizing=sizing or PositionSizing(base_nominal=Decimal("5000"), lot_size=1, currency="RUB"),
         instrument_figi=FIGI,
         bot_id=bot_id,
+        deposit_provider=deposit_provider,
     )
     return engine
+
+
+class DepositHolder:
+    """Mutable async deposit source: the value read at each FLAT entry (C6)."""
+
+    def __init__(self, value: Decimal | None) -> None:
+        self.value = value
+
+    async def __call__(self) -> Decimal | None:
+        return self.value
 
 
 # --- 1: SIMPLE deposit -> nominals ---------------------------------------------
@@ -322,6 +340,10 @@ def test_bot_deposit_schema_validation() -> None:
         BotDepositUpdate(deposit=Decimal("0"))
     with pytest.raises(ValidationError):
         BotDepositUpdate(deposit=Decimal("-1"))
+    # Review observation 2 (C6 round): the deposit key is required — a PATCH
+    # without it must not silently clear the deposit.
+    with pytest.raises(ValidationError):
+        BotDepositUpdate()
     assert BotDepositUpdate(deposit=None).deposit is None
     assert BotDepositUpdate(deposit=Decimal("100")).deposit == Decimal("100")
 
@@ -359,6 +381,13 @@ def test_bot_deposit_api_endpoint_validation() -> None:
             response = client.patch("/api/bots/1", json={"deposit": "10000"})
             assert response.status_code == 200
             assert response.json()["deposit"] == "10000"
+            assert bot.deposit == Decimal("10000")
+
+            # Review observation 2 (C6 round): a PATCH without the deposit key
+            # must not silently clear the deposit — the key is required (422)
+            # and the stored value stays unchanged.
+            response = client.patch("/api/bots/1", json={})
+            assert response.status_code == 422
             assert bot.deposit == Decimal("10000")
 
             response = client.patch("/api/bots/1", json={"deposit": None})
@@ -626,3 +655,214 @@ async def test_repository_update_deposit_persists_value() -> None:
     updated = await repo.update_deposit(bot, Decimal("123"))
     assert updated.deposit == Decimal("123")
     assert bot.deposit == Decimal("123")
+
+
+# --- B1: entry sizing is an entry-only precondition (round-1 correction) ---------
+
+
+async def test_open_without_deposit_submits_exit_only() -> None:
+    # B1 regression 1: an open deal must keep its exit even when the deposit
+    # is unset — the base nominal is resolved only on the FLAT entry path.
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
+    pm.mark_reconciled()
+    engine = _live_engine(broker, om=om, positions=pm, sizing=PositionSizing())
+    await engine.start()
+    await engine.process(_context())
+    orders = om.list_orders()
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.SELL
+    assert orders[0].requested_quantity == Decimal("10")
+    assert orders[0].limit_price == Decimal("110")
+
+
+async def test_open_signal_mode_submits_exit_only() -> None:
+    # B1 regression 2: SIGNAL grid mode has no deposit->nominal rule, but the
+    # open deal's exit must not depend on it.
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
+    pm.mark_reconciled()
+    engine = _live_engine(
+        broker,
+        om=om,
+        positions=pm,
+        sizing=PositionSizing(deposit=Decimal("10000"), lot_size=10, currency="RUB"),
+        strategy=_strategy(dca_grid=DCAGridConfig(mode=TradingMode.SIGNAL, levels=3)),
+    )
+    await engine.start()
+    await engine.process(_context())
+    orders = om.list_orders()
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.SELL
+    assert orders[0].requested_quantity == Decimal("10")
+
+
+async def test_open_custom_over_100_submits_exit_only() -> None:
+    # B1 regression 3: a CUSTOM percent sum > 100% blocks entries only — the
+    # open deal's exit still proceeds.
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
+    pm.mark_reconciled()
+    engine = _live_engine(
+        broker,
+        om=om,
+        positions=pm,
+        sizing=PositionSizing(deposit=Decimal("10000"), lot_size=10, currency="RUB"),
+        strategy=_strategy(
+            dca_grid=DCAGridConfig(
+                mode=TradingMode.CUSTOM,
+                custom_levels=[
+                    CustomLevel(offset_percent=0.0, nominal_percent=60.0),
+                    CustomLevel(offset_percent=1.0, nominal_percent=50.0),
+                ],
+            )
+        ),
+    )
+    await engine.start()
+    await engine.process(_context())
+    orders = om.list_orders()
+    assert len(orders) == 1
+    assert orders[0].side is OrderSide.SELL
+    assert orders[0].requested_quantity == Decimal("10")
+
+
+async def test_flat_without_deposit_blocked_explicitly() -> None:
+    # B1 regression 4: a FLAT entry with no deposit still fails explicitly
+    # (no fabricated quantity) and places nothing.
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.mark_reconciled()
+    engine = _live_engine(broker, om=om, positions=pm, sizing=PositionSizing())
+    await engine.start()
+    with pytest.raises(SizingNotConfigured):
+        await engine.process(_context())
+    assert om.list_orders() == []
+    assert broker.place_calls == 0
+
+
+# --- C6: deposit edits apply from the next deal -----------------------------------
+
+
+async def test_deposit_edit_applies_from_next_flat_entry() -> None:
+    # C6: the deposit is read at each FLAT entry, so an edit while the bot is
+    # RUNNING (no restart) applies from the next deal.
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.mark_reconciled()
+    deposit = DepositHolder(Decimal("10000"))
+    engine = _live_engine(
+        broker,
+        om=om,
+        positions=pm,
+        sizing=PositionSizing(lot_size=10, currency="RUB"),
+        deposit_provider=deposit,
+    )
+    await engine.start()
+    await engine.process(_context())  # 10000 RUB -> 100 units
+    first = om.list_orders()[0]
+    assert first.side is OrderSide.BUY
+    assert first.requested_quantity == Decimal("100")
+    # Terminate the first order without a fill so the position stays FLAT.
+    om.on_order_update(
+        OrderUpdate(broker_order_id=first.broker_order_id, status=OrderState.FILLED)
+    )
+    deposit.value = Decimal("20000")
+    await engine.process(_context())  # 20000 RUB -> 200 units
+    orders = om.list_orders()
+    assert len(orders) == 2
+    assert orders[1].side is OrderSide.BUY
+    assert orders[1].requested_quantity == Decimal("200")
+
+
+async def test_deposit_edit_while_open_affects_only_next_deal() -> None:
+    # C6: a deposit edit while a deal is OPEN must not change the open deal's
+    # exit; the new deposit is used only when the next FLAT entry happens.
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
+    pm.mark_reconciled()
+    deposit = DepositHolder(Decimal("10000"))
+    engine = _live_engine(
+        broker,
+        om=om,
+        positions=pm,
+        sizing=PositionSizing(lot_size=10, currency="RUB"),
+        deposit_provider=deposit,
+    )
+    await engine.start()
+    await engine.process(_context())
+    exit_order = om.list_orders()[0]
+    assert exit_order.side is OrderSide.SELL
+    assert exit_order.requested_quantity == Decimal("10")
+    # Edit while OPEN: repeated cycles keep the same exit (stable intent id)
+    # and never read the deposit.
+    deposit.value = Decimal("20000")
+    await engine.process(_context())
+    assert len(om.list_orders()) == 1
+    assert broker.place_calls == 1
+    # Close the deal: the exit fill returns the position to FLAT.
+    om.apply_fill(
+        Fill(
+            fill_id="fill-1",
+            internal_order_id=exit_order.order_id,
+            quantity=Decimal("10"),
+            price=Decimal("110"),
+            timestamp=T0,
+        )
+    )
+    assert pm.position_state(FIGI, Direction.LONG) is LivePositionState.FLAT
+    await engine.process(_context())  # next deal uses the new deposit
+    orders = om.list_orders()
+    assert len(orders) == 2
+    assert orders[1].side is OrderSide.BUY
+    assert orders[1].requested_quantity == Decimal("200")
+
+
+async def test_deposit_cleared_while_open_exit_continues_then_flat_blocks() -> None:
+    # C6: clearing the deposit while a deal is OPEN keeps the exit alive; the
+    # next FLAT entry then fails explicitly (no deposit, no fabricated value).
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
+    pm.mark_reconciled()
+    deposit = DepositHolder(Decimal("10000"))
+    engine = _live_engine(
+        broker,
+        om=om,
+        positions=pm,
+        sizing=PositionSizing(lot_size=10, currency="RUB"),
+        deposit_provider=deposit,
+    )
+    await engine.start()
+    await engine.process(_context())
+    exit_order = om.list_orders()[0]
+    assert exit_order.side is OrderSide.SELL
+    # Clear the deposit while OPEN: the exit is unaffected.
+    deposit.value = None
+    await engine.process(_context())
+    assert len(om.list_orders()) == 1
+    assert broker.place_calls == 1
+    # Close the deal; the next FLAT entry cannot be sized -> explicit failure.
+    om.apply_fill(
+        Fill(
+            fill_id="fill-1",
+            internal_order_id=exit_order.order_id,
+            quantity=Decimal("10"),
+            price=Decimal("110"),
+            timestamp=T0,
+        )
+    )
+    assert pm.position_state(FIGI, Direction.LONG) is LivePositionState.FLAT
+    with pytest.raises(SizingNotConfigured):
+        await engine.process(_context())
+    assert len(om.list_orders()) == 1

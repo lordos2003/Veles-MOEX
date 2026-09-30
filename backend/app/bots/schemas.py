@@ -22,10 +22,12 @@ class BotResponse(BaseModel):
 
 
 class BotDepositUpdate(BaseModel):
-    """Write-side contract for the bot deposit (MVP-6.11 C5).
+    """Write-side contract for the bot deposit (MVP-6.11 C5/C6).
 
-    A positive ``Decimal`` sets the deposit; ``None`` clears it. A non-positive
-    value is rejected (FastAPI 422); no default deposit is invented.
+    The ``deposit`` key is required: a ``PATCH`` without it must not silently
+    clear the deposit (review observation 2). A positive ``Decimal`` sets the
+    deposit; an explicit ``null`` clears it. A non-positive value is rejected
+    (FastAPI 422); no default deposit is invented.
     """
 
-    deposit: Decimal | None = Field(default=None, gt=0)
+    deposit: Decimal | None = Field(gt=0)

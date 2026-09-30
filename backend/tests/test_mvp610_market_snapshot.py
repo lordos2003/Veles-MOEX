@@ -253,6 +253,27 @@ async def test_valid_market_snapshot_from_broker_data() -> None:
     assert all(c.figi == FIGI and c.timeframe is TF for c in snap.candles)
 
 
+async def test_snapshot_trimmed_to_exact_lookback_bars() -> None:
+    # GitHub Issue #3 (C7): the retrieval window is one bar wider than the
+    # configured lookback (to account for the forming bar), so the broker may
+    # return lookback_bars + 1 candles. The snapshot must contain exactly
+    # lookback_bars — the newest candle retained at the end, chronological
+    # order preserved.
+    broker = RecordingBroker(
+        last_price=LastPrice(figi=FIGI, price=Decimal("104.5"), timestamp=T0),
+        candles=_candles(11),  # lookback_bars + 1
+    )
+    snap = await MarketDataService(broker).get_snapshot(FIGI, TF, lookback_bars=10)
+    assert len(snap.candles) == 10
+    assert snap.candles[-1].timestamp == T0
+    # The oldest candle is dropped; the retained series stays contiguous and
+    # chronological (5-minute steps up to T0).
+    assert snap.candles[0].timestamp == T0 - timedelta(minutes=5 * 9)
+    assert [c.timestamp for c in snap.candles] == [
+        T0 - timedelta(minutes=5 * i) for i in range(9, -1, -1)
+    ]
+
+
 def test_market_snapshot_to_context_preserves_values() -> None:
     ctx = market_snapshot_to_context(_snapshot())
     assert ctx.price == 100.5
