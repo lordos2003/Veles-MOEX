@@ -177,3 +177,7 @@ C1–C5 (round 1), B1 + C6 + C7 (round 2), B2 (round 3) — all closed.
 1. `make_deposit_provider()` contains a duplicated, **unreachable** copy of the inner function after `return` (`live_execution.py`, directly below the first `return _deposit_provider`). It is harmless dead code; remove it in the next MVP.
 2. Round-1 observations 3–5 remain open: C3 must be applied to every level in deal continuation; position state is per FIGI, not per bot; TP is derived from the market price, not the average entry price.
 3. Publication steps: merge `agent/review/mvp-6.11` → `master` via PR (no force, no rebase), then mirror the MVP-6.11 control records to `master` and add the "Mandatory push rule" to `AGENTS.md` §6 on `master`, then close Issues #3 and #5.
+
+### Publication record
+
+Published 2026-09-30: PR #6 (`agent/review/mvp-6.11` → `master`, merge commit, pinned to the accepted SHA `e026886`), merge commit `40cf6ce802e685b99ae527758949e29a8a67d26d`. Issues #3 and #5 closed by the PR.

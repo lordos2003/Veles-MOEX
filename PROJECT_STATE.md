@@ -6,7 +6,7 @@
 - Initial broker boundary: no direct MOEX API. `TInvestAdapter.place_order()` (PostOrder, MVP-6.2) exists behind `RiskManager -> OrderManager`, but no live strategy cycle is scheduled/enabled in production yet (see Known boundaries).
 
 ## Canonical workflow
-`agent/control -> agent/review/mvp-X -> independent ChatGPT review -> master`
+`agent/control -> agent/review/mvp-X -> independent review (ChatGPT / Claude) -> master`
 
 - `agent/control` is the canonical control/audit source.
 - New tasks, audits and reviews start from the current `agent/control`.
@@ -17,23 +17,41 @@
 
 ## Current task
 
-### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
-**Status: ACCEPTED (round 3, 2026-09-30) — awaiting publication to `master`.**
-
-- Accepted implementation: `e026886dfdc` (`agent/review/mvp-6.11`); review: `.agent/REVIEW-MVP-6.11.md` (rounds 1–3); reports: `REPORT-MVP-6.11.md`, `-REV1.md`, `-REV2.md`.
-- Validation (independent, clean env): `pytest 412 passed, 1 skipped`; `ruff` clean; alembic head `0004_bot_deposit`.
-
-- Reviewed: `e036c0e` (round 1), `a6aaba5` (round 2); review record: `.agent/REVIEW-MVP-6.11.md`; report: `.agent/REPORT-MVP-6.11.md`; correction reports: `.agent/REPORT-MVP-6.11-REV1.md`, `.agent/REPORT-MVP-6.11-REV2.md`
-- B1 (round-1 rejection): exits of an OPEN position must not depend on entry sizing (deposit / SIGNAL / CUSTOM errors blocked the TP) — corrected: sizing is resolved on the FLAT entry path only.
-- C7 (carry-over, Issue #3): trim the market snapshot to exactly the latest `lookback_bars` candles — implemented; Issue #3 stays open until publication to `master`.
-- C6 (owner decision 2026-09-29, Veles semantics): deposit edits apply from the next deal — deposit is read at each FLAT entry; an open deal is unaffected. Implemented; the deposit key is required on PATCH (a PATCH without it is 422, not a silent clear). Round-2 correction B2: the production provider reads the current DB value (`BotRepository.get_deposit` with `populate_existing=True`) — the long-lived live session must not hand its stale identity-map copy (`expire_on_commit=False`) to the engine; correction `e026886` pushed.
-
-- Control task: `.agent/TASK-MVP-6.11-BOT-DEPOSIT-SIZING.md`
-- Implementation branch: `agent/review/mvp-6.11` (from `master` @ `10d445e`)
-- Closes the two remaining blockers of the live path: no sizing source (`SizingNotConfigured`) and the MVP-6.9 gate blocking entry from a flat position.
-- New contracts C1–C5 (deposit semantics, deposit → order nominals, MOEX lot rounding down, confirmed-flat entry, `Bot.deposit`) approved by the project owner on 2026-09-29.
+No task is open. Next candidates (to be specified on `agent/control` before assignment):
+- live cycle scheduler (who triggers `BotRuntime.execute_strategy`, per-bot timeframe, "at bar close" / "once per minute" Veles methods);
+- deal continuation across cycles (persisted grid state, averaging after entry with the deposit captured at entry, C3 on every level, TP from the average entry price);
+- clean-up: unreachable duplicate in `make_deposit_provider()` (`live_execution.py`).
 
 ## Current accepted MVP
+
+### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
+**Status: ACCEPTED (round 3, 2026-09-30) and published to master.**
+
+- Accepted implementation: `e026886dfdc6f98112dfc214060c5fc2bb2ae075`
+- Publication PR: #6
+- Publication merge commit: `40cf6ce802e685b99ae527758949e29a8a67d26d`
+- Control task: `.agent/TASK-MVP-6.11-BOT-DEPOSIT-SIZING.md`
+- Control review: `.agent/REVIEW-MVP-6.11.md` (round 1 REJECTED B1, round 2 REJECTED B2, round 3 ACCEPT)
+- Reports: `.agent/REPORT-MVP-6.11.md`, `.agent/REPORT-MVP-6.11-REV1.md`, `.agent/REPORT-MVP-6.11-REV2.md`
+
+Contracts (owner-approved 2026-09-29/30):
+- C1/C5 `Bot.deposit` (bot setting, migration `0004_bot_deposit`, `GET/PATCH /api/bots/{id}`, `> 0`, `deposit` key required on PATCH);
+- C2 sum of all grid-order nominals of a deal = deposit (SIMPLE `D/Σkⁱ`, CUSTOM `D×pct/100` with the >100% guard, SIGNAL blocked — no order limit invented); spot 1:1, no leverage;
+- C3 MOEX lots rounded down; any level below one lot blocks the whole entry; missing lot/currency blocks;
+- C4 live position state UNKNOWN / FLAT / OPEN / SIGN_MISMATCH, established only by a successful broker reconciliation; FLAT → entry only (no active bot orders); OPEN → exits only; others → nothing;
+- C6 deposit edits apply from the next deal: fresh DB read (`populate_existing`) at each FLAT entry; an open deal is unaffected;
+- C7 market snapshot trimmed to exactly `lookback_bars` (Issue #3);
+- B1 exits of an open position never depend on entry sizing.
+
+Validation (independent, clean env): `pytest 412 passed, 1 skipped`; `ruff check app tests scripts` passed; alembic single head `0004_bot_deposit`; `npm run build` passed (no frontend changes).
+
+Known boundaries:
+- no live cycle scheduler; the strategy cycle is triggered explicitly;
+- no deal continuation: while OPEN only exits are produced; averaging after entry is not implemented;
+- TP price is derived from the market-context price, not the average entry price (pre-existing);
+- position state is per FIGI, not per bot (manual trades / several bots on one instrument share it);
+- Backtest sizing (`BacktestConfig.quantity`) differs from the Live deposit contract C2;
+- SIGNAL-mode live entry is blocked until an order-limit contract is approved.
 
 ### MVP-6.10 — Live Market Snapshot & Per-Bot Timeframe
 **Status: ACCEPTED and published to master.**
@@ -48,7 +66,7 @@
 Round-2 corrections:
 - removed inferred indicator warmup / `required_bars` semantics;
 - introduced explicit `StrategyConfig.lookback_bars`;
-- **correction (2026-09-30):** snapshots are NOT yet trimmed to exactly `lookback_bars` (may return `lookback_bars + 1`); fix tracked by Issue #3, delivered as C7 in the MVP-6.11 correction round;
+- **correction (2026-09-30):** the exact `lookback_bars` trim was not in the MVP-6.10 code; delivered by MVP-6.11 C7 (PR #6, Issue #3 closed);
 - MVP-6.9 position-state invariant remains intact.
 
 Validation recorded for MVP-6.10: `pytest 369 passed, 1 skipped`; `ruff check app tests scripts` passed; `npm run build` passed.
@@ -78,7 +96,7 @@ Known boundaries:
 - DCA/Grid and Backtest semantics are preserved across live-market-data work.
 
 ## Workflow rule: push before review
-Work is delivered only when `agent/review/mvp-X` and the REPORT on `agent/control` are pushed to GitHub (plain push, no `--force`/rebase). See `.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule". `AGENTS.md` (on `master`) receives the same rule with the next publication.
+Work is delivered only when `agent/review/mvp-X` and the REPORT on `agent/control` are pushed to GitHub (plain push, no `--force`/rebase). See `.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule". The same rule is in `AGENTS.md` §6 (published with MVP-6.11).
 
 ## Recovery
 For a new ChatGPT/OpenCode session:
