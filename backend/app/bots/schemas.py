@@ -19,6 +19,9 @@ class BotResponse(BaseModel):
     deposit: Decimal | None = None
     started_at: datetime | None = None
     stopped_at: datetime | None = None
+    # B2 (MVP-6.12 correction round 1): the last Deal-layer failure reason for
+    # this bot (None when no deal failure has been recorded). Read-only.
+    deal_error: str | None = None
 
 
 class BotDepositUpdate(BaseModel):

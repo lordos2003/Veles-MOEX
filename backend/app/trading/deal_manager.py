@@ -15,6 +15,7 @@ same C3/D3 contract as the rest of the live path.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
 
 from app.models.enums import OrderSide, OrderType
@@ -48,7 +49,7 @@ from app.trading.domain import (
 )
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
-from app.trading.risk_manager import RiskManager
+from app.trading.risk_manager import RiskManager, RiskRejected
 from app.trading.sizing import LotSizeUnavailable, SizingBelowLot
 
 
@@ -80,6 +81,10 @@ class DealManager:
         store: DealStore,
         order_manager: OrderManager,
         risk_manager: RiskManager,
+        *,
+        # B2: broker-neutral callback that surfaces a deal failure to the bot
+        # lifecycle (production wires bot ERROR + persistence; tests capture).
+        on_bot_error: Callable[[int, str], Awaitable[None]] | None = None,
     ) -> None:
         self._store = store
         self._om = order_manager
@@ -89,6 +94,8 @@ class DealManager:
         self._blocked: set[int] = set()
         self._pending: list[tuple[InternalOrder, Fill]] = []
         self._last_error: DealError | None = None
+        self._errors: dict[int, str] = {}
+        self._on_bot_error = on_bot_error
         # Fills arrive on the synchronous stream path; the async reactions are
         # drained by pump() (production wires pump to the stream's per-batch hook).
         order_manager.fill_listener = self._on_order_fill
@@ -104,8 +111,72 @@ class DealManager:
     def last_error(self) -> DealError | None:
         return self._last_error
 
+    def last_error_for(self, bot_id: int) -> str | None:
+        """B2: the last deal-failure reason for one bot (observable via the API)."""
+        return self._errors.get(bot_id)
+
     def active_deal(self, bot_id: int) -> Deal | None:
         return self._deals.get(bot_id)
+
+    # --- failure surfacing (B2) -------------------------------------------------
+
+    async def _fail_deal(
+        self, bot_id: int | None, deal: Deal | None, exc: Exception
+    ) -> None:
+        """Mark a Deal ERROR, block new submissions and surface the failure.
+
+        B2: the bot lifecycle is notified through the broker-neutral
+        ``on_bot_error`` callback; the reason is kept observable via
+        :meth:`last_error_for`. Every failure path (``pump()``, ``open_deal()``,
+        recovery) funnels through here so no deal error is ever silent.
+        """
+        error = exc if isinstance(exc, DealError) else DealReconciliationRequired(str(exc))
+        self._last_error = error
+        if deal is not None and deal.status is not DealStatus.CLOSED:
+            deal.status = DealStatus.ERROR
+            deal.updated_at = utcnow()
+            try:
+                await self._store.save(deal)
+            except Exception:  # noqa: BLE001 - the in-memory ERROR block is already set
+                # B1: even a failing store must not let the failure escape the
+                # per-event boundary; the in-memory block + reason stay intact.
+                pass
+        if bot_id is None:
+            return
+        self._blocked.add(bot_id)
+        self._errors[bot_id] = str(error)
+        await self._notify_bot_error(bot_id, str(error))
+
+    async def _notify_bot_error(self, bot_id: int | None, reason: str) -> None:
+        """Best-effort notification of the bot lifecycle (B2).
+
+        The Deal layer already guarantees the safety invariant (Deal ERROR,
+        block); the lifecycle notification is a secondary surfacing path and a
+        callback failure must not lose the primary block or the reason.
+        """
+        if self._on_bot_error is None or bot_id is None:
+            return
+        try:
+            await self._on_bot_error(bot_id, reason)
+        except Exception:  # noqa: BLE001 - surfacing must not break the deal block
+            pass
+
+    async def assert_deal_for_open_position(self, bot_id: int, figi: str) -> None:
+        """B2/D5: an OPEN position must be owned by a non-CLOSED Deal.
+
+        The live cycle refuses to continue over an OPEN position without a
+        Deal (e.g. after a restart or a failure that lost the owner): the bot
+        goes to ERROR with an explicit reason — the D5 contradiction is never
+        silently ignored.
+        """
+        if bot_id in self._deals:
+            return
+        reason = (
+            f"bot {bot_id}: position {figi} is OPEN but no owning non-CLOSED "
+            "Deal exists; live cycle stopped for reconciliation (D5/B2)"
+        )
+        await self._notify_bot_error(bot_id, reason)
+        raise DealPositionContradiction(reason)
 
     # --- entry (D2) -----------------------------------------------------------------
 
@@ -141,66 +212,75 @@ class DealManager:
             raise DealBlocked(
                 f"bot {bot_id} already has an open deal; no second deal is opened"
             )
-        grid = DCAGridEngine().build(
-            config.dca_grid, reference_price, direction, base_nominal=base_nominal
-        )
-        limit_levels = [lvl for lvl in grid.levels if not lvl.is_market]
-        if limit_levels and (tick_size is None or tick_size <= 0):
-            raise DealTickSizeInvalid(
-                f"a positive tick size is required for D3 grid alignment, got "
-                f"{tick_size!r}"
+        deal: Deal | None = None
+        try:
+            grid = DCAGridEngine().build(
+                config.dca_grid, reference_price, direction, base_nominal=base_nominal
             )
-        levels: list[DealLevel] = []
-        for lvl in grid.levels:
-            quantity = _round_down_lots(lvl.quantity, lot_size)
-            if quantity <= 0:
-                raise SizingBelowLot(
-                    f"deal grid level {lvl.index} rounds down to 0 lots "
-                    f"(quantity {lvl.quantity}, lot size {lot_size}); the whole "
-                    f"entry is blocked (C3)"
+            limit_levels = [lvl for lvl in grid.levels if not lvl.is_market]
+            if limit_levels and (tick_size is None or tick_size <= 0):
+                raise DealTickSizeInvalid(
+                    f"a positive tick size is required for D3 grid alignment, got "
+                    f"{tick_size!r}"
                 )
-            price = (
-                None
-                if lvl.is_market
-                else align_grid_price(lvl.price, tick_size, direction)
-            )
-            levels.append(
-                DealLevel(
-                    index=lvl.index,
-                    side=lvl.side,
-                    price=price,
-                    nominal=lvl.nominal,
-                    quantity=quantity,
-                    offset_percent=lvl.offset_percent,
-                    status=(
-                        DealLevelStatus.ACTIVE
-                        if lvl.status is GridLevelStatus.ACTIVE
-                        else DealLevelStatus.WAITING
-                    ),
-                    is_market=lvl.is_market,
+            levels: list[DealLevel] = []
+            for lvl in grid.levels:
+                quantity = _round_down_lots(lvl.quantity, lot_size)
+                if quantity <= 0:
+                    raise SizingBelowLot(
+                        f"deal grid level {lvl.index} rounds down to 0 lots "
+                        f"(quantity {lvl.quantity}, lot size {lot_size}); the whole "
+                        f"entry is blocked (C3)"
+                    )
+                price = (
+                    None
+                    if lvl.is_market
+                    else align_grid_price(lvl.price, tick_size, direction)
                 )
+                levels.append(
+                    DealLevel(
+                        index=lvl.index,
+                        side=lvl.side,
+                        price=price,
+                        nominal=lvl.nominal,
+                        quantity=quantity,
+                        offset_percent=lvl.offset_percent,
+                        status=(
+                            DealLevelStatus.ACTIVE
+                            if lvl.status is GridLevelStatus.ACTIVE
+                            else DealLevelStatus.WAITING
+                        ),
+                        is_market=lvl.is_market,
+                    )
+                )
+            deal = Deal(
+                bot_id=bot_id,
+                instrument_figi=instrument_figi,
+                direction=direction,
+                deposit=deposit,
+                base_nominal=base_nominal,
+                reference_price=reference_price,
+                lot_size=lot_size,
+                tick_size=tick_size,
+                tp_percent=config.exit.take_profit.percent,
+                active_limit=grid.active_limit,
+                account_id=account_id,
+                levels=levels,
             )
-        deal = Deal(
-            bot_id=bot_id,
-            instrument_figi=instrument_figi,
-            direction=direction,
-            deposit=deposit,
-            base_nominal=base_nominal,
-            reference_price=reference_price,
-            lot_size=lot_size,
-            tick_size=tick_size,
-            tp_percent=config.exit.take_profit.percent,
-            active_limit=grid.active_limit,
-            account_id=account_id,
-            levels=levels,
-        )
-        # D2: persist the Deal BEFORE submitting any order, so a crash between
-        # the two cannot leave running orders without a Deal to recover.
-        await self._store.save(deal)
-        await self._submit_ready_levels(deal)
-        await self._store.save(deal)
-        self._deals[bot_id] = deal
-        return deal
+            # D2: persist the Deal BEFORE submitting any order, so a crash between
+            # the two cannot leave running orders without a Deal to recover.
+            await self._store.save(deal)
+            await self._submit_ready_levels(deal)
+            await self._store.save(deal)
+            self._deals[bot_id] = deal
+            return deal
+        except Exception as exc:  # noqa: BLE001 - B2: a deal-opening failure is surfaced
+            # B2: a failed entry is not silent — the bot lifecycle is notified
+            # (ERROR) and the reason is observable via ``last_error_for``; the
+            # original exception is re-raised so the caller still sees the
+            # concrete failure (e.g. SizingBelowLot / DealTickSizeInvalid).
+            await self._fail_deal(bot_id, deal, exc)
+            raise
 
     # --- fill plumbing -------------------------------------------------------------
 
@@ -211,25 +291,30 @@ class DealManager:
         self._pending.append((order, fill))
 
     async def pump(self) -> None:
-        """Apply queued fill reactions for all deals (async drain)."""
+        """Apply queued fill reactions for all deals (async drain).
+
+        B1: every event is handled independently. A failure in one reaction
+        marks exactly that Deal ERROR and notifies the bot lifecycle, then the
+        remaining queued events are still processed — a single bad fill cannot
+        starve the rest of the batch and no exception escapes the stream's
+        ``on_event`` hook.
+        """
         events, self._pending = self._pending, []
         for order, fill in events:
             deal = self._deals.get(order.bot_id)
-            if deal is None or deal.status is DealStatus.CLOSED:
+            if deal is None or deal.status is DealStatus.CLOSED or deal.status is DealStatus.ERROR:
                 continue
             try:
                 if deal.is_tp_intent(order.intent_id):
                     await self._on_tp_fill(deal, order)
                 else:
                     await self._on_grid_fill(deal, order, fill)
-            except DealError as exc:
-                # D4/D5: an unreconcilable reaction marks the Deal ERROR and
-                # blocks the bot's new submissions; the stream keeps running.
-                self._last_error = exc
-                deal.status = DealStatus.ERROR
-                self._blocked.add(deal.bot_id)
-                deal.updated_at = utcnow()
-                await self._store.save(deal)
+            except Exception as exc:  # noqa: BLE001 - B1: isolate every event
+                # D4/D5 with B1/B2: an unreconcilable reaction marks the Deal
+                # ERROR, blocks the bot's new submissions and notifies the bot
+                # lifecycle; the stream keeps running and the rest of the batch
+                # is still applied.
+                await self._fail_deal(order.bot_id, deal, exc)
 
     async def _on_grid_fill(self, deal: Deal, order: InternalOrder, fill: Fill) -> None:
         level = deal.level_by_order(order.order_id)
@@ -267,26 +352,14 @@ class DealManager:
     async def _rearm_tp(self, deal: Deal) -> None:
         """Place exactly one TP for the whole current position (D4).
 
-        Cancel the working TP first (await the confirmation); then recompute
-        quantity (lot-rounded down) and price (average x (1 +- pct/100), tick
-        aligned LONG up / SHORT down) from |PositionManager| facts — never the
-        market price. A cancel/placement that cannot be confirmed blocks new
-        deal submissions and marks the Deal for reconciliation.
+        The new TP is computed and risk-gated BEFORE the working one is
+        cancelled (B1): a risk rejection keeps the old TP in place — the
+        position is never left uncovered — and only a risk-accepted TP replaces
+        it. Quantity (lot-rounded down) and price (average x (1 +- pct/100),
+        tick aligned LONG up / SHORT down) come from |PositionManager| facts —
+        never the market price. A cancel/placement that cannot be confirmed
+        blocks new deal submissions and marks the Deal for reconciliation.
         """
-        if deal.tp_order_id is not None:
-            order = self._om.get_order(deal.tp_order_id)
-            if (
-                order is not None
-                and order.status not in TERMINAL_STATES
-                and order.status is not OrderState.CANCEL_REQUESTED
-            ):
-                cancelled = await self._om.cancel(deal.tp_order_id)
-                if cancelled.status is OrderState.UNKNOWN:
-                    raise DealReconciliationRequired(
-                        f"deal {deal.id}: take-profit cancel could not be "
-                        "confirmed; no second TP is placed and new deal "
-                        "submissions are blocked (D4)"
-                    )
         pos = self._pm.get(deal.instrument_figi)
         if pos is None or pos.quantity == 0:
             await self._close_deal(deal)
@@ -321,7 +394,32 @@ class DealManager:
             account_id=deal.account_id,
             bot_id=deal.bot_id,
         )
-        self._rm.check_order(intent)
+        try:
+            self._rm.check_order(intent)
+        except RiskRejected as exc:
+            # B1: risk-acceptance comes FIRST — the working TP was not cancelled
+            # yet, so a risk rejection leaves the old TAKE-PROFIT in place and
+            # the position stays protected while the Deal transitions ERROR.
+            raise DealOrderRejected(
+                f"deal {deal.id}: take-profit {intent.intent_id} rejected by "
+                f"risk manager: {exc}"
+            ) from exc
+        # B1: only a risk-accepted TP replaces the working one (cancel first,
+        # await the confirmation; then submit the new one).
+        if deal.tp_order_id is not None:
+            order = self._om.get_order(deal.tp_order_id)
+            if (
+                order is not None
+                and order.status not in TERMINAL_STATES
+                and order.status is not OrderState.CANCEL_REQUESTED
+            ):
+                cancelled = await self._om.cancel(deal.tp_order_id)
+                if cancelled.status is OrderState.UNKNOWN:
+                    raise DealReconciliationRequired(
+                        f"deal {deal.id}: take-profit cancel could not be "
+                        "confirmed; no second TP is placed and new deal "
+                        "submissions are blocked (D4)"
+                    )
         tp_order = await self._om.submit(intent)
         if tp_order.status in (OrderState.REJECTED, OrderState.FAILED):
             raise DealOrderRejected(
@@ -361,7 +459,15 @@ class DealManager:
             account_id=deal.account_id,
             bot_id=deal.bot_id,
         )
-        self._rm.check_order(intent)
+        try:
+            self._rm.check_order(intent)
+        except RiskRejected as exc:
+            # B1: a risk rejection of a grid order is a Deal error (never a
+            # silent skip) — the whole entry/re-arm path surfaces it.
+            raise DealOrderRejected(
+                f"deal {deal.id} grid level {level.index} rejected by risk "
+                f"manager: {exc}"
+            ) from exc
         order = await self._om.submit(intent)
         if order.status in (OrderState.REJECTED, OrderState.FAILED):
             raise DealOrderRejected(
@@ -452,16 +558,27 @@ class DealManager:
         for deal in deals:
             try:
                 ok = await self._recover_one(deal, account_id, reconciliation_ok)
-            except DealError as exc:
-                self._last_error = exc
-                ok = False
-            if not ok:
-                deal.status = DealStatus.ERROR
-                self._blocked.add(deal.bot_id)
+            except Exception as exc:  # noqa: BLE001 - B2: every recovery failure surfaces
+                await self._fail_deal(deal.bot_id, deal, exc)
                 self._deals.pop(deal.bot_id, None)
                 safe = False
-            else:
-                self._deals[deal.bot_id] = deal
+                continue
+            if not ok:
+                # B2/D5: an unresolved Deal is an ERROR with an observable reason
+                # — never a silent skip of a deal the broker facts contradict.
+                await self._fail_deal(
+                    deal.bot_id,
+                    deal,
+                    DealReconciliationRequired(
+                        f"bot {deal.bot_id}: deal {deal.id} could not be "
+                        "reconciled to the broker facts (D5); new submissions are "
+                        "blocked until an explicit reconciliation"
+                    ),
+                )
+                self._deals.pop(deal.bot_id, None)
+                safe = False
+                continue
+            self._deals[deal.bot_id] = deal
             deal.updated_at = utcnow()
             await self._store.save(deal)
         return safe

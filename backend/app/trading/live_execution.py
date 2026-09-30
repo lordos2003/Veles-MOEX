@@ -96,6 +96,11 @@ class LiveExecutionService:
         return self._bot_runtime_manager
 
     @property
+    def deal_manager(self) -> DealManager | None:
+        """The wired DealManager (None when deal continuation is not wired)."""
+        return self._deal_manager
+
+    @property
     def coordinator(self) -> LiveRecoveryCoordinator:
         return self._coordinator
 
@@ -385,10 +390,6 @@ async def build_live_service() -> LiveExecutionService:
         limits=risk_limits_from_settings(get_settings()),
         position_manager=position_manager,
     )
-    # MVP-6.12: deal continuation is wired into the live execution graph. The
-    # DealManager owns the TP (D4) and the grid level lifecycle (D2); the
-    # coordinator reconciles non-CLOSED deals on every (re)connect (D5).
-    deal_manager = DealManager(SqlAlchemyDealStore(session), order_manager, risk_manager)
     trading_engine = TradingEngine(
         broker, None, order_manager, position_manager, risk_manager
     )
@@ -504,6 +505,34 @@ async def build_live_service() -> LiveExecutionService:
         )
 
     bot_runtime_manager = BotRuntimeManager(risk_manager, runtime_factory=_make_runtime)
+
+    async def _deal_bot_error(bot_id: int, reason: str) -> None:
+        """B2: surface a Deal-layer failure to the bot lifecycle and DB.
+
+        The DealManager is broker-neutral and knows nothing about bots; this
+        production callback moves the owning bot to ERROR (blocked until an
+        explicit START) and persists that state through the BotRepository so
+        the API reflects the failure.
+        """
+        runtime = bot_runtime_manager.get(bot_id)
+        if runtime is not None:
+            runtime.fail(reason)
+        bot = await bot_repository.get(bot_id)
+        if bot is not None:
+            await bot_repository.update_state(bot, BotState.ERROR)
+
+    # MVP-6.12: deal continuation is wired into the live execution graph. The
+    # DealManager owns the TP (D4) and the grid level lifecycle (D2); the
+    # coordinator reconciles non-CLOSED deals on every (re)connect (D5). B2:
+    # every deal failure is surfaced to the bot lifecycle via the callback
+    # above (bot ERROR, persisted) and stays observable via last_error_for.
+    deal_manager = DealManager(
+        SqlAlchemyDealStore(session),
+        order_manager,
+        risk_manager,
+        on_bot_error=_deal_bot_error,
+    )
+
     await bot_runtime_manager.restore_persisted_states(bot_repository)
 
     service = LiveExecutionService(

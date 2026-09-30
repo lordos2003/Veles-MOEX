@@ -125,6 +125,114 @@ async def test_live_execution_cannot_bypass_risk_manager() -> None:
     assert broker.place_calls == 0
 
 
+# --- D7: reducing intents are exempt from growth limits ----------------------
+
+
+def _intent_side(
+    om: OrderManager, side: OrderSide, quantity="5", instrument_figi="BBG000"
+) -> ExecutionIntent:
+    return om.create_intent(
+        intent_id="i-int",
+        trade_id="bot-1",
+        instrument_figi=instrument_figi,
+        side=side,
+        order_type=OrderType.MARKET,
+        quantity=Decimal(quantity),
+        account_id="acc-1",
+        idempotency_key="idem-int",
+    )
+
+
+async def test_d7_reducing_sell_exempt_from_position_size_limit() -> None:
+    # D7: a SELL that reduces an existing LONG position is exempt from the
+    # position-size limit — a closing TP must never be blocked by a growth
+    # limit (the same BUY is blocked in test_position_size_limit_blocks_submit).
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_fill("BBG000", OrderSide.BUY, Decimal("8"), Decimal("100"))
+    risk = RiskManager(
+        limits=RiskLimits(max_position_size=Decimal("10")), position_manager=pm
+    )
+    risk.check_order(_intent_side(om, OrderSide.SELL, quantity="5"))
+
+
+async def test_d7_reducing_buy_exempt_for_short_position() -> None:
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_fill("BBG000", OrderSide.SELL, Decimal("8"), Decimal("100"))
+    risk = RiskManager(
+        limits=RiskLimits(max_position_size=Decimal("10")), position_manager=pm
+    )
+    risk.check_order(_intent_side(om, OrderSide.BUY, quantity="5"))
+
+
+async def test_d7_quantity_beyond_position_is_not_reducing() -> None:
+    # A "closing" order for more than the whole position would OPEN a reverse
+    # position — it is a growing intent and stays blocked.
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_fill("BBG000", OrderSide.BUY, Decimal("8"), Decimal("100"))
+    risk = RiskManager(
+        limits=RiskLimits(max_position_size=Decimal("10")), position_manager=pm
+    )
+    with pytest.raises(RiskRejected):
+        risk.check_order(_intent_side(om, OrderSide.SELL, quantity="10"))
+
+
+async def test_d7_reducing_exempt_from_daily_loss_limit() -> None:
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_fill("BBG000", OrderSide.BUY, Decimal("8"), Decimal("100"))
+    risk = RiskManager(
+        limits=RiskLimits(daily_loss_limit=Decimal("100")),
+        position_manager=pm,
+        daily_pnl=Decimal("-100"),
+    )
+    # Reducing SELL passes; an increasing BUY is still blocked by the limit.
+    risk.check_order(_intent_side(om, OrderSide.SELL, quantity="5"))
+    with pytest.raises(RiskRejected):
+        risk.check_order(_intent_side(om, OrderSide.BUY, quantity="5"))
+
+
+async def test_d7_emergency_stop_still_blocks_reducing() -> None:
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_fill("BBG000", OrderSide.BUY, Decimal("8"), Decimal("100"))
+    risk = RiskManager(
+        limits=RiskLimits(emergency_stop=True), position_manager=pm
+    )
+    with pytest.raises(RiskRejected):
+        risk.check_order(_intent_side(om, OrderSide.SELL, quantity="5"))
+
+
+async def test_d7_blocked_instrument_still_blocks_reducing() -> None:
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    pm.apply_fill("BBG000", OrderSide.BUY, Decimal("8"), Decimal("100"))
+    risk = RiskManager(
+        limits=RiskLimits(blocked_instruments=frozenset({"BBG000"})),
+        position_manager=pm,
+    )
+    with pytest.raises(RiskRejected):
+        risk.check_order(_intent_side(om, OrderSide.SELL, quantity="5"))
+
+
+async def test_d7_without_position_manager_no_exemption() -> None:
+    # No known position -> no exemption: the limit applies as before (D7 does
+    # not invent a safety assumption).
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    risk = RiskManager(limits=RiskLimits(max_position_size=Decimal("3")))
+    with pytest.raises(RiskRejected):
+        risk.check_order(_intent_side(om, OrderSide.SELL, quantity="5"))
+
+
 async def test_safe_blocked_recovery_gate_still_blocks() -> None:
     # BLOCKED recovery gate must block submit even when risk would allow it.
     broker = FakeBroker(orders=[], positions=[])

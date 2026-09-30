@@ -14,6 +14,7 @@ from app.services.broker_data import BrokerDataService
 from app.services.instruments import InstrumentService
 from app.services.market_data import MarketDataService
 from app.trading.bot_lifecycle import BotRuntimeManager
+from app.trading.deal_manager import DealManager
 
 
 def get_broker_adapter() -> BrokerAdapter:
@@ -63,4 +64,18 @@ def get_bot_runtime_manager(request: Request) -> BotRuntimeManager | None:
     service = getattr(request.app.state, "live_execution", None)
     if service is not None:
         return service.bot_runtime
+    return None
+
+
+def get_live_deal_manager(request: Request) -> DealManager | None:
+    """Return the application DealManager, or ``None`` when unavailable.
+
+    Read-only (B2): the deal-failure reason of a bot is exposed through
+    ``last_error_for`` so ``GET /bots/{id}`` can surface it. No fallback
+    manager is created; when the live execution service is not running the
+    field is simply absent.
+    """
+    service = getattr(request.app.state, "live_execution", None)
+    if service is not None:
+        return service.deal_manager
     return None

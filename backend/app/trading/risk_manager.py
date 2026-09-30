@@ -21,7 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 
-from app.models.enums import OrderType
+from app.models.enums import OrderSide, OrderType
 from app.trading.domain import ExecutionIntent
 from app.trading.position_manager import PositionManager
 
@@ -76,6 +76,12 @@ class RiskManager:
         self._check_quantity(intent)
         self._check_price(intent)
         self._check_instrument_permission(intent)
+        # D7 (MVP-6.12 owner contract): a position-reducing order (the closing
+        # take-profit) must never be blocked by a growth limit — emergency
+        # stop, quantity, price and instrument-permission checks above still
+        # apply to reducing intents.
+        if self._is_reducing(intent):
+            return
         self._check_position_size(intent)
         self._check_daily_loss()
 
@@ -125,6 +131,26 @@ class RiskManager:
             return
         if self._daily_pnl <= -limit:
             raise RiskRejected("daily loss limit reached")
+
+    def _is_reducing(self, intent: ExecutionIntent) -> bool:
+        """D7: whether the intent reduces the current position.
+
+        An intent is reducing when the PositionManager position for its FIGI
+        is non-zero, the intent side is opposite to the position sign, and the
+        quantity does not exceed the position magnitude. Only then are the
+        position-size and daily-loss limits skipped (a closing TP must never
+        be blocked by a limit meant to stop risk from growing). Without a
+        known position the intent is treated as increasing (no exemption).
+        """
+        if self._position_manager is None:
+            return False
+        position = self._position_manager.get(intent.instrument_figi)
+        if position is None or position.quantity == 0:
+            return False
+        opposite = OrderSide.SELL if position.quantity > 0 else OrderSide.BUY
+        if intent.side is not opposite:
+            return False
+        return abs(intent.quantity) <= abs(position.quantity)
 
     def _current_position(self, instrument_figi: str) -> Decimal:
         if self._position_manager is None:

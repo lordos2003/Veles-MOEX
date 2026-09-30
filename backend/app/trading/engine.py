@@ -225,6 +225,14 @@ class TradingEngine:
         elif position_state is LivePositionState.OPEN:
             # D6: no new grid/entry intents from a fresh evaluation; exits are
             # Deal-owned (never re-created from the market snapshot).
+            if self._deal_manager is not None:
+                # B2/D5: on the live deal path an OPEN position is never
+                # silently ignored — it must be owned by a non-CLOSED Deal; a
+                # contradiction puts the bot in ERROR via the deal layer and
+                # fails the cycle explicitly (no fabricated continuation).
+                await self._deal_manager.assert_deal_for_open_position(
+                    self._bot_id, self._instrument_figi
+                )
             plan.grid = []
             plan.exits = []
         if self._intent_factory is not None:

@@ -189,6 +189,22 @@ class BotRuntime:
             raise
         self._transition(BotState.RUNNING)
 
+    def fail(self, reason: str) -> None:
+        """B2: a deal failure moves the bot to ERROR (blocked until an explicit START).
+
+        RUNNING / STARTING / STOP_REQUESTED -> ERROR. On the RUNNING path the
+        concurrent-bot slot is released (as a normal stop does), so an
+        explicit START after ERROR is never blocked by this bot's own stale
+        slot. STOPPED / EMERGENCY_STOP are left as-is: no live deal can be
+        active there and no transition is invented.
+        """
+        if self._state in (BotState.STOPPED, BotState.EMERGENCY_STOP, BotState.ERROR):
+            return
+        was_running = self._state is BotState.RUNNING
+        self._transition(BotState.ERROR)
+        if was_running:
+            self._risk_manager.stop_bot(self.bot_id)
+
     async def stop(self) -> None:
         """Normal stop: block new intents, cancel active orders, leave position open.
 

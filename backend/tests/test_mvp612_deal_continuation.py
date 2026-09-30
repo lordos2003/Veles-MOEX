@@ -1,4 +1,4 @@
-"""MVP-6.12 Live Deal Continuation tests (D1-D6).
+"""MVP-6.12 Live Deal Continuation tests (D1-D7, correction round 1).
 
 Focused, deterministic, broker-neutral coverage of the approved contracts:
 
@@ -12,7 +12,15 @@ Focused, deterministic, broker-neutral coverage of the approved contracts:
   tick-rounded, re-armed on every grid fill, at most one TP working;
 - D5: recovery keeps working orders, applies broker-filled grid orders and
   re-arms the TP, an unknown state blocks the bot with ERROR;
-- D6: the OPEN live cycle creates no exit intents from ``evaluate()``.
+- D6: the OPEN live cycle creates no exit intents from ``evaluate()``;
+- D7: position-reducing intents (the closing TP) are exempt from
+  ``max_position_size`` / ``daily_loss_limit``, while checks 1-4 still apply.
+
+Correction round 1 (independent review, 2026-09-30): B1 (the new TP is
+risk-gated BEFORE the old one is cancelled — a rejection keeps the old TP
+working and pump() isolates every event) and B2 (every deal failure surfaces
+to the bot lifecycle / API and an OPEN position without an owning Deal goes
+ERROR).
 
 No real orders, no T-Invest, no fabricated market data or financial defaults.
 """
@@ -27,7 +35,7 @@ from fastapi import HTTPException
 
 from app.brokers.base import BrokerOrder, BrokerOrderRequest
 from app.domain.marketdata import Timeframe
-from app.models.enums import OrderSide, OrderStatus, OrderType
+from app.models.enums import BotState, OrderSide, OrderStatus, OrderType
 from app.strategies.bars import Bar, BarSeries, Snapshot
 from app.strategies.config import (
     CustomLevel,
@@ -52,13 +60,17 @@ from app.trading import (
     DealBlocked,
     DealConfigUnsupported,
     DealManager,
+    DealOrderRejected,
+    DealPositionContradiction,
     DealReconciliationRequired,
     DealStatus,
     DealTickSizeInvalid,
     OrderManager,
     PositionManager,
     PositionSizing,
+    RiskLimits,
     RiskManager,
+    RiskRejected,
     SizingBelowLot,
     TradingEngine,
     align_grid_price,
@@ -68,7 +80,7 @@ from app.trading import (
     validate_live_deal_config,
 )
 from app.trading.deal import InMemoryDealStore
-from app.trading.domain import Fill, OrderState, OrderUpdate
+from app.trading.domain import ExecutionIntent, Fill, OrderState, OrderUpdate
 from app.trading.live_execution import make_deposit_provider
 from app.trading.plan_intent import plan_to_intents
 
@@ -765,21 +777,33 @@ async def test_d5_recover_unknown_order_blocks_bot() -> None:
 # --- D6: the live OPEN cycle creates no exit intents ---------------------------
 
 
-async def test_d6_open_live_cycle_creates_no_exit_intents_without_deal() -> None:
-    # Replaces the removed MVP-6.9/6.11 "exits from market price" behavior: a
-    # live per-bot engine in OPEN must not create exit intents from
-    # StrategyEngine.evaluate() any more (the TP belongs to the Deal, D4).
+async def test_b2_open_live_position_without_deal_errors_the_bot() -> None:
+    # B2: the D6 no-exit-intents cycle is only legal while a non-CLOSED Deal
+    # owns the OPEN position. An OPEN position without a Deal is a D5
+    # contradiction: it must put the bot in ERROR (surfaced through the deal
+    # layer) and fail the cycle explicitly — never a silent no-op.
     broker = FakeBroker()
     om = OrderManager(broker)
     pm = om.positions()
     pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
     pm.mark_reconciled()
+    notified: list[tuple[int, str]] = []
 
-    engine = _live_engine(broker, om=om, positions=pm)
+    async def _record(bot_id: int, reason: str) -> None:
+        notified.append((bot_id, reason))
+
+    dm = DealManager(
+        InMemoryDealStore(),
+        om,
+        RiskManager(position_manager=pm),
+        on_bot_error=_record,
+    )
+    engine = _live_engine(broker, om=om, positions=pm, dm=dm)
     await engine.start()
-    plan = await engine.process(_context(price=200.0))
-    assert plan.exits == []
-    assert plan.grid == []
+    with pytest.raises(DealPositionContradiction):
+        await engine.process(_context(price=200.0))
+    assert notified and notified[0][0] == 1
+    assert "OPEN" in notified[0][1]
     assert om.list_orders() == []
     assert broker.place_calls == 0
 
@@ -808,6 +832,234 @@ async def test_d6_open_deal_keeps_deal_orders_and_places_nothing_new() -> None:
     assert len(om.list_orders()) == placed_before
     assert broker.place_calls == 2  # no new submissions
     assert deal.tp_order_id == tp_before
+
+
+# --- correction round 1: D7 / B1 / B2 -----------------------------------------
+
+
+class RearmRejectingRisk(RiskManager):
+    """Rejects every TP re-arm after rev 1 for one bot (B1: mid-deal rejection)."""
+
+    def __init__(self, *args, rejected_bot_id: int = 1, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._rejected_bot_id = rejected_bot_id
+
+    def check_order(self, intent: ExecutionIntent) -> None:
+        if (
+            f"deal-{self._rejected_bot_id}-tp-" in intent.intent_id
+            and int(intent.intent_id.rsplit("-", 1)[1]) >= 2
+        ):
+            raise RiskRejected("test: TP re-arm rejected")
+        super().check_order(intent)
+
+
+async def test_d7_tp_placed_under_position_size_limit() -> None:
+    # D7 through a real Deal: max_position_size=300, the entry fills 200 — the
+    # closing TP (a reducing SELL) must still be placed; a growth limit must
+    # never block the exit of a Deal (the entry BUY itself stays limited).
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    risk = RiskManager(
+        limits=RiskLimits(max_position_size=Decimal("300")),
+        position_manager=om.positions(),
+    )
+    dm = DealManager(InMemoryDealStore(), om, risk)
+    deal = await _open_simple(dm, om, deposit=Decimal("20000"), lot_size=10)
+    entry = om.get_order(deal.levels[0].order_id)
+    _fill(om, entry, "f-entry", Decimal("200"), Decimal("100"))
+    await dm.pump()
+    assert deal.tp_order_id is not None
+    assert om.get_order(deal.tp_order_id).status is OrderState.SUBMITTED
+    assert om.get_order(deal.tp_order_id).requested_quantity == Decimal("200")
+
+
+async def test_d7_dca_fill_rearms_tp_under_daily_loss_limit() -> None:
+    # D7 through a real Deal: the daily loss limit is reached while a DCA fill
+    # re-arms the TP — the reducing TP must still be placed (a growth limit
+    # cannot block the exit path of an open Deal).
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    risk = RiskManager(
+        limits=RiskLimits(daily_loss_limit=Decimal("100")),
+        position_manager=om.positions(),
+        daily_pnl=Decimal("-50"),
+    )
+    dm = DealManager(InMemoryDealStore(), om, risk)
+    deal = await _open_simple(dm, om, levels=2, deposit=Decimal("40000"))
+    entry = om.get_order(deal.levels[0].order_id)
+    _fill(om, entry, "f-entry", Decimal("200"), Decimal("100"))
+    await dm.pump()
+    assert deal.tp_rev == 1
+    risk._daily_pnl = Decimal("-100")  # the loss limit is now reached
+    dca = om.get_order(deal.levels[1].order_id)
+    _fill(om, dca, "f-dca", Decimal("50"), Decimal("99"))
+    await dm.pump()
+    assert deal.status is DealStatus.OPEN
+    assert deal.tp_rev == 2
+    assert om.get_order(deal.tp_order_id).status is OrderState.SUBMITTED
+
+
+async def test_b1_risk_rejected_rearm_keeps_old_tp_and_fails_deal() -> None:
+    # B1: the new TP is risk-gated BEFORE the working one is cancelled. A risk
+    # rejection during a re-arm leaves the old TP working (the position stays
+    # protected), the Deal goes ERROR, the bot is notified, no exception
+    # escapes the pump, and no second TP is placed.
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    risk = RearmRejectingRisk(position_manager=om.positions())
+    notified: list[tuple[int, str]] = []
+
+    async def _record(bot_id: int, reason: str) -> None:
+        notified.append((bot_id, reason))
+
+    dm = DealManager(InMemoryDealStore(), om, risk, on_bot_error=_record)
+    deal = await _open_simple(dm, om, levels=2, deposit=Decimal("40000"))
+    entry = om.get_order(deal.levels[0].order_id)
+    _fill(om, entry, "f-entry", Decimal("200"), Decimal("100"))
+    await dm.pump()
+    tp1 = om.get_order(deal.tp_order_id)
+    assert tp1 is not None and tp1.status is OrderState.SUBMITTED
+
+    dca = om.get_order(deal.levels[1].order_id)
+    _fill(om, dca, "f-dca", Decimal("50"), Decimal("99"))
+    await dm.pump()  # must not raise
+
+    assert deal.status is DealStatus.ERROR
+    assert 1 in dm.blocked_bots
+    assert notified and notified[0][0] == 1
+    assert "risk" in notified[0][1]
+    # The old TP was NOT cancelled — it still works (position protected).
+    assert om.get_order(tp1.order_id).status is OrderState.SUBMITTED
+    tps = [o for o in om.list_orders() if o.intent_id.startswith(f"deal-{deal.id}-tp-")]
+    assert len(tps) == 1
+    assert isinstance(dm.last_error, DealOrderRejected)
+
+
+async def test_b1_pump_isolates_one_failing_deal_in_a_batch() -> None:
+    # B1: one failing reaction must not starve the rest of the batch — bot 2's
+    # re-arm is still applied even though bot 1's reaction failed first.
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    risk = RearmRejectingRisk(position_manager=om.positions())
+    notified: list[tuple[int, str]] = []
+
+    async def _record(bot_id: int, reason: str) -> None:
+        notified.append((bot_id, reason))
+
+    dm = DealManager(InMemoryDealStore(), om, risk, on_bot_error=_record)
+    deal1 = await _open_simple(dm, om, bot_id=1, levels=2, deposit=Decimal("40000"))
+    deal2 = await _open_simple(dm, om, bot_id=2, levels=2, deposit=Decimal("40000"))
+
+    entry1 = om.get_order(deal1.levels[0].order_id)
+    entry2 = om.get_order(deal2.levels[0].order_id)
+    _fill(om, entry1, "f-e1", Decimal("200"), Decimal("100"))
+    _fill(om, entry2, "f-e2", Decimal("200"), Decimal("100"))
+    await dm.pump()
+    assert deal1.tp_rev == 1 and deal2.tp_rev == 1
+
+    dca1 = om.get_order(deal1.levels[1].order_id)
+    dca2 = om.get_order(deal2.levels[1].order_id)
+    _fill(om, dca1, "f-d1", Decimal("50"), Decimal("99"))
+    _fill(om, dca2, "f-d2", Decimal("50"), Decimal("99"))
+    await dm.pump()  # bot 1 fails on its re-arm; bot 2 must still re-arm
+    assert deal1.status is DealStatus.ERROR
+    assert 1 in dm.blocked_bots
+    assert deal2.status is DealStatus.OPEN
+    assert deal2.tp_rev == 2
+    assert 2 not in dm.blocked_bots
+
+
+async def test_b2_api_surfaces_deal_error() -> None:
+    # B2: a deal failure is observable through GET /bots/{id} as the read-only
+    # ``deal_error`` field (no opaque ERROR state).
+    from app.api import bots as bots_api
+    from app.models.bot import Bot
+
+    class Repo:
+        async def get(self, bot_id: int):
+            return Bot(
+                id=bot_id,
+                name="bot",
+                strategy_version_id=1,
+                account_id=1,
+                instrument_id=1,
+                status="ERROR",
+            )
+
+    om = OrderManager(FakeBroker())
+    dm = DealManager(InMemoryDealStore(), om, RiskManager(position_manager=om.positions()))
+    config = _strategy(
+        dca_grid=DCAGridConfig(
+            mode=TradingMode.CUSTOM,
+            custom_levels=[CustomLevel(offset_percent=0.0, nominal_percent=100.0)],
+        )
+    )
+    with pytest.raises(DealTickSizeInvalid):
+        await dm.open_deal(
+            bot_id=7,
+            instrument_figi=FIGI,
+            direction=Direction.LONG,
+            config=config,
+            reference_price=Decimal("100"),
+            deposit=Decimal("10000"),
+            base_nominal=Decimal("10000"),
+            account_id=ACC,
+            lot_size=10,
+            tick_size=None,
+        )
+    response = await bots_api.get_bot(7, Repo(), deal_manager=dm)
+    assert response.deal_error is not None
+    assert "tick" in response.deal_error
+
+
+async def test_b2_runtime_fail_moves_bot_to_error() -> None:
+    # B2: the victim of a deal failure is moved to ERROR through the existing
+    # bot lifecycle; the concurrent-bot slot is released on the RUNNING path.
+    from app.trading.bot_lifecycle import BotRuntime
+
+    risk = RiskManager(limits=RiskLimits(max_concurrent_bots=1))
+    runtime = BotRuntime(1, risk, state=BotState.RUNNING)
+    risk.start_bot(1)
+    runtime.fail("deal failed")
+    assert runtime.state is BotState.ERROR
+    assert risk.check_start(2) is True  # slot released
+    # A STOPPED bot is not moved by fail() (no transition is invented).
+    stopped = BotRuntime(3, risk, state=BotState.STOPPED)
+    stopped.fail("nothing to fail")
+    assert stopped.state is BotState.STOPPED
+
+
+async def test_deposit_edit_during_open_does_not_affect_owning_deal() -> None:
+    # C6/B1 regression: a deposit edit while a Deal is OPEN never affects the
+    # open deal (the value is captured at entry) and the OPEN cycle keeps the
+    # Deal-owned TP working instead of re-entering.
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    om.positions().mark_reconciled()
+    dm = DealManager(InMemoryDealStore(), om, RiskManager(position_manager=om.positions()))
+    deposit = DepositHolder(Decimal("20000"))
+    engine = _live_engine(
+        broker,
+        om=om,
+        dm=dm,
+        sizing=PositionSizing(lot_size=10, currency="RUB"),
+        deposit_provider=deposit,
+    )
+    await engine.start()
+    await engine.process(_context())
+    deal = dm.active_deal(1)
+    assert deal is not None and deal.deposit == Decimal("20000")
+    entry = om.get_order(deal.levels[0].order_id)
+    _fill(om, entry, "f-entry", Decimal("200"), Decimal("100"))
+    await dm.pump()
+
+    deposit.value = Decimal("80000")
+    placed_before = len(om.list_orders())
+    await engine.process(_context(price=200.0))  # OPEN cycle: the deal owns the TP
+    assert dm.active_deal(1) is deal
+    assert deal.deposit == Decimal("20000")
+    assert len(om.list_orders()) == placed_before
+    assert broker.place_calls == 2  # entry + TP only; no second entry
 
 
 # --- D6: make_deposit_provider clean-up keeps behaviour -----------------------
