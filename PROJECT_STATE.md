@@ -18,12 +18,12 @@
 ## Current task
 
 ### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
-**Status: IN REVIEW — round 1 REJECTED (B1), correction assigned to OpenCode.**
+**Status: IN REVIEW — round 2, correction committed and pushed, awaiting decision.**
 
-- Reviewed: `e036c0e`; review record: `.agent/REVIEW-MVP-6.11.md`; report: `.agent/REPORT-MVP-6.11.md`
-- B1: exits of an OPEN position must not depend on entry sizing (deposit / SIGNAL / CUSTOM errors currently block TP).
-- C7 (carry-over, Issue #3): trim the market snapshot to exactly the latest `lookback_bars` candles.
-- C6 (owner decision 2026-09-29, Veles semantics): deposit edits apply from the next deal — deposit is read at each FLAT entry; an open deal is unaffected. Added to correction round 1.
+- Reviewed: `e036c0e`; review record: `.agent/REVIEW-MVP-6.11.md`; report: `.agent/REPORT-MVP-6.11.md`; correction report: `.agent/REPORT-MVP-6.11-REV1.md`
+- B1 (round-1 rejection): exits of an OPEN position must not depend on entry sizing (deposit / SIGNAL / CUSTOM errors blocked the TP) — corrected: sizing is resolved on the FLAT entry path only.
+- C7 (carry-over, Issue #3): trim the market snapshot to exactly the latest `lookback_bars` candles — implemented; Issue #3 stays open until publication to `master`.
+- C6 (owner decision 2026-09-29, Veles semantics): deposit edits apply from the next deal — deposit is read at each FLAT entry; an open deal is unaffected. Implemented; the deposit key is required on PATCH (a PATCH without it is 422, not a silent clear).
 
 - Control task: `.agent/TASK-MVP-6.11-BOT-DEPOSIT-SIZING.md`
 - Implementation branch: `agent/review/mvp-6.11` (from `master` @ `10d445e`)
