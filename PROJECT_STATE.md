@@ -1,8 +1,60 @@
 # Veles-MOEX — Project State
 
-Canonical recovery source: `agent/control`.
+## Project
+- Repository: `lordos2003/Veles-MOEX`
+- Goal: Veles-like web trading application for MOEX using T-Invest as the initial broker integration.
+- Initial broker boundary: no direct MOEX API. `TInvestAdapter.place_order()` (PostOrder, MVP-6.2) exists behind `RiskManager -> OrderManager`, but no live strategy cycle is scheduled/enabled in production yet (see Known boundaries).
 
-Current accepted MVP: **MVP-6.10 — Live Market Snapshot & Per-Bot Timeframe**.
+## Canonical workflow
+`agent/control -> agent/review/mvp-X -> independent review (ChatGPT / Claude) -> master`
+
+- `agent/control` is the canonical control/audit source.
+- New tasks, audits and reviews start from the current `agent/control`.
+- OpenCode implements only on the assigned `agent/review/mvp-X` branch.
+- OpenCode must not publish to `master`.
+- Only independently accepted work is published to `master`.
+- `PROJECT_STATE.md`, current task, review and reports are maintained on `agent/control`; accepted records are mirrored to `master` for repository recovery.
+
+## Current task
+
+No task is open. Next candidates (to be specified on `agent/control` before assignment):
+- live cycle scheduler (who triggers `BotRuntime.execute_strategy`, per-bot timeframe, "at bar close" / "once per minute" Veles methods);
+- deal continuation across cycles (persisted grid state, averaging after entry with the deposit captured at entry, C3 on every level, TP from the average entry price);
+- clean-up: unreachable duplicate in `make_deposit_provider()` (`live_execution.py`).
+
+## Current accepted MVP
+
+### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
+**Status: ACCEPTED (round 3, 2026-09-30) and published to master.**
+
+- Accepted implementation: `e026886dfdc6f98112dfc214060c5fc2bb2ae075`
+- Publication PR: #6
+- Publication merge commit: `40cf6ce802e685b99ae527758949e29a8a67d26d`
+- Control task: `.agent/TASK-MVP-6.11-BOT-DEPOSIT-SIZING.md`
+- Control review: `.agent/REVIEW-MVP-6.11.md` (round 1 REJECTED B1, round 2 REJECTED B2, round 3 ACCEPT)
+- Reports: `.agent/REPORT-MVP-6.11.md`, `.agent/REPORT-MVP-6.11-REV1.md`, `.agent/REPORT-MVP-6.11-REV2.md`
+
+Contracts (owner-approved 2026-09-29/30):
+- C1/C5 `Bot.deposit` (bot setting, migration `0004_bot_deposit`, `GET/PATCH /api/bots/{id}`, `> 0`, `deposit` key required on PATCH);
+- C2 sum of all grid-order nominals of a deal = deposit (SIMPLE `D/Σkⁱ`, CUSTOM `D×pct/100` with the >100% guard, SIGNAL blocked — no order limit invented); spot 1:1, no leverage;
+- C3 MOEX lots rounded down; any level below one lot blocks the whole entry; missing lot/currency blocks;
+- C4 live position state UNKNOWN / FLAT / OPEN / SIGN_MISMATCH, established only by a successful broker reconciliation; FLAT → entry only (no active bot orders); OPEN → exits only; others → nothing;
+- C6 deposit edits apply from the next deal: fresh DB read (`populate_existing`) at each FLAT entry; an open deal is unaffected;
+- C7 market snapshot trimmed to exactly `lookback_bars` (Issue #3);
+- B1 exits of an open position never depend on entry sizing.
+
+Validation (independent, clean env): `pytest 412 passed, 1 skipped`; `ruff check app tests scripts` passed; alembic single head `0004_bot_deposit`; `npm run build` passed (no frontend changes).
+
+Known boundaries:
+- no live cycle scheduler; the strategy cycle is triggered explicitly;
+- no deal continuation: while OPEN only exits are produced; averaging after entry is not implemented;
+- TP price is derived from the market-context price, not the average entry price (pre-existing);
+- position state is per FIGI, not per bot (manual trades / several bots on one instrument share it);
+- Backtest sizing (`BacktestConfig.quantity`) differs from the Live deposit contract C2;
+- SIGNAL-mode live entry is blocked until an order-limit contract is approved.
+
+### MVP-6.10 — Live Market Snapshot & Per-Bot Timeframe
+**Status: ACCEPTED and published to master.**
 
 - Accepted implementation: `c7429fdee1792962a679f1924230d99c62573efc`
 - Publication PR: #4
@@ -11,12 +63,45 @@ Current accepted MVP: **MVP-6.10 — Live Market Snapshot & Per-Bot Timeframe**.
 - Control review: `.agent/REVIEW-MVP-6.10.md`
 - Control report: `.agent/REPORT-MVP-6.10.md`
 
-MVP-6.10 explicitly provides broker-neutral live market snapshots and per-bot timeframe propagation. Round-2 corrections removed inferred indicator warmup semantics in favor of explicit `StrategyConfig.lookback_bars` and enforce exact snapshot lookback.
+Round-2 corrections:
+- removed inferred indicator warmup / `required_bars` semantics;
+- introduced explicit `StrategyConfig.lookback_bars`;
+- **correction (2026-09-30):** the exact `lookback_bars` trim was not in the MVP-6.10 code; delivered by MVP-6.11 C7 (PR #6, Issue #3 closed);
+- MVP-6.9 position-state invariant remains intact.
 
-Validation recorded: `pytest 369 passed, 1 skipped`; `ruff check app tests scripts` passed; `npm run build` passed.
+Validation recorded for MVP-6.10: `pytest 369 passed, 1 skipped`; `ruff check app tests scripts` passed; `npm run build` passed.
 
-MVP-6.9 remains accepted: `PositionManager` is the authoritative live execution quantity source and unresolved position state blocks live intents.
+Known boundaries:
+- T-Invest order placement exists at adapter level (`TInvestAdapter.place_order`, MVP-6.2) behind Risk/Order Manager; production live trading is not enabled (no scheduled live cycle, no deal continuation);
+- live cycle scheduling is outside MVP-6.10;
+- multi-timeframe filter series require a separately specified implementation;
+- authoritative production sizing remains governed by the accepted PositionManager boundary.
 
-Known boundaries: T-Invest order submission is not implemented; live cycle scheduling is outside MVP-6.10; multi-timeframe filter series require separate specification; live production sizing remains governed by the accepted PositionManager boundary.
+### MVP-6.9 — Position State & Authoritative Quantity
+**Status: ACCEPTED and published.**
+- Accepted review commit: `5b4c42be4d49d700e8750315c1da81b17bc04a1d`
+- Publication PR: #2
+- Publication merge commit: `cdc10296e32509f2d716c85c1b58e62a9b01b2cf`
+- PositionManager is the authoritative live execution quantity source.
+- Unresolved position state blocks all live ExecutionIntent creation/submission.
 
-Workflow: `agent/control -> agent/review/mvp-X -> independent ChatGPT review -> master`. OpenCode does not publish directly to `master`.
+## Architecture
+- Broker integration is behind `BrokerAdapter`.
+- `TInvestAdapter` uses the official REST API: read access plus `PostOrder`-based `place_order` (MVP-6.2) behind the Risk/Order Manager.
+- Domain prices/monetary values use `Decimal`.
+- Market timestamps are timezone-aware UTC.
+- Instrument identity uses FIGI.
+- `MarketCandle` uniqueness: `(figi, timeframe, timestamp)`.
+- Veles Filter/Signal semantics: Argument1 + Operator + Argument2; AND within group, OR between groups; state operators `>`/`<`, event operators for crossings.
+- DCA/Grid and Backtest semantics are preserved across live-market-data work.
+
+## Workflow rule: push before review
+Work is delivered only when `agent/review/mvp-X` and the REPORT on `agent/control` are pushed to GitHub (plain push, no `--force`/rebase). See `.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule". The same rule is in `AGENTS.md` §6 (published with MVP-6.11).
+
+## Recovery
+For a new ChatGPT/OpenCode session:
+1. Start from `agent/control`.
+2. Read `PROJECT_STATE.md`.
+3. Read the current `.agent/TASK-*.md`, applicable `.agent/REVIEW-*.md`, and latest `.agent/REPORT-*.md`.
+4. Check current Git branch/HEAD and compare with `master` when required.
+5. Continue from the accepted MVP and current control task; do not reconstruct state from chat history.

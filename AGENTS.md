@@ -101,6 +101,18 @@ The report must state:
 
 A passing test suite does not make an undocumented Veles behavior acceptable.
 
+### Mandatory push (work is delivered only on GitHub)
+
+Independent review works only from the remote repository. Before reporting completion:
+
+1. push the implementation branch: `git push origin agent/review/mvp-X`;
+2. commit the REPORT to `agent/control` and push it: `git push origin agent/control`;
+3. plain push only — no `--force`, no rebase; if rejected: `git fetch origin`, `git merge origin/<branch>`, push again;
+4. verify with `git ls-remote origin agent/review/mvp-X agent/control` that the remote SHAs equal the local ones;
+5. cite the **pushed** SHA in the REPORT ("pushed, in sync with origin"). A REPORT stating "no push performed" is incomplete and is not reviewed.
+
+Never push `master`. Details: `agent/control:.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule".
+
 ## 7. Current project recovery source
 
 `PROJECT_STATE.md` is the canonical recovery document. Keep it current after accepted MVP changes according to the project workflow.
