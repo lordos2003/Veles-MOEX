@@ -154,3 +154,43 @@ A TP larger than the real position is rejected by T-Invest on a cash account, so
 3. With B2 a FLAT entry failure such as `SizingBelowLot` now puts the bot into ERROR instead of blocking a single cycle. This is consistent with B2 and acceptable; noted as a behavioural change to C3 ("blocked for this cycle" → "bot ERROR until START").
 
 **No publication to master.**
+
+---
+
+## Round 3 — Verdict
+
+**ACCEPT**
+
+Accepted implementation: `418c24e` (`agent/review/mvp-6.12`, pushed, in sync with origin), base `master @ 59a3897`.
+Report: `.agent/REPORT-MVP-6.12-REV2.md` (`agent/control @ c248c90`). Reviewer: Claude, 2026-09-30.
+
+### Independent re-run (clean environment, Python 3.12)
+
+| Check | Result |
+|---|---|
+| `pytest` (full) | **450 passed, 1 skipped** |
+| `ruff check app tests scripts` | All checks passed |
+| `alembic heads` | single head `0005_deal_continuation` |
+
+### B3 — CLOSED
+
+- `ALLOWED_TRANSITIONS[CANCEL_REQUESTED]` now includes `PARTIALLY_FILLED` and `FILLED`. `OrderManager.apply_fill()` applies a fill to a terminal order (e.g. CANCELLED after an exchange race) without changing its state; the position is always updated. `OrderManager.cancel()` keeps a terminal outcome that was reached during the cancel.
+- `_rearm_tp()`: after the cancel it re-reads the position. A zero position → `_close_deal`. A changed quantity or price → new intent (`tp_rev+1`) through `_tp_intent()`, which risk-checks again. The new TP never exceeds the position.
+- Round-2 race probe re-run on `418c24e` (the broker fills the old TP **inside** `cancel_order`, after a DCA fill of 200 on a position of 200):
+
+| Variant | Result |
+|---|---|
+| partial 100 during cancel | position 300 → one TP **300** @ 109.5, deal OPEN ✓ |
+| full 200 during cancel | position 200 → one TP **200** @ 109.5, deal OPEN ✓ |
+| full 200 during cancel **and** the broker then errors on the cancel | no second TP, deal ERROR, bot ERROR (the D4 "cancel failed/unknown" path) ✓ |
+
+### MVP-6.12 summary (all rounds)
+
+D1–D6 (round 1), D7 + B1 + B2 (round 2), B3 (round 3) — all closed.
+
+### Follow-ups (non-blocking)
+
+1. **Misleading error on the last race variant.** When the order became FILLED during the cancel and the broker then reports an error, the `except` branch of `OrderManager.cancel()` tries `FILLED → UNKNOWN` and raises `OrderStateError("invalid transition FILLED -> UNKNOWN")`. The outcome is safe (Deal/bot ERROR, no second TP), but the reason shown in `deal_error` is misleading. Keep the terminal state and treat "already executed" as FILLED.
+2. Recovery re-arms the TP on every restart (round-1 observation 1).
+3. `SizingBelowLot` / tick errors at a FLAT entry now put the bot into ERROR (a behaviour change to C3, accepted with B2).
+4. Publication steps: PR `agent/review/mvp-6.12` → `master` (merge commit, pinned to `418c24e`); mirror the MVP-6.12 records; close Issue #7.
