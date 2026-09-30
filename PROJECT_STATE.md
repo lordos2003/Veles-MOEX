@@ -18,13 +18,14 @@
 ## Current task
 
 ### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)
-**Status: IN REVIEW — round 1 REJECTED (B1: a deal can be left without a TP when the Risk Manager rejects the re-armed TP; B2: deal errors not surfaced, the bot stays RUNNING). Correction round 1 + contract D7 (reducing orders exempt from position-size / daily-loss limits) assigned to Кодер.**
+**Status: IN REVIEW — round 2 pending. Round 1 was REJECTED (B1: a deal can be left without a TP when the Risk Manager rejects the re-armed TP; B2: deal errors not surfaced, the bot stays RUNNING); correction round 1 (B1 + B2 + contract D7) is implemented on `agent/review/mvp-6.12` @ `949bebe`, reported in `.agent/REPORT-MVP-6.12-REV1.md`; D7 (reducing orders exempt from position-size / daily-loss limits) is an owner-approved contract 2026-09-30.**
 
-- Reviewed: `a4f792d`; review: `.agent/REVIEW-MVP-6.12.md`; report: `.agent/REPORT-MVP-6.12.md`
+- Reviewed: `a4f792d`; review: `.agent/REVIEW-MVP-6.12.md`; reports: `.agent/REPORT-MVP-6.12.md`, `.agent/REPORT-MVP-6.12-REV1.md`
+- Correction round 1: `949bebe` (B1 risk-gate before TP cancel + per-event pump isolation; B2 deal errors → bot ERROR via lifecycle + `deal_error` in `GET /api/bots/{id}` + OPEN-without-Deal → ERROR; D7 reducing-intent exemption in `RiskManager`; review observation 2 regression test). Validation: pytest 447 passed/1 skipped, ruff clean, alembic single head `0005_deal_continuation`, npm build green.
 
 - Control task: `.agent/TASK-MVP-6.12-DEAL-CONTINUATION.md`
 - Implementation branch: `agent/review/mvp-6.12` (from `master` @ `59a3897`)
-- Contracts D1–D6 approved by the project owner 2026-09-30: supported live configuration only (SIMPLE/CUSTOM + Simple TP, others rejected at START); event-driven deal lifecycle; tick rounding in the safe direction; TP from the average price, re-armed on every grid fill; durable Deal + recovery; the live cycle no longer produces exits.
+- Contracts D1–D7 approved by the project owner 2026-09-30: supported live configuration only (SIMPLE/CUSTOM + Simple TP, others rejected at START); event-driven deal lifecycle; tick rounding in the safe direction; TP from the average price, re-armed on every grid fill; durable Deal + recovery; the live cycle no longer produces exits; position-reducing orders exempt from growth limits (D7).
 - Next after 6.12: live cycle scheduler; Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode.
 
 ## Current accepted MVP
