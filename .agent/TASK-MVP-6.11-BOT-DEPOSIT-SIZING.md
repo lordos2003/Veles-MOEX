@@ -176,7 +176,7 @@ Optional in the same round (observation 2): `PATCH` without the `deposit` key mu
 
 Review: `.agent/REVIEW-MVP-6.11.md` → "Round 2" — **REJECTED**, one blocking finding (B2): the production deposit provider reads `Bot` through the long-lived live session and gets the cached identity-map instance, so a deposit PATCH never reaches the next deal. Fix exactly as described in the review (fresh DB read + a two-real-session regression test on the production provider function). REPORT → `.agent/REPORT-MVP-6.11-REV2.md`.
 
-## Publication (mandatory, see `.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule")
+## Publication (mandatory, see `.agent/CODER-WORKFLOW.md` → "Mandatory push rule")
 
 ```
 git push origin agent/review/mvp-6.11

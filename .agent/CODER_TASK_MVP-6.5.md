@@ -1,4 +1,4 @@
-# OpenCode Task — MVP-6.5 Bot Lifecycle and Risk Preconditions
+# Кодер Task — MVP-6.5 Bot Lifecycle and Risk Preconditions
 
 ## TASK_ID
 

@@ -1,4 +1,4 @@
-# OpenCode Task — MVP-6.5 Bot Lifecycle Foundation
+# Кодер Task — MVP-6.5 Bot Lifecycle Foundation
 
 ## TASK_ID
 

@@ -1,15 +1,15 @@
-# OpenCode / Git Workflow
+# Кодер / Git Workflow
 
 ## Canonical control branch and audit source
 
 `agent/control` is the canonical control branch for the Veles-MOEX development workflow **and the mandatory source of truth for current tasks, audit instructions, control records, implementation REPORTs, review/acceptance records, and publication records**.
 
-**When ChatGPT or OpenCode needs to find the current task or audit assignment, start on `agent/control`. Do not require the user to tell the coder where the task is located.**
+**When ChatGPT or Кодер needs to find the current task or audit assignment, start on `agent/control`. Do not require the user to tell the coder where the task is located.**
 
 The current working repository state for audit/review is always taken from `agent/control` unless a task explicitly names another ref for comparison.
 
 It contains:
-- tasks for OpenCode;
+- tasks for Кодер;
 - implementation instructions;
 - control records;
 - implementation REPORTs;
@@ -36,21 +36,21 @@ master — только после принятия
 
 1. **agent/control**
    - ChatGPT records the task.
-   - OpenCode receives the task from this branch.
-   - OpenCode writes implementation REPORTs here.
+   - Кодер receives the task from this branch.
+   - Кодер writes implementation REPORTs here.
    - Acceptance/review records are kept here.
    - This branch is the control/audit trail.
    - **All new audit/review work starts by reading the relevant task/specification and current project state from this branch.**
 
 2. **agent/review/mvp-X**
-   - OpenCode performs the actual product implementation in the dedicated MVP review branch.
+   - Кодер performs the actual product implementation in the dedicated MVP review branch.
    - The branch is based on the accepted/current `master` baseline unless the task explicitly specifies another base.
-   - The implementation is not considered accepted merely because OpenCode reports success.
+   - The implementation is not considered accepted merely because Кодер reports success.
 
 3. **Independent ChatGPT review**
    - ChatGPT independently checks the actual diff, architecture, tests, scope, and stated limitations.
    - ChatGPT either accepts the MVP or records required corrections.
-   - OpenCode must not self-declare acceptance.
+   - Кодер must not self-declare acceptance.
 
 4. **master**
    - Only accepted implementation may be published to `master`.
@@ -61,15 +61,15 @@ master — только после принятия
 
 ## Mandatory task-publication rule
 
-**When ChatGPT prepares a task for OpenCode/coder, the task must be published directly to GitHub. The user must not be required to copy the task text manually.**
+**When ChatGPT prepares a task for Кодер, the task must be published directly to GitHub. The user must not be required to copy the task text manually.**
 
 The GitHub task artifact is the source of truth. In the normal workflow, ChatGPT publishes the task to the repository (typically as a GitHub Issue), gives the user the direct link, and the coder works from that published task. This rule must be preserved when restoring the project in a new chat.
 
 ## Mandatory push rule (work is not delivered until it is on GitHub)
 
-**OpenCode work counts as delivered only when it is published to GitHub.** Local commits are not reviewable: the independent reviewer works from the remote repository only.
+**Кодер work counts as delivered only when it is published to GitHub.** Local commits are not reviewable: the independent reviewer works from the remote repository only.
 
-Before reporting completion, OpenCode MUST:
+Before reporting completion, Кодер MUST:
 
 1. Push the implementation branch:
    ```
@@ -86,7 +86,7 @@ Before reporting completion, OpenCode MUST:
    ```
 5. In the REPORT, cite the **pushed** implementation SHA and state "pushed, in sync with origin". A REPORT that says "no push performed" is incomplete and will not be reviewed.
 
-`master` is never pushed by OpenCode (publication happens only after acceptance).
+`master` is never pushed by Кодер (publication happens only after acceptance).
 
 Each `TASK-*.md` ends with a "Publication" block repeating these commands for its own branch.
 
@@ -94,7 +94,7 @@ Each `TASK-*.md` ends with a "Publication" block repeating these commands for it
 
 **All repository audits, specification audits, acceptance audits, and cross-checks must use the current `agent/control` branch as the starting/current reference unless the task explicitly specifies another ref.**
 
-The user must not be required to repeat or explain where the current task is located. ChatGPT/OpenCode must:
+The user must not be required to repeat or explain where the current task is located. ChatGPT/Кодер must:
 1. inspect `agent/control`;
 2. locate the relevant task/specification/control record there;
 3. use the current `agent/control` state as the audit baseline;

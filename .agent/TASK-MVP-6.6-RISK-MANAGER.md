@@ -2,7 +2,7 @@
 
 ## Status
 
-Task for OpenCode implementation. Start from `b2b199e2d73f7d1ec32abd4f7128e6f7a5a04f1b`.
+Task for Кодер implementation. Start from `b2b199e2d73f7d1ec32abd4f7128e6f7a5a04f1b`.
 
 ## Goal
 

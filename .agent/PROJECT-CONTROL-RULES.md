@@ -16,14 +16,14 @@ This rule applies to both implementation tasks and independent audits.
 
 ## 2. Задания кодеру публикуются напрямую
 
-**Обязательное правило проекта:** если ChatGPT формирует готовое задание для OpenCode/кодера, пользователь не должен копировать текст вручную.
+**Обязательное правило проекта:** если ChatGPT формирует готовое задание для Кодера, пользователь не должен копировать текст вручную.
 
 Порядок:
 1. ChatGPT формирует точное задание.
 2. ChatGPT публикует его непосредственно в GitHub репозитории `lordos2003/Veles-MOEX`.
 3. Для рабочей задачи используется GitHub Issue или другой явный GitHub-артефакт, если текущий workflow требует иной формы.
 4. Пользователю сообщается ссылка на опубликованное задание.
-5. OpenCode/кодер получает задание из GitHub.
+5. Кодер получает задание из GitHub.
 6. После выполнения ChatGPT проверяет фактический commit и REPORT.
 
 Для текущего workflow контрольная ветка — `agent/control`.
@@ -37,7 +37,7 @@ This rule applies to both implementation tasks and independent audits.
 ## 4. Восстановление в новом чате
 
 При начале нового чата по Veles-MOEX необходимо учитывать:
-- `.agent/OPENCODE-WORKFLOW.md`;
+- `.agent/CODER-WORKFLOW.md`;
 - этот файл;
 - `PROJECT_STATE.md`;
 - актуальное состояние `agent/control`.
@@ -64,7 +64,7 @@ ChatGPT не принимает работу только на основани�
 
 Push обычный, без `--force` и без rebase. При расхождении с GitHub: `git fetch origin` → `git merge origin/<ветка>` → push. `master` кодер не пушит никогда.
 
-Каждое задание (`TASK-*.md`) заканчивается блоком «Publication» с командами push для своей ветки. Подробно: `.agent/OPENCODE-WORKFLOW.md`, раздел «Mandatory push rule».
+Каждое задание (`TASK-*.md`) заканчивается блоком «Publication» с командами push для своей ветки. Подробно: `.agent/CODER-WORKFLOW.md`, раздел «Mandatory push rule».
 
 ## 6. Правило для спецификаций и аудитов
 

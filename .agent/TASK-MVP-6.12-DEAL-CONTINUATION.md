@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN REVIEW — round 1 REJECTED (B1, B2); correction round 1 (+ D7) assigned to OpenCode**
+**IN REVIEW — round 1 REJECTED (B1, B2); correction round 1 (+ D7) assigned to Кодер**
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.12` (create from current `master` @ `59a3897`)
@@ -150,7 +150,7 @@ Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.12-REV1.
 - Non-reducing intents keep the existing MVP-6.6 behaviour unchanged.
 - Document D7 in `§30` and in `§10.1` (Risk Manager preconditions) of `TASK-09-LIVE-TRADING-MVP-6.md`.
 
-## Publication (mandatory, see `AGENTS.md` §6 and `.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule")
+## Publication (mandatory, see `AGENTS.md` §6 and `.agent/CODER-WORKFLOW.md` → "Mandatory push rule")
 
 ```
 git push origin agent/review/mvp-6.12

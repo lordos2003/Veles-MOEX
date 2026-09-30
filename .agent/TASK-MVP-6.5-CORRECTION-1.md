@@ -1,4 +1,4 @@
-# OpenCode Task — MVP-6.5 Correction #1
+# Кодер Task — MVP-6.5 Correction #1
 
 ## TASK_ID
 

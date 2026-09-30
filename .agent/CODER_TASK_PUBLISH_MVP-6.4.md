@@ -1,4 +1,4 @@
-# OpenCode Task — Publish accepted MVP-6.4
+# Кодер Task — Publish accepted MVP-6.4
 
 ## TASK_ID
 

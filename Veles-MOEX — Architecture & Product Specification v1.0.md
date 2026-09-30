@@ -474,7 +474,7 @@ Potential later features:
 3. Broker-specific logic stays inside the Broker Adapter.
 4. Historical strategy versions must remain reproducible.
 5. Financial parameters are not tuned autonomously by the coding agent.
-6. Architecture decisions are made before implementation tasks are delegated to OpenCode.
+6. Architecture decisions are made before implementation tasks are delegated to Кодер.
 7. **Veles Help Center is the functional and terminology reference. The Veles user model is reproduced first; MOEX/T-Invest constraints determine only the required adaptations.**
 8. **Do not introduce a generic trading-rule abstraction when Veles already defines the corresponding user-facing behavior.**
 9. **Before implementing any new strategy feature, verify its Veles behavior against the current Veles Help Center.**

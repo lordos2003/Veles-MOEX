@@ -10,15 +10,15 @@
 
 - `agent/control` is the canonical control/audit source.
 - New tasks, audits and reviews start from the current `agent/control`.
-- OpenCode implements only on the assigned `agent/review/mvp-X` branch.
-- OpenCode must not publish to `master`.
+- Кодер implements only on the assigned `agent/review/mvp-X` branch.
+- Кодер must not publish to `master`.
 - Only independently accepted work is published to `master`.
 - `PROJECT_STATE.md`, current task, review and reports are maintained on `agent/control`; accepted records are mirrored to `master` for repository recovery.
 
 ## Current task
 
 ### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)
-**Status: IN REVIEW — round 1 REJECTED (B1: a deal can be left without a TP when the Risk Manager rejects the re-armed TP; B2: deal errors not surfaced, the bot stays RUNNING). Correction round 1 + contract D7 (reducing orders exempt from position-size / daily-loss limits) assigned to OpenCode.**
+**Status: IN REVIEW — round 1 REJECTED (B1: a deal can be left without a TP when the Risk Manager rejects the re-armed TP; B2: deal errors not surfaced, the bot stays RUNNING). Correction round 1 + contract D7 (reducing orders exempt from position-size / daily-loss limits) assigned to Кодер.**
 
 - Reviewed: `a4f792d`; review: `.agent/REVIEW-MVP-6.12.md`; report: `.agent/REPORT-MVP-6.12.md`
 
@@ -101,10 +101,10 @@ Known boundaries:
 - DCA/Grid and Backtest semantics are preserved across live-market-data work.
 
 ## Workflow rule: push before review
-Work is delivered only when `agent/review/mvp-X` and the REPORT on `agent/control` are pushed to GitHub (plain push, no `--force`/rebase). See `.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule". The same rule is in `AGENTS.md` §6 (published with MVP-6.11).
+Work is delivered only when `agent/review/mvp-X` and the REPORT on `agent/control` are pushed to GitHub (plain push, no `--force`/rebase). See `.agent/CODER-WORKFLOW.md` → "Mandatory push rule". The same rule is in `AGENTS.md` §6 (published with MVP-6.11).
 
 ## Recovery
-For a new ChatGPT/OpenCode session:
+For a new ChatGPT/Кодер session:
 1. Start from `agent/control`.
 2. Read `PROJECT_STATE.md`.
 3. Read the current `.agent/TASK-*.md`, applicable `.agent/REVIEW-*.md`, and latest `.agent/REPORT-*.md`.
