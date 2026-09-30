@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from app.brokers.base import BrokerAdapter
 from app.models.enums import OrderStatus
@@ -25,6 +26,9 @@ from app.trading.domain import (
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
 from app.trading.state import LiveStateStore
+
+if TYPE_CHECKING:
+    from app.trading.deal_manager import DealManager
 
 _ORDER_STATUS_TO_STATE = {
     OrderStatus.NEW: OrderState.SUBMITTED,
@@ -66,11 +70,13 @@ class LiveRecoveryCoordinator:
         order_manager: OrderManager,
         position_manager: PositionManager,
         broker: BrokerAdapter,
+        deal_manager: DealManager | None = None,
     ) -> None:
         self._store = store
         self._order_manager = order_manager
         self._position_manager = position_manager
         self._broker = broker
+        self._deal_manager = deal_manager
         self._blocked_reason: str | None = None
 
     async def persist_snapshot(self) -> None:
@@ -182,6 +188,19 @@ class LiveRecoveryCoordinator:
             recovered_fills += 1
 
         blocked = bool(unresolved)
+        deal_safe = True
+        if self._deal_manager is not None:
+            # MVP-6.12 D5: reconcile non-CLOSED deals against the authoritative
+            # order/position facts established above. When the order/position
+            # side is already unresolved (blocked), deals must not re-arm TPs.
+            deal_safe = await self._deal_manager.recover(
+                account_id, reconciliation_ok=not blocked
+            )
+        if not deal_safe and self._blocked_reason is None and self._deal_manager is not None:
+            error = self._deal_manager.last_error
+            if error is not None:
+                self._blocked_reason = str(error)
+        blocked = blocked or not deal_safe
         await self.persist_snapshot()
 
         return RecoveryResult(

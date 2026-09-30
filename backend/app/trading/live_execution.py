@@ -13,6 +13,8 @@ from collections.abc import Awaitable, Callable
 from decimal import Decimal
 
 from app.trading.bot_lifecycle import BotRuntimeManager, BotStateError
+from app.trading.deal import validate_live_deal_config
+from app.trading.deal_manager import DealManager
 from app.trading.domain import ExecutionIntent, InternalOrder
 from app.trading.engine import TradingEngine
 from app.trading.market_context import (
@@ -48,11 +50,13 @@ class LiveExecutionService:
         trading_engine: TradingEngine | None = None,
         bot_runtime_manager: BotRuntimeManager | None = None,
         market_data: object | None = None,
+        deal_manager: DealManager | None = None,
     ) -> None:
         self._broker = broker
         self._order_manager = order_manager
+        self._deal_manager = deal_manager
         self._coordinator = LiveRecoveryCoordinator(
-            store, order_manager, position_manager, broker
+            store, order_manager, position_manager, broker, deal_manager
         )
         self._account_id = account_id
         self._safe = False
@@ -144,6 +148,7 @@ class LiveExecutionService:
             self._order_manager,
             self._account_id,
             recovery=self._stream_recovery,
+            on_event=self._deal_manager.pump if self._deal_manager is not None else None,
         )
 
     async def _stream_recovery(self) -> bool:
@@ -242,10 +247,6 @@ def make_deposit_provider(
         return await bot_repository.get_deposit(bot_id)
 
     return _deposit_provider
-    async def _deposit_provider() -> Decimal | None:
-        return await bot_repository.get_deposit(bot_id)
-
-    return _deposit_provider
 
 
 async def build_live_service() -> LiveExecutionService:
@@ -322,6 +323,21 @@ async def build_live_service() -> LiveExecutionService:
     non-terminal orders); OPEN allows exits only (no new grid/entry intents
     from a fresh evaluation — deal continuation is a separate MVP).
 
+    Live deal continuation (MVP-6.12): the per-bot engine creates no exit
+    intents while OPEN (D6); the ``DealManager`` owns the whole position cycle
+    (D2): from a FLAT entry it builds the grid from the snapshot reference
+    price, captures the deposit at entry (C6), applies lot rounding (C3) and
+    tick rounding (D3) to every level, persists the Deal before submission and
+    submits the first order plus ``active_limit`` levels (D2). Grid fills re-arm
+    the TP (D4: one limit at the rounded average-price-based TP, lot-rounded
+    down, re-placed on every fill) and promote waiting levels to keep the
+    active count; a TP fill that zeroes the position cancels the remaining grid
+    orders and closes the Deal, returning the bot to the FLAT entry path. The
+    coordinator reconciles non-CLOSED Deals after order/position recovery (D5):
+    broker-filled grid orders are applied as fills and the TP is re-armed once;
+    an unresolvable Deal marks the bot ERROR and stops new submissions. D1
+    rejects unsupported configs at bot START (HTTP 409, no silent fallback).
+
     Market snapshot / per-bot timeframe (MVP-6.10): the bot runtime's
     market-context provider builds the live MarketContext for a strategy cycle
     from the bot's own configured timeframe
@@ -352,6 +368,7 @@ async def build_live_service() -> LiveExecutionService:
     from app.models.account import Account
     from app.models.enums import BotState
     from app.models.instrument import Instrument
+    from app.persistence.deal_store import SqlAlchemyDealStore
     from app.persistence.execution_state import SqlAlchemyLiveStateStore
     from app.services.market_data import MarketDataService
     from app.strategies.domain import MarketContext, Plan
@@ -368,6 +385,10 @@ async def build_live_service() -> LiveExecutionService:
         limits=risk_limits_from_settings(get_settings()),
         position_manager=position_manager,
     )
+    # MVP-6.12: deal continuation is wired into the live execution graph. The
+    # DealManager owns the TP (D4) and the grid level lifecycle (D2); the
+    # coordinator reconciles non-CLOSED deals on every (re)connect (D5).
+    deal_manager = DealManager(SqlAlchemyDealStore(session), order_manager, risk_manager)
     trading_engine = TradingEngine(
         broker, None, order_manager, position_manager, risk_manager
     )
@@ -404,6 +425,11 @@ async def build_live_service() -> LiveExecutionService:
             )
 
         async def _make_bot_engine(bot_strategy: BotStrategy) -> TradingEngine:
+            # MVP-6.12 D1: live deal continuation supports only SIMPLE/CUSTOM
+            # grids with a fixed-percentage TP and no SL / signal stop / pull-up.
+            # Rejection is explicit (DealConfigUnsupported) and surfaces as
+            # HTTP 409 through the START error mapping (no silent fallback).
+            validate_live_deal_config(bot_strategy.config)
             bot = await bot_repository.get(bot_id)
             if bot is None:
                 raise StrategyLoadError(f"bot {bot_id} not found")
@@ -437,6 +463,14 @@ async def build_live_service() -> LiveExecutionService:
                 intent_factory=_intent_factory,
                 instrument_figi=instrument.figi,
                 bot_id=bot_id,
+                # MVP-6.12: the per-bot engine hands the DealManager the
+                # reference price / deposit / base nominal at FLAT entry (D2)
+                # and the instrument tick size for the D3 rounding contract.
+                deal_manager=deal_manager,
+                tick_size=instrument.tick_size,
+                account_id=(
+                    account.external_account_id if account is not None else None
+                ),
                 # MVP-6.11 C5/C6: the sizing source uses the instrument lot
                 # size / currency for the MOEX lot-rounding contract (C3); the
                 # deposit itself is not snapshotted here — it is read from
@@ -481,6 +515,7 @@ async def build_live_service() -> LiveExecutionService:
         trading_engine=trading_engine,
         bot_runtime_manager=bot_runtime_manager,
         market_data=market_data,
+        deal_manager=deal_manager,
     )
     service._session_owner = session
     return service

@@ -22,6 +22,7 @@ from app.bots.schemas import BotDepositUpdate, BotResponse
 from app.bots.strategy import StrategyLoadError
 from app.models.bot import Bot
 from app.trading.bot_lifecycle import BotRuntimeManager, BotStartRejected, BotStateError
+from app.trading.deal import DealConfigUnsupported
 
 router = APIRouter(tags=["bots"])
 
@@ -95,6 +96,18 @@ async def _apply(
         await _persist_current_state(repo, bot, runtime)
         raise HTTPException(
             status_code=409, detail=f"invalid bot lifecycle transition: {exc}"
+        ) from exc
+    except DealConfigUnsupported as exc:
+        # MVP-6.12 D1: the bot config does not qualify for live deal
+        # continuation (grid mode / TP kind / SL presence / pull-up). The
+        # rejection is explicit at START and surfaces as a client error.
+        await _persist_current_state(repo, bot, runtime)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "bot start failed: config not supported for live deal "
+                f"continuation: {exc}"
+            ),
         ) from exc
     except Exception as exc:
         await _persist_current_state(repo, bot, runtime)

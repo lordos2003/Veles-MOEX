@@ -8,6 +8,7 @@ from __future__ import annotations
 from app.models.account import Account
 from app.models.base import Base
 from app.models.bot import Bot
+from app.models.deal import Deal, DealLevel
 from app.models.enums import BotState, OrderSide, OrderStatus, OrderType
 from app.models.execution import Execution
 from app.models.instrument import Instrument
@@ -27,6 +28,8 @@ __all__ = [
     "Account",
     "Bot",
     "BotState",
+    "Deal",
+    "DealLevel",
     "Execution",
     "Instrument",
     "LiveFill",

@@ -106,6 +106,7 @@ class TInvestStreamManager:
         backoff: tuple[float, ...] = (1.0, 10.0, 60.0),
         max_backoff: float = 60.0,
         recovery: Callable[[], Awaitable[bool]] | None = None,
+        on_event: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._adapter = adapter
         self._transport = transport
@@ -114,6 +115,7 @@ class TInvestStreamManager:
         self._backoff = backoff
         self._max_backoff = max_backoff
         self._recovery = recovery
+        self._on_event = on_event
         self._stopped = False
 
     def stop(self) -> None:
@@ -175,6 +177,10 @@ class TInvestStreamManager:
             event = _decode_position(message["position"])
             if event is not None:
                 await self._deliver(event)
+        if self._on_event is not None:
+            # Per-batch hook: lets the DealManager pump its fill reactions after
+            # each stream message has been reconciled into the order manager.
+            await self._on_event()
 
     async def _deliver(self, event: object) -> None:
         if isinstance(event, OrderUpdate):

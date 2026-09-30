@@ -13,6 +13,7 @@ T-Invest is never imported here; the broker is the broker-neutral BrokerAdapter.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 
 from app.brokers.base import BrokerAdapter, BrokerOrder, BrokerOrderRequest
 from app.models.enums import OrderStatus
@@ -75,6 +76,10 @@ class OrderManager:
         intent_repo: InMemoryIntentRepository | None = None,
         order_repo: InMemoryOrderRepository | None = None,
         fill_repo: InMemoryFillRepository | None = None,
+        # MVP-6.12: synchronous callback for every newly applied fill
+        # (duplicate fill ids are ignored and never re-delivered). The
+        # DealManager hooks here and queues its async reactions.
+        fill_listener: Callable[[InternalOrder, Fill], None] | None = None,
     ) -> None:
         self._broker = broker
         self._positions = position_manager or PositionManager()
@@ -82,6 +87,7 @@ class OrderManager:
         self._orders = order_repo or InMemoryOrderRepository()
         self._fills = fill_repo or InMemoryFillRepository()
         self._order_seq = 0
+        self._fill_listener = fill_listener
 
     # --- intents ------------------------------------------------------------------
 
@@ -267,6 +273,9 @@ class OrderManager:
                 fill.timestamp,
             )
 
+        if self._fill_listener is not None:
+            self._fill_listener(order, fill)
+
     def on_order_update(self, update: OrderUpdate) -> None:
         """Apply a broker order-state event idempotently."""
         order = self._resolve_order(
@@ -383,6 +392,15 @@ class OrderManager:
 
     def find_by_broker(self, broker_order_id: str) -> InternalOrder | None:
         return self._orders.get_by_broker(broker_order_id)
+
+    @property
+    def fill_listener(self) -> Callable[[InternalOrder, Fill], None] | None:
+        """The newly-applied fill callback (MVP-6.12 DealManager hook)."""
+        return self._fill_listener
+
+    @fill_listener.setter
+    def fill_listener(self, value: Callable[[InternalOrder, Fill], None] | None) -> None:
+        self._fill_listener = value
 
     def positions(self) -> PositionManager:
         return self._positions
