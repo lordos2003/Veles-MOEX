@@ -82,3 +82,13 @@ class StrategyEngine:
                 if series.bars:
                     return Decimal(str(series.bars[-1].close))
         return Decimal("0")
+
+    @staticmethod
+    def entry_price(config: StrategyConfig, context: MarketContext) -> Decimal:
+        """The public snapshot reference price (same source as :meth:`_entry_price`).
+
+        Used by the live Deal continuation (MVP-6.12 D2) so the Deal grid is
+        built from exactly the same reference price the Strategy Engine uses,
+        without exposing the private helper.
+        """
+        return StrategyEngine._entry_price(config, context)

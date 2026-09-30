@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from app.brokers import BrokerAdapter
 from app.domain.marketdata import Timeframe
@@ -27,18 +28,16 @@ from app.strategies.exit import ExitEngine
 from app.trading.domain import TERMINAL_STATES, ExecutionIntent
 from app.trading.market_context import TimeframeNotConfigured
 from app.trading.order_manager import OrderManager
-from app.trading.position_manager import (
-    InvalidPositionQuantity,
-    LivePositionState,
-    PositionManager,
-    PositionUnavailable,
-)
+from app.trading.position_manager import LivePositionState, PositionManager
 from app.trading.risk_manager import RiskManager
 from app.trading.sizing import (
     PositionSizing,
     SizingNotConfigured,
     round_grid_to_lot,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - type-only import (no runtime cycle)
+    from app.trading.deal_manager import DealManager
 
 
 def compose_strategy_engine() -> StrategyEngine:
@@ -73,6 +72,13 @@ class TradingEngine:
         instrument_figi: str | None = None,
         bot_id: int | None = None,
         deposit_provider: Callable[[], Awaitable[Decimal | None]] | None = None,
+        # MVP-6.12 D2/D6: when wired, the FLAT live entry opens a persisted
+        # Deal through the DealManager instead of submitting the grid intents
+        # directly, and the OPEN live path creates no exit intents at all
+        # (the take-profit belongs to the Deal).
+        deal_manager: DealManager | None = None,
+        tick_size: Decimal | None = None,
+        account_id: str | None = None,
     ) -> None:
         self.broker = broker
         self.strategy_engine = strategy_engine
@@ -90,6 +96,9 @@ class TradingEngine:
         # entry (per-bot production wiring reads ``Bot.deposit`` from the
         # repository), so a deposit edit applies from the next deal.
         self._deposit_provider = deposit_provider
+        self._deal_manager = deal_manager
+        self._tick_size = tick_size
+        self._account_id = account_id
         self._started = False
 
     @property
@@ -134,14 +143,19 @@ class TradingEngine:
         Entry sizing is an **entry-only** precondition (review B1): the
         deposit -> base-nominal conversion (C2) is resolved on the FLAT live
         entry path (and for a generic engine without a live position state).
-        OPEN / UNKNOWN / SIGN_MISMATCH never read the deposit or the grid mode:
-        exits of an open deal depend only on the |PositionManager| quantity
-        (:meth:`_exit_position_quantity`), so an open position keeps its exit
-        maintenance even when the deposit is unset, cleared or the grid mode is
-        SIGNAL/CUSTOM-over-100% (C6). On the FLAT path the deposit is read at
-        the moment of the entry (C6) via the wired async ``deposit_provider``;
-        a deposit edit therefore applies from the next deal and never affects
-        an open deal.
+        OPEN / UNKNOWN / SIGN_MISMATCH never read the deposit or the grid mode.
+        On the FLAT path the deposit is read at the moment of the entry (C6) via
+        the wired async ``deposit_provider``; a deposit edit therefore applies
+        from the next deal and never affects an open deal.
+
+        Live deal continuation (MVP-6.12 D2/D6): a live per-bot engine with a
+        wired ``deal_manager`` opens a persisted Deal from the FLAT entry (the
+        whole grid is built by the DealManager from the same snapshot price,
+        lot- and tick-rounded, and persisted before any order is submitted);
+        the plan's own grid/exit items are not submitted from here. In OPEN the
+        engine creates **no** exit intents at all: the take-profit is owned by
+        the Deal (re-armed by the DealManager on every grid fill), and the
+        old "exits priced from the market snapshot" path is gone (D6).
 
         ``intent_factory`` may return a single intent, a list of intents, or
         None; every returned intent is submitted through :meth:`submit_intent`,
@@ -159,10 +173,11 @@ class TradingEngine:
         - FLAT: entry only — the grid built from the current snapshot, rounded
           down to whole lots (C3, |SizingBelowLot| blocks the whole entry when
           any level rounds to 0 lots), submitted only when the bot has no
-          active (non-terminal) orders; no exit intents;
-        - OPEN: exits only (real quantity via |PositionManager.resolve_quantity|);
-          no new grid/entry intents from a fresh evaluation (deal continuation /
-          grid state persistence is out of scope).
+          active (non-terminal) orders; with a ``deal_manager`` the entry opens
+          a Deal instead (D2) and no exit intents are created;
+        - OPEN: no new grid/entry intents and **no exit intents** from a fresh
+          evaluation (D6) — a deal continuation (open Deal manager wired) keeps
+          working its existing grid and its Deal-owned take-profit.
         """
         if not self._started:
             raise RuntimeError("TradingEngine is not started")
@@ -173,8 +188,13 @@ class TradingEngine:
             )
         timeframe = self._require_live_timeframe()
         position_state = self._live_position_state()
-        position_qty = self._exit_position_quantity()
-        base_nominal = await self._entry_base_nominal(position_state)
+        # MVP-6.12 D6: for a live per-bot engine the OPEN path must NOT create
+        # exit intents from the strategy evaluation — the take-profit is owned
+        # by the Deal (D4). ``position_qty`` stays ``None`` so ``evaluate``
+        # never builds market-price-priced exits; the generic/Backtest path is
+        # unchanged (it passed ``None`` already).
+        position_qty: Decimal | None = None
+        deposit, base_nominal = await self._entry_deposit_and_nominal(position_state)
         plan = self.strategy_engine.evaluate(
             self._strategy_config,
             context,
@@ -188,6 +208,14 @@ class TradingEngine:
         if position_state is LivePositionState.FLAT:
             if self._entry_blocked_by_active_orders():
                 return plan
+            if self._deal_manager is not None:
+                # MVP-6.12 D2: the DealManager opens (and persists before
+                # submitting) the whole grid once; the plan items are not
+                # submitted from here to avoid a second entry.
+                await self._submit_live_deal(plan, context, deposit, base_nominal)
+                plan.grid = []
+                plan.exits = []
+                return plan
             plan.grid = round_grid_to_lot(
                 plan.grid,
                 lot_size=self._sizing.lot_size,
@@ -195,7 +223,18 @@ class TradingEngine:
             )
             plan.exits = []
         elif position_state is LivePositionState.OPEN:
+            # D6: no new grid/entry intents from a fresh evaluation; exits are
+            # Deal-owned (never re-created from the market snapshot).
+            if self._deal_manager is not None:
+                # B2/D5: on the live deal path an OPEN position is never
+                # silently ignored — it must be owned by a non-CLOSED Deal; a
+                # contradiction puts the bot in ERROR via the deal layer and
+                # fails the cycle explicitly (no fabricated continuation).
+                await self._deal_manager.assert_deal_for_open_position(
+                    self._bot_id, self._instrument_figi
+                )
             plan.grid = []
+            plan.exits = []
         if self._intent_factory is not None:
             result = self._intent_factory(plan, context)
             if result is not None:
@@ -285,45 +324,24 @@ class TradingEngine:
         series = snapshot.get(timeframe)
         return series is None or not series.bars
 
-    def _exit_position_quantity(self) -> Decimal | None:
-        """Resolve the authoritative live exit quantity from the PositionManager.
-
-        The PositionManager is the only authoritative quantity source: the broker
-        is never queried here. The quantity is resolved only for the OPEN live
-        position state (MVP-6.11 C4); every other state yields ``None`` (no
-        position / zero / sign-mismatch / unknown), which also makes
-        :meth:`_position_gates_execution` block **all** live intents for this
-        cycle. The broker-neutral domain errors are caught and mapped to ``None``.
-        """
-        if self._instrument_figi is None:
-            return None
-        if self._live_position_state() is not LivePositionState.OPEN:
-            return None
-        try:
-            return self.position_manager.resolve_quantity(
-                self._instrument_figi, self._strategy_config.direction
-            )
-        except (PositionUnavailable, InvalidPositionQuantity):
-            return None
-
-    async def _entry_base_nominal(
+    async def _entry_deposit_and_nominal(
         self, position_state: LivePositionState | None
-    ) -> Decimal | None:
-        """The C2 base nominal, resolved only when an entry can be sized (B1).
+    ) -> tuple[Decimal | None, Decimal | None]:
+        """The C6 deposit and C2 base nominal, resolved only on entry (B1).
 
         Entry sizing (deposit -> base nominal, C2/C3) is an **entry-only**
         precondition: it is resolved on the FLAT live entry path, and for a
         generic engine without a live position state (where it is the only
-        source of grid quantity). OPEN / UNKNOWN / SIGN_MISMATCH yield ``None``
-        — exits of an open deal depend only on the PositionManager quantity and
-        never on the deposit or the grid mode (B1/C6).
+        source of grid quantity). OPEN / UNKNOWN / SIGN_MISMATCH yield
+        ``(None, None)`` — open-deal logic never depends on the deposit or the
+        grid mode (B1/C6).
 
         On the FLAT path the deposit is read at the moment of the entry (C6):
         when a broker-neutral async ``deposit_provider`` is wired (production
-        reads ``Bot.deposit`` from the repository per entry), the latest value
-        is used, so a deposit edit applies from the next deal and an already
-        open deal is unaffected. Without a provider the static sizing source is
-        used (tests / generic engines).
+        reads ``Bot.deposit`` from the repository once per entry), the latest
+        value is used, so a deposit edit applies from the next deal and an
+        already open deal is unaffected. Without a provider the static sizing
+        source is used (tests / generic engines).
         """
         if self._instrument_figi is None:
             # Generic engine (no live position state): the sizing source remains
@@ -333,20 +351,63 @@ class TradingEngine:
                     "TradingEngine.process() requires an explicit position-sizing "
                     "source to build a safe live order quantity"
                 )
-            return self._sizing.resolve_base_nominal(self._strategy_config.dca_grid)
+            return (
+                self._sizing.deposit,
+                self._sizing.resolve_base_nominal(self._strategy_config.dca_grid),
+            )
         if position_state is not LivePositionState.FLAT:
-            return None
+            return None, None
         if self._sizing is None:
             raise SizingNotConfigured(
                 "TradingEngine.process() requires an explicit position-sizing "
                 "source to build a safe live order quantity"
             )
         if self._deposit_provider is not None:
+            deposit = await self._deposit_provider()
             sizing = PositionSizing(
                 base_nominal=self._sizing.base_nominal,
-                deposit=await self._deposit_provider(),
+                deposit=deposit,
                 lot_size=self._sizing.lot_size,
                 currency=self._sizing.currency,
             )
-            return sizing.resolve_base_nominal(self._strategy_config.dca_grid)
-        return self._sizing.resolve_base_nominal(self._strategy_config.dca_grid)
+            return deposit, sizing.resolve_base_nominal(self._strategy_config.dca_grid)
+        return (
+            self._sizing.deposit,
+            self._sizing.resolve_base_nominal(self._strategy_config.dca_grid),
+        )
+
+    async def _submit_live_deal(
+        self,
+        plan: Plan,
+        context: MarketContext,
+        deposit: Decimal | None,
+        base_nominal: Decimal | None,
+    ) -> None:
+        """MVP-6.12 D2: open a Deal from a FLAT entry through the DealManager.
+
+        The DealManager builds the whole grid from the same snapshot reference
+        price the Strategy Engine used, applies lot/tick rounding to **every**
+        level (D3; any failure blocks the whole entry) and persists the Deal
+        before submitting any order (D2). The deposit captured here is the C6
+        entry-time value and ``base_nominal`` is the C2 conversion already
+        resolved by the engine.
+        """
+        if plan.entry is None or base_nominal is None:
+            # No entry signal (or nothing sized) — no deal is opened and no
+            # fabricated one is created (same guard as the grid plan).
+            return
+        reference_price = self.strategy_engine.entry_price(self._strategy_config, context)
+        if reference_price <= 0:
+            return
+        await self._deal_manager.open_deal(
+            bot_id=self._bot_id,
+            instrument_figi=self._instrument_figi,
+            direction=self._strategy_config.direction,
+            config=self._strategy_config,
+            reference_price=reference_price,
+            deposit=deposit,
+            base_nominal=base_nominal,
+            account_id=self._account_id,
+            lot_size=self._sizing.lot_size if self._sizing is not None else None,
+            tick_size=self._tick_size,
+        )

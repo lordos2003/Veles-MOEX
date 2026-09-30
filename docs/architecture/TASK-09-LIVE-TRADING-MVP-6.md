@@ -252,6 +252,18 @@ and enforces, in order:
 5. configured position limit is not exceeded (worst-case projected position);
 6. configured daily loss limit is not breached.
 
+**MVP-6.12 owner contract D7 (position-reducing exemption, 2026-09-30):** a
+**reducing** intent — the Deal closing take-profit, or any order that reduces
+the current live position — is **exempt** from checks 5–6 (position limit,
+daily loss limit): when the PositionManager position for the intent's FIGI is
+non-zero, the intent side is opposite to the position sign, and the quantity
+does not exceed the position magnitude, the order is a *reduction* and must
+never be blocked by a limit meant to stop risk from growing. Checks 1–4
+(emergency stop, quantity, price, instrument permission) still apply to
+reducing intents. An intent that increases the position (or a reduction with
+quantity beyond the position) keeps the full MVP-6.6 behavior; without a known
+position the exemption does not apply.
+
 The **bot RUNNING state is NOT checked here**: the bot lifecycle (MVP-6.5)
 remains the upstream lifecycle gate and is not duplicated inside the Risk
 Manager.
@@ -1275,3 +1287,168 @@ submits the exit only, no new grid); `test_mvp610_market_snapshot.py` also
 covers C7 (broker returns `lookback_bars + 1` candles -> the snapshot
 contains exactly `lookback_bars`, the newest last).
 
+
+## 30. Live deal continuation (simple TP, simple/custom grid) — MVP-6.12
+
+This section records MVP-6.12 (approved contracts D1–D7, 2026-09-30, GitHub
+Issue #7): the live cycle is no longer "entry + exit intents from the
+strategy" — a position cycle is one **Deal** owned by the new Deal layer,
+from the FLAT entry fill to the take-profit fill. The grid is built up
+front from the entry snapshot price, the deposit is captured at deal entry
+(C6), the take-profit belongs to the Deal (never to the strategy plan), and
+all live prices are tick-aligned in the safe direction (D3).
+
+### D1. Supported configuration (explicit rejection at START)
+
+- Live deal continuation applies only when: `DCAGridConfig.mode` is
+  `SIMPLE` or `CUSTOM`; `ExitConfig.take_profit.kind == "fixed_percentage"`;
+  `stop_loss is None`; `signal_stop is None`; and
+  `pull_up_percent == 0`. Anything else raises
+  `app.trading.deal.DealConfigUnsupported` at bot START.
+- `app/api/bots.py:_apply` maps `DealConfigUnsupported` to HTTP 409 with the
+  explicit message "config not supported for live deal continuation: ..."
+  and persists the actual runtime state (ERROR). No default strategy config
+  is invented; the validation lives at the composition boundary
+  (`app/trading/live_execution.py`) where the DealManager is wired.
+
+### D2. Deal lifecycle (one persisted Deal per position cycle)
+
+- A Deal is one position cycle: FLAT entry fill → closing TP fill. It is
+  persisted (`app/models/deal.py`, Alembic `0005_deal_continuation`,
+  `app/persistence/deal_store.py`) with Decimal prices/quantities and UTC
+  timestamps; `DealStatus` is OPENING → OPEN → CLOSED (plus ERROR).
+- Entry: the whole grid is built from the snapshot price in one
+  `DCAGridEngine.build` call (per-level nominal = deposit split per C2),
+  every level passes C3 (lot rounding) + D3 (tick alignment), any failure
+  blocks the whole entry (`DealError`). The Deal is persisted **before** any
+  order is submitted; then the first level order + up to `active_limit`
+  working levels are placed. The strategy `Plan` grid/exits must not be
+  submitted by the engine afterwards (see D6).
+- Entry fill (`OrderManager.on_trade_fill` → `apply_fill` → synchronous
+  `fill_listener` queue) → Deal OPEN → TP placed (D4).
+- DCA fill (partial or full) → TP re-armed (D4) and the next waiting level
+  is placed so the number of working levels stays at `active_limit`.
+- TP partial fill → the TP keeps working; position reaches zero → remaining
+  grid orders are cancelled → Deal CLOSED → the cycle returns to the FLAT
+  entry path for the next deal.
+- Correlation: `bot_id` + deterministic intent ids
+  (`deal-{id}-grid-{index}`, `deal-{id}-tp-{rev}`) — no broker types enter
+  the deal layer.
+
+### D3. Tick alignment (round in the safe direction)
+
+- Every limit price is a multiple of `Instrument.tick_size`, rounded in the
+  safe direction: grid LONG down / SHORT up; TP LONG up / SHORT down.
+  Rounding is `Decimal`-only (`round_down_to_tick` / `round_up_to_tick` /
+  `align_grid_price` / `align_tp_price` in `app/trading/deal.py`).
+- A missing or non-positive tick size is an explicit `DealTickSizeInvalid`
+  error (no invented default), and blocks the entry before any order is
+  submitted.
+
+### D4. Take-profit ownership (Deal-owned, position-authoritative)
+
+- The TP is **one** limit order for the whole current position quantity
+  (from the PositionManager, lot-rounded down), priced
+  `average_price × (1 ± tp%)` (LONG +, SHORT −) from the PositionManager
+  **average** — never the market price — then D3-aligned.
+- Re-arm on every grid fill: cancel the old TP, await confirmation (or a
+  terminal state), then place the new one. If the old TP filled during the
+  cancel, the new TP is recomputed from the actual (reduced) position.
+- Invariant: never two working TPs. If a cancel fails or the TP state is
+  unknown, no second TP is placed, the bot's new submissions are blocked,
+  and the deal is marked as needing reconciliation (`DealBlocked`).
+
+### D5. Recovery (no blind grid recreation)
+
+- `LiveRecoveryCoordinator` recovers after order/position reconciliation:
+  non-CLOSED Deals are loaded, broker facts are matched level-by-level, and
+  no grid is recreated blindly. A still-active grid order stays as-is; a
+  broker-filled grid order is applied as a fill (→ TP re-arm per D4); a
+  missing TP while OPEN is placed once after successful reconciliation.
+- Unknown state / contradiction → the bot goes to ERROR and new submissions
+  are stopped (`DealReconciliationRequired` / `DealPositionContradiction`).
+
+### D6. Engine boundary (live OPEN creates no exit intents)
+
+- The live per-bot `TradingEngine.process()` in OPEN must NOT create exit
+  intents from `StrategyEngine.evaluate()` — the TP is Deal-owned. The
+  engine-level "exits from market price" behavior and its tests were
+  removed; backtest/generic engines are unchanged.
+- Cleanup: the unreachable duplicate in `make_deposit_provider()`
+  (`app/trading/live_execution.py`) was removed.
+
+### D7. Reducing intents are exempt from growth limits (owner contract)
+
+- A **reducing** intent — the Deal's closing take-profit and any other order
+  that reduces the current live position — is exempt from `max_position_size`
+  and `daily_loss_limit` (Risk Manager §10.1 checks 5–6): `check_order()`
+  skips them when the PositionManager position for the intent's FIGI is
+  non-zero, the intent side is opposite to the position sign, and
+  `quantity <= |position|`. Checks 1–4 (emergency stop, quantity, price,
+  instrument permission) still apply; non-reducing intents keep the full
+  MVP-6.6 behavior; without a known position no exemption is applied.
+- Rationale: the TP is the safety exit of a Deal — a growth limit must never
+  block the closing leg (a rejected TP would leave the position without a
+  take-profit).
+
+### Correction round 1 (independent review, 2026-09-30)
+
+- **B1 (TP re-arm safety / event isolation):** the new TP is computed and
+  risk-gated **before** the working TP is cancelled; a risk rejection keeps
+  the old TP working (the position is never left uncovered) and surfaces as
+  `DealOrderRejected`. `DealManager.pump()` now isolates every event: one
+  reaction failure marks exactly that Deal ERROR (and the bot), and the
+  remaining queued events are still applied — a bad fill no longer escapes
+  the stream's ``on_event`` hook or starves the rest of the batch.
+- **B2 (no silent deal failure):** every deal failure (`pump()`,
+  `open_deal()`, recovery) funnels through `DealManager._fail_deal`: the bot
+  lifecycle is notified (`BotRuntime.fail()` → ERROR, persisted via
+  `BotRepository`), and the reason is observable as the read-only
+  `deal_error` field in `GET /api/bots/{id}` (`BotResponse.deal_error`). An
+  OPEN live position without an owning non-CLOSED Deal raises
+  `DealPositionContradiction` and puts the bot in ERROR instead of being
+  silently ignored (replaces the former D6 no-op cycle behavior).
+
+### Correction round 2 (independent review, 2026-09-30)
+
+- **B3 (a fill is a broker fact; the TP is never larger than the position):**
+  - `OrderManager`/domain: `CANCEL_REQUESTED → PARTIALLY_FILLED / FILLED` is
+    now an allowed transition — a fill that arrives while the cancel is in
+    flight (exchange race) is applied instead of raising
+    `OrderStateError`. A fill reported for an order already in a terminal
+    state (e.g. `CANCELLED`) is still applied to the position and recorded,
+    keeping the terminal state. `OrderManager.cancel()` no longer overwrites
+    a terminal outcome: after the broker call it transitions to `CANCELLED`
+    only while the order is still live.
+  - `DealManager._rearm_tp()`: after the old-TP cancel returns (confirmed or
+    terminal) the position is **re-read**; zero → `_close_deal` (no new TP);
+    changed quantity/average → the intent is rebuilt at the next `tp_rev` and
+    risk-gated again (D7 keeps the reducing TP allowed). The new TP can never
+    exceed the actual position. Recovery no longer re-registers a Deal that
+    `_close_deal` just closed (it would block the next entry).
+
+### Tests (validation commands)
+
+Run from `backend/` with the project venv:
+
+- `./.venv/Scripts/python.exe -m pytest tests/test_mvp612_deal_continuation.py -q`
+  — D1–D7 coverage (START 409 / SIMPLE+CUSTOM accepted, tick alignment both
+  directions + missing tick, whole-grid C3/D3 check before submission,
+  persist-before-submit, deposit recapture per deal, active_limit level
+  promotion, TP re-arm on DCA fill, TP partial-fill continuation, TP-fills-
+  during-cancel race, position-zero close, recovery matching, engine
+  no-exit-intents; correction round 1: D7 reducing exemption through a real
+  Deal, B1 risk-rejected re-arm keeps the old TP and isolates a failing
+  batch, B2 deal_error observability + OPEN-without-Deal ERROR).
+- `./.venv/Scripts/python.exe -m pytest tests/test_trading_risk.py -q` — D7
+  unit coverage (reducing sell/buy exempt from position size and daily loss;
+  increasing intent blocked; quantity beyond the position is not reducing;
+  emergency stop / blocked instrument still block reducing intents).
+- `./.venv/Scripts/python.exe -m pytest tests/test_mvp69_position_state.py tests/test_mvp611_deposit_sizing.py tests/test_mvp610_market_snapshot.py -q`
+  — updated for D6: the OPEN live cycle submits no exit intents any more
+  (MVP-6.11 B1/C6 exit-only assertions replaced by the Deal-owned TP
+  coverage; `test_mvp610_market_snapshot.py` asserts no order is placed for
+  the OPEN cycle).
+- `./.venv/Scripts/python.exe -m pytest -q` — full backend suite.
+- `ruff check app tests scripts` (from `backend/`), `alembic heads` (single
+  head, `0005`), `npm run build` (frontend unchanged, stays green).

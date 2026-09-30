@@ -13,11 +13,13 @@ T-Invest is never imported here; the broker is the broker-neutral BrokerAdapter.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 
 from app.brokers.base import BrokerAdapter, BrokerOrder, BrokerOrderRequest
 from app.models.enums import OrderStatus
 from app.trading.domain import (
     ALLOWED_TRANSITIONS,
+    TERMINAL_STATES,
     ExecutionIntent,
     Fill,
     InternalOrder,
@@ -75,6 +77,10 @@ class OrderManager:
         intent_repo: InMemoryIntentRepository | None = None,
         order_repo: InMemoryOrderRepository | None = None,
         fill_repo: InMemoryFillRepository | None = None,
+        # MVP-6.12: synchronous callback for every newly applied fill
+        # (duplicate fill ids are ignored and never re-delivered). The
+        # DealManager hooks here and queues its async reactions.
+        fill_listener: Callable[[InternalOrder, Fill], None] | None = None,
     ) -> None:
         self._broker = broker
         self._positions = position_manager or PositionManager()
@@ -82,6 +88,7 @@ class OrderManager:
         self._orders = order_repo or InMemoryOrderRepository()
         self._fills = fill_repo or InMemoryFillRepository()
         self._order_seq = 0
+        self._fill_listener = fill_listener
 
     # --- intents ------------------------------------------------------------------
 
@@ -253,9 +260,15 @@ class OrderManager:
         order.updated_at = fill.timestamp
 
         if order.filled_quantity >= order.requested_quantity:
-            self._transition(order, OrderState.FILLED)
+            target = OrderState.FILLED
         else:
-            self._transition(order, OrderState.PARTIALLY_FILLED)
+            target = OrderState.PARTIALLY_FILLED
+        # B3: a fill is a broker fact. An order already in a terminal state
+        # (e.g. CANCELLED after an exchange race fill, FILLED after a late
+        # duplicate) keeps its state, but the fill still updates the recorded
+        # quantity/price and the position below — a fill is never dropped.
+        if order.status not in TERMINAL_STATES:
+            self._transition(order, target)
 
         if self._positions is not None:
             self._positions.apply_fill(
@@ -266,6 +279,9 @@ class OrderManager:
                 fill.fee,
                 fill.timestamp,
             )
+
+        if self._fill_listener is not None:
+            self._fill_listener(order, fill)
 
     def on_order_update(self, update: OrderUpdate) -> None:
         """Apply a broker order-state event idempotently."""
@@ -340,7 +356,12 @@ class OrderManager:
         if order.broker_order_id is not None:
             try:
                 await self._broker.cancel_order(order.broker_order_id, order.account_id)
-                self._transition(order, OrderState.CANCELLED)
+                # B3: the exchange may have filled the order while the cancel
+                # was in flight (CANCEL_REQUESTED -> PARTIALLY_FILLED/FILLED is
+                # allowed). A terminal outcome wins and is kept; a still-live
+                # order is confirmed CANCELLED.
+                if order.status not in TERMINAL_STATES:
+                    self._transition(order, OrderState.CANCELLED)
             except Exception:
                 self._transition(order, OrderState.UNKNOWN)
         else:
@@ -383,6 +404,15 @@ class OrderManager:
 
     def find_by_broker(self, broker_order_id: str) -> InternalOrder | None:
         return self._orders.get_by_broker(broker_order_id)
+
+    @property
+    def fill_listener(self) -> Callable[[InternalOrder, Fill], None] | None:
+        """The newly-applied fill callback (MVP-6.12 DealManager hook)."""
+        return self._fill_listener
+
+    @fill_listener.setter
+    def fill_listener(self, value: Callable[[InternalOrder, Fill], None] | None) -> None:
+        self._fill_listener = value
 
     def positions(self) -> PositionManager:
         return self._positions

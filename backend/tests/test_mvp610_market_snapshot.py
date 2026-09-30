@@ -634,26 +634,23 @@ async def test_position_invariant_valid_snapshot_no_position() -> None:
 
 
 async def test_position_invariant_valid_snapshot_and_position() -> None:
-    # With a valid snapshot and a valid position, execution proceeds and the
-    # exit quantity is still the authoritative real position quantity.
+    # With a valid snapshot and a valid position, execution proceeds, but
+    # MVP-6.12 D6 removed the OPEN-cycle exit creation from the per-bot engine
+    # (the take-profit is Deal-owned; see test_mvp612_deal_continuation.py), so
+    # no order at all is submitted from a fresh evaluation.
     broker = RecordingBroker()
     om = OrderManager(broker)
     pm = om.positions()
     pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
     # MVP-6.11 C4: the OPEN live position state is established by a successful
-    # reconciliation. While OPEN, only exit intents are submitted — no new
-    # grid/entry intents from a fresh evaluation (deal continuation is out of
-    # scope), so exactly one order (the exit SELL) is expected.
+    # reconciliation. While OPEN no new grid/entry/exit intents are created
+    # from a fresh evaluation (D6).
     pm.mark_reconciled()
     engine = _live_engine(broker, positions=pm)
-    om = engine.order_manager
     await engine.start()
     await engine.process(_context())
-    orders = om.list_orders()
-    sells = [o for o in orders if o.side is OrderSide.SELL]
-    assert len(orders) == 1  # exit SELL only; no new grid entry while OPEN
-    assert len(sells) == 1
-    assert sells[0].requested_quantity == Decimal("10")
+    assert om.list_orders() == []
+    assert broker.place_calls == 0
 
 
 # --- 8: snapshot bars drive the entry filter evaluation -------------------------

@@ -2,9 +2,13 @@
 
 The PositionManager is the only authoritative source of live execution quantity.
 These focused tests cover: valid/missing/zero/negative positions, the real
-quantity reaching ExitPlan and ExecutionIntent, no live exit order without a
-valid position, no fabricated/default quantity, and unchanged Backtest/DCA
-behavior. Deterministic and broker-neutral.
+quantity reaching the ExitPlan through the pure Strategy Engine, no live exit
+order without a valid position, no fabricated/default quantity, and unchanged
+Backtest/DCA behavior. Deterministic and broker-neutral.
+
+MVP-6.12 D6 moved the live OPEN-cycle exit creation out of the per-bot
+TradingEngine (the take-profit is Deal-owned); the engine-level exit-intent
+tests moved to ``test_mvp612_deal_continuation.py``.
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ import pytest
 
 from app.brokers.base import BrokerOrder, BrokerOrderRequest
 from app.domain.marketdata import Timeframe
-from app.models.enums import OrderSide, OrderStatus, OrderType
+from app.models.enums import OrderSide, OrderStatus
 from app.strategies.bars import Bar, BarSeries, Snapshot
 from app.strategies.config import (
     DCAGridConfig,
@@ -119,7 +123,7 @@ def test_negative_quantity_invalid_for_direction() -> None:
     assert pm.resolve_quantity(FIGI, Direction.SHORT) == Decimal("5")
 
 
-# --- 5-6: real quantity reaches ExitPlan / ExecutionIntent -------------------
+# --- 5-6: real quantity reaches the pure ExitPlan ----------------------------
 
 
 def test_real_quantity_reaches_exit_plan() -> None:
@@ -133,38 +137,6 @@ def test_real_quantity_reaches_exit_plan() -> None:
     assert exits[0].side is OrderSide.SELL
     assert exits[0].quantity == 10.0
     assert exits[0].price == Decimal("110")  # 100 * 1.10
-
-
-async def test_real_quantity_reaches_execution_intent() -> None:
-    broker = FakeBroker()
-    om = OrderManager(broker)
-    pm = om.positions()
-    pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
-    # MVP-6.11 C4: the OPEN live position state is established by a successful
-    # reconciliation; without it the state is UNKNOWN and no live order is made.
-    pm.mark_reconciled()
-
-    def factory(plan, ctx):
-        return plan_to_intents(plan, instrument_figi=FIGI, bot_id=1, account_id="acc-1")
-
-    engine = TradingEngine(
-        broker,
-        StrategyEngine(EntryEngine(), DCAGridEngine(), ExitEngine()),
-        om,
-        pm,
-        RiskManager(position_manager=pm),
-        strategy_config=_strategy(),
-        intent_factory=factory,
-        sizing=PositionSizing(base_nominal=Decimal("5000")),
-        instrument_figi=FIGI,
-    )
-    await engine.start()
-    await engine.process(_market_context())
-    sell = [o for o in om.list_orders() if o.side is OrderSide.SELL]
-    assert len(sell) == 1
-    assert sell[0].requested_quantity == Decimal("10")
-    assert sell[0].order_type is OrderType.LIMIT
-    assert sell[0].limit_price == Decimal("110")
 
 
 # --- 7-8: no order without a valid position; no fallback ---------------------
@@ -248,35 +220,6 @@ async def test_no_live_order_when_sign_mismatched() -> None:
     await engine.process(_market_context())
     # Sign-inconsistent position => no live order at all for this cycle.
     assert om.list_orders() == []
-
-
-async def test_no_fallback_quantity() -> None:
-    broker = FakeBroker()
-    om = OrderManager(broker)
-    pm = om.positions()
-    pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
-    # MVP-6.11 C4: OPEN live position state requires a successful reconciliation.
-    pm.mark_reconciled()
-
-    def factory(plan, ctx):
-        return plan_to_intents(plan, instrument_figi=FIGI, bot_id=1, account_id="acc-1")
-
-    engine = TradingEngine(
-        broker,
-        StrategyEngine(EntryEngine(), DCAGridEngine(), ExitEngine()),
-        om,
-        pm,
-        RiskManager(position_manager=pm),
-        strategy_config=_strategy(),
-        intent_factory=factory,
-        sizing=PositionSizing(base_nominal=Decimal("5000")),
-        instrument_figi=FIGI,
-    )
-    await engine.start()
-    await engine.process(_market_context())
-    sell = [o for o in om.list_orders() if o.side is OrderSide.SELL]
-    assert [o for o in sell if o.requested_quantity == Decimal("1.0")] == []
-    assert sell[0].requested_quantity == Decimal("10")  # real position quantity
 
 
 # --- 9-10: Backtest / DCA unchanged ------------------------------------------
