@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
-**Status: IN REVIEW — round 2, correction committed and pushed, awaiting decision.**
+**Status: IN REVIEW — round 2 REJECTED (B2: C6 provider reads a stale cached Bot in production); B1 and C7 closed. Correction round 2 assigned to OpenCode.**
 
 - Reviewed: `e036c0e`; review record: `.agent/REVIEW-MVP-6.11.md`; report: `.agent/REPORT-MVP-6.11.md`; correction report: `.agent/REPORT-MVP-6.11-REV1.md`
 - B1 (round-1 rejection): exits of an OPEN position must not depend on entry sizing (deposit / SIGNAL / CUSTOM errors blocked the TP) — corrected: sizing is resolved on the FLAT entry path only.

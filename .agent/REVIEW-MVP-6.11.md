@@ -88,3 +88,58 @@ This contradicts C4: *OPEN → existing MVP-6.9 behaviour (exits with real quant
 4. `master` unchanged.
 
 **No publication to master.**
+
+---
+
+## Round 2 — Verdict
+
+**REJECTED — one correction required (B2).** B1 and C7 are closed. C6 works in the engine but not in the production wiring.
+
+Reviewed: `a6aaba5` (`agent/review/mvp-6.11`, pushed, in sync with origin), base `master @ 10d445e` (merge-base verified).
+Report: `.agent/REPORT-MVP-6.11-REV1.md` (`agent/control @ 9b25e25`). Reviewer: Claude, 2026-09-30.
+
+### Independent re-run
+
+| Check | Result |
+|---|---|
+| `pytest` (full, Python 3.12) | **411 passed, 1 skipped** — matches REV1 |
+| `ruff check app tests scripts` | All checks passed |
+| `alembic heads` | single head `0004_bot_deposit` |
+| frontend | no frontend diff since round 1 (build verified in round 1) |
+| push rule | review branch and REPORT pushed; REPORT cites the pushed SHA ✓ |
+
+### Closed
+
+- **B1 — CLOSED.** The round-1 probe re-run on `a6aaba5`: OPEN + `deposit=None` → exit `SELL 10`; OPEN + SIGNAL → exit `SELL 10`. `_entry_base_nominal()` resolves C2 only on FLAT (or for a generic engine). The regression tests from the review are present.
+- **C7 — CLOSED.** `get_snapshot()` trims to `candles[-lookback_bars:]`. The test covers `lookback_bars + 1` → exactly `lookback_bars`, with the newest candle last, contiguous and chronological. Existing MVP-6.10 tests are unchanged (additions only). Issue #3 stays open until publication, as required.
+- **Observation 2 — closed.** The `deposit` key is required on PATCH (`PATCH {}` → 422, the stored value is unchanged).
+
+### Blocking finding
+
+#### B2. C6 does not work in production: the deposit provider reads a stale cached `Bot`
+
+`build_live_service()` wires `_deposit_provider` → `bot_repository.get(bot_id)` → `AsyncSession.get(Bot, id)` on the **long-lived live-service session** (`SessionLocal()`, created once; `app/core/db.py` sets `expire_on_commit=False`). The same session has already loaded that `Bot` (bot restore, engine factory), so `Session.get()` returns the **identity-map instance without querying the database**. `PATCH /api/bots/{id}` writes through a **different** (per-request) session.
+
+Reproduced with two real `AsyncSession`s (aiosqlite, same `async_sessionmaker(expire_on_commit=False)` config, the project's `BotRepository`):
+
+```
+live sees before PATCH: 10000
+DB after PATCH:         20000
+provider (live) reads:  10000   ← stale; the edit never reaches the next deal
+```
+
+The C6 tests pass only because they inject a fake provider; the production provider path is not covered.
+
+**Required correction**
+
+1. The deposit provider must read the **current database value** on every FLAT entry. For example, add a repository method that queries with `populate_existing=True` (`session.get(Bot, bot_id, populate_existing=True)` or `select(Bot).where(Bot.id == bot_id).execution_options(populate_existing=True)`), or read through a short-lived session. Do not change the API session model.
+2. A regression test with **two real sessions** (e.g. `aiosqlite` as a dev-only dependency, creating only the tables needed): load the bot in session A (the live session), update the deposit through session B with the existing `BotRepository.update_deposit`, then the production provider/repository method on session A returns the new value.
+3. The test must exercise the **same function the production wiring uses** (not a fake provider). If the provider stays a closure inside `build_live_service()`, extract it (e.g. `make_deposit_provider(repo, bot_id)`) so it can be tested directly.
+4. `§29` updated with a single sentence on the fresh DB read. REPORT → `.agent/REPORT-MVP-6.11-REV2.md`, pushed, citing the pushed SHA.
+
+### Minor (non-blocking)
+
+- Issue #3 asked for a separate commit `fix: enforce exact market snapshot lookback`; C7 was bundled into `a6aaba5`. This is acceptable because the task (C7) did not require a separate commit.
+- Round-1 observations 3–5 remain open for the follow-up MVPs.
+
+**No publication to master.**

@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN REVIEW — round 1 REJECTED; correction round 1 (B1 + C6 + C7) assigned to OpenCode**
+**IN REVIEW — round 2 REJECTED (B2); correction round 2 assigned to OpenCode**
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.11` (create from current `master` @ `10d445e`)
@@ -171,6 +171,10 @@ The MVP-6.10 acceptance record claimed the snapshot is trimmed to exactly `lookb
 - the REPORT references Issue #3; the issue is closed only after publication to `master`.
 
 Optional in the same round (observation 2): `PATCH` without the `deposit` key must not clear it; only explicit `"deposit": null` clears.
+
+## Correction round 2 (review 2026-09-30)
+
+Review: `.agent/REVIEW-MVP-6.11.md` → "Round 2" — **REJECTED**, one blocking finding (B2): the production deposit provider reads `Bot` through the long-lived live session and gets the cached identity-map instance, so a deposit PATCH never reaches the next deal. Fix exactly as described in the review (fresh DB read + a two-real-session regression test on the production provider function). REPORT → `.agent/REPORT-MVP-6.11-REV2.md`.
 
 ## Publication (mandatory, see `.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule")
 
