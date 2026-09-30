@@ -143,3 +143,37 @@ The C6 tests pass only because they inject a fake provider; the production provi
 - Round-1 observations 3–5 remain open for the follow-up MVPs.
 
 **No publication to master.**
+
+---
+
+## Round 3 — Verdict
+
+**ACCEPT**
+
+Accepted implementation: `e026886dfdc` (`agent/review/mvp-6.11`, pushed, in sync with origin), base `master @ 10d445e`.
+Report: `.agent/REPORT-MVP-6.11-REV2.md` (`agent/control @ 46285d7`). Reviewer: Claude, 2026-09-30.
+
+### Independent re-run (clean environment, Python 3.12, `pip install -e ".[dev]"`)
+
+| Check | Result |
+|---|---|
+| `pytest` (full) | **412 passed, 1 skipped** — matches REV2 |
+| `ruff check app tests scripts` | All checks passed |
+| `aiosqlite` | already declared as a dev-only extra in `pyproject.toml`; resolves on a clean install |
+| frontend | no frontend diff in any MVP-6.11 round (build verified in round 1) |
+
+### B2 — CLOSED
+
+- `BotRepository.get_deposit()` reads with `session.get(Bot, id, populate_existing=True)`, a fresh DB read on the long-lived session.
+- `make_deposit_provider(bot_repository, bot_id)` is a module-level function, and `build_live_service()` wires exactly it (`deposit_provider=make_deposit_provider(bot_repository, bot_id)`). The remaining `bot_repository.get(bot_id)` calls in the wiring load the bot only to resolve its instrument, not the deposit.
+- Regression test with two real `AsyncSession`s over a file-based aiosqlite DB, on the production function: a plain `get` on the live session stays at 10000 (the stale scenario is reproduced) while the provider returns 20000, and `None` after a clearing edit. This matches the review's reproduction.
+
+### MVP-6.11 summary (all rounds)
+
+C1–C5 (round 1), B1 + C6 + C7 (round 2), B2 (round 3) — all closed.
+
+### Follow-ups (non-blocking)
+
+1. `make_deposit_provider()` contains a duplicated, **unreachable** copy of the inner function after `return` (`live_execution.py`, directly below the first `return _deposit_provider`). It is harmless dead code; remove it in the next MVP.
+2. Round-1 observations 3–5 remain open: C3 must be applied to every level in deal continuation; position state is per FIGI, not per bot; TP is derived from the market price, not the average entry price.
+3. Publication steps: merge `agent/review/mvp-6.11` → `master` via PR (no force, no rebase), then mirror the MVP-6.11 control records to `master` and add the "Mandatory push rule" to `AGENTS.md` §6 on `master`, then close Issues #3 and #5.

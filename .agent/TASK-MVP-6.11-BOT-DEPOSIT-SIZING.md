@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN REVIEW — round 2 REJECTED (B2); correction round 2 assigned to OpenCode**
+**ACCEPTED (round 3, 2026-09-30) — accepted implementation `e026886dfdc`; awaiting publication to `master`**
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.11` (create from current `master` @ `10d445e`)

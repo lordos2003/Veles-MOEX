@@ -18,7 +18,10 @@
 ## Current task
 
 ### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
-**Status: IN REVIEW — round 2 REJECTED (B2); correction round 2 pushed (round 3 awaiting decision). B1 and C7 closed.**
+**Status: ACCEPTED (round 3, 2026-09-30) — awaiting publication to `master`.**
+
+- Accepted implementation: `e026886dfdc` (`agent/review/mvp-6.11`); review: `.agent/REVIEW-MVP-6.11.md` (rounds 1–3); reports: `REPORT-MVP-6.11.md`, `-REV1.md`, `-REV2.md`.
+- Validation (independent, clean env): `pytest 412 passed, 1 skipped`; `ruff` clean; alembic head `0004_bot_deposit`.
 
 - Reviewed: `e036c0e` (round 1), `a6aaba5` (round 2); review record: `.agent/REVIEW-MVP-6.11.md`; report: `.agent/REPORT-MVP-6.11.md`; correction reports: `.agent/REPORT-MVP-6.11-REV1.md`, `.agent/REPORT-MVP-6.11-REV2.md`
 - B1 (round-1 rejection): exits of an OPEN position must not depend on entry sizing (deposit / SIGNAL / CUSTOM errors blocked the TP) — corrected: sizing is resolved on the FLAT entry path only.
