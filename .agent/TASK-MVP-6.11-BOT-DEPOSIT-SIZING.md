@@ -2,7 +2,7 @@
 
 ## Status
 
-**OPEN — assigned to OpenCode**
+**IN REVIEW — round 1 REJECTED; correction round 1 (B1 + C6 + C7) assigned to OpenCode**
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.11` (create from current `master` @ `10d445e`)
@@ -161,6 +161,14 @@ Tests:
 1. deposit changed while the bot is RUNNING and FLAT → the next entry uses the new deposit (no restart);
 2. deposit changed while OPEN → exits unchanged; after the position closes (FLAT), the next entry uses the new deposit;
 3. deposit cleared while OPEN → exit submitted; next FLAT entry → `SizingNotConfigured`.
+
+### C7. Carry-over from MVP-6.10 (GitHub Issue #3)
+
+The MVP-6.10 acceptance record claimed the snapshot is trimmed to exactly `lookback_bars` candles, but the code never did it (verified on every branch, 2026-09-30). Fix it in this round on `agent/review/mvp-6.11`, exactly as specified in Issue #3:
+
+- `backend/app/services/market_data.py::get_snapshot()`: after the non-empty check, keep only the newest `lookback_bars` candles (`candles = candles[-lookback_bars:]`), chronological order preserved, newest candle retained;
+- regression test: the broker returns `lookback_bars + 1` candles → the snapshot contains exactly `lookback_bars`, the newest last;
+- the REPORT references Issue #3; the issue is closed only after publication to `master`.
 
 Optional in the same round (observation 2): `PATCH` without the `deposit` key must not clear it; only explicit `"deposit": null` clears.
 

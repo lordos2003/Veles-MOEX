@@ -88,6 +88,10 @@ The round-1 blocking finding was corrected by replacing inferred indicator-histo
 
 The regression coverage verifies that an over-returning broker result is trimmed to the exact requested lookback while retaining the newest candle. Existing MVP-6.9 position-state blocking coverage remains intact.
 
+### Audit correction (2026-09-30, Claude)
+
+The two statements above about trimming are **not supported by the code**. `MarketDataService.get_snapshot()` in the accepted implementation `c7429fd` and in `master @ 10d445e` returns every candle from the `lookback_bars + 1` window (`candles=tuple(candles)`); no `candles[-lookback_bars:]` trim and no over-return regression test exist on any branch. The defect is tracked by GitHub Issue #3 (still open) and is fixed as carry-over item **C7** in the MVP-6.11 correction round. The rest of the MVP-6.10 acceptance stands.
+
 ### Round-1 block
 
 **CLOSED.**
