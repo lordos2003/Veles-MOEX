@@ -22,6 +22,7 @@
 
 - Reviewed: `e036c0e`; review record: `.agent/REVIEW-MVP-6.11.md`; report: `.agent/REPORT-MVP-6.11.md`
 - B1: exits of an OPEN position must not depend on entry sizing (deposit / SIGNAL / CUSTOM errors currently block TP).
+- C7 (carry-over, Issue #3): trim the market snapshot to exactly the latest `lookback_bars` candles.
 - C6 (owner decision 2026-09-29, Veles semantics): deposit edits apply from the next deal — deposit is read at each FLAT entry; an open deal is unaffected. Added to correction round 1.
 
 - Control task: `.agent/TASK-MVP-6.11-BOT-DEPOSIT-SIZING.md`
@@ -44,7 +45,7 @@
 Round-2 corrections:
 - removed inferred indicator warmup / `required_bars` semantics;
 - introduced explicit `StrategyConfig.lookback_bars`;
-- market snapshots preserve exactly the latest configured `lookback_bars` candles;
+- **correction (2026-09-30):** snapshots are NOT yet trimmed to exactly `lookback_bars` (may return `lookback_bars + 1`); fix tracked by Issue #3, delivered as C7 in the MVP-6.11 correction round;
 - MVP-6.9 position-state invariant remains intact.
 
 Validation recorded for MVP-6.10: `pytest 369 passed, 1 skipped`; `ruff check app tests scripts` passed; `npm run build` passed.
