@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)
-**Status: IN REVIEW — round 2 pending. Round 1 was REJECTED (B1: a deal can be left without a TP when the Risk Manager rejects the re-armed TP; B2: deal errors not surfaced, the bot stays RUNNING); correction round 1 (B1 + B2 + contract D7) is implemented on `agent/review/mvp-6.12` @ `949bebe`, reported in `.agent/REPORT-MVP-6.12-REV1.md`; D7 (reducing orders exempt from position-size / daily-loss limits) is an owner-approved contract 2026-09-30.**
+**Status: IN REVIEW — round 2 REJECTED (B3: old-TP fill during its cancel is refused by the order state machine and the new TP is sized from the pre-cancel position → TP can exceed the real position). D7, B1, B2 closed. Correction round 2 assigned to Кодер.**
 
 - Reviewed: `a4f792d`; review: `.agent/REVIEW-MVP-6.12.md`; reports: `.agent/REPORT-MVP-6.12.md`, `.agent/REPORT-MVP-6.12-REV1.md`
 - Correction round 1: `949bebe` (B1 risk-gate before TP cancel + per-event pump isolation; B2 deal errors → bot ERROR via lifecycle + `deal_error` in `GET /api/bots/{id}` + OPEN-without-Deal → ERROR; D7 reducing-intent exemption in `RiskManager`; review observation 2 regression test). Validation: pytest 447 passed/1 skipped, ruff clean, alembic single head `0005_deal_continuation`, npm build green.

@@ -90,3 +90,67 @@ The live cycle also silently ignores an OPEN position that has **no owning Deal*
 5. `master` unchanged.
 
 **No publication to master.**
+
+---
+
+## Round 2 — Verdict
+
+**REJECTED — one correction required (B3).** D7, B1 (risk before cancel, pump isolation) and B2 are closed.
+
+Reviewed: `949bebe` (`agent/review/mvp-6.12`, pushed, in sync with origin), base `master @ 59a3897`.
+Report: `.agent/REPORT-MVP-6.12-REV1.md` (`agent/control @ 642f754`). Reviewer: Claude, 2026-09-30.
+
+### Independent re-run (clean environment, Python 3.12)
+
+| Check | Result |
+|---|---|
+| `pytest` (full) | **447 passed, 1 skipped** — matches REV1 |
+| `ruff check app tests scripts` | All checks passed |
+| `alembic heads` | single head `0005_deal_continuation` |
+
+### Closed
+
+- **D7 — CLOSED.** `_is_reducing()` (non-zero position, opposite side, `qty ≤ |position|`) skips only the position-size and daily-loss limits. Emergency stop, quantity, price and instrument permission still apply. There are 7 focused tests.
+- **B1 — CLOSED.** The round-1 probes now pass as regressions: under `max_position_size=300` the TP is placed, and under a reached daily-loss limit the TP is re-armed. The new TP is risk-checked **before** the old one is cancelled; a rejection keeps the old TP and fails the Deal. `pump()` isolates every event, so nothing escapes the stream hook and nothing is lost.
+- **B2 — CLOSED.** `BotRuntime.fail()` plus the `_deal_bot_error` callback move the bot to ERROR and persist it via `BotRepository`; the risk slot is released. `GET /api/bots/{id}` exposes `deal_error`. An OPEN position without an owning Deal errors the bot.
+- Observation 2 (deposit edit during an OPEN deal) is covered by a test.
+
+### Blocking finding
+
+#### B3. A fill of the old TP while its cancel is in flight is rejected, and the new TP is sized from the position read *before* the cancel
+
+Two defects combine on the TP cancel/replace path, which MVP-6.12 now exercises on every grid fill:
+
+1. **Round-1 regression of D4.** `_rearm_tp()` now reads the position and builds the new TP **before** `await self._om.cancel(...)`, then submits it unchanged. The task (D4) requires: *"If the old TP filled (fully or partly) during the cancel, recompute from the actual position before placing a new one."* The round-1 code did recompute after the cancel; the B1 refactor dropped it.
+2. **Fills in `CANCEL_REQUESTED` are refused.** `ALLOWED_TRANSITIONS[CANCEL_REQUESTED] = {CANCELLED, FAILED, UNKNOWN}` and `CANCELLED → ∅`. An exchange fill that arrives while the cancel is in flight (or just after it) raises `OrderStateError: invalid transition CANCEL_REQUESTED -> PARTIALLY_FILLED`. The fill is not applied to the position; on the stream path the exception ends the session, and the position is only corrected by the next recovery.
+
+Reproduced on `949bebe` with the MVP-6.12 harness. The broker fills 100 of the old TP (200) during `cancel_order`, after a DCA fill of 200:
+
+```
+fill during cancel → OrderStateError('invalid transition CANCEL_REQUESTED -> PARTIALLY_FILLED')
+position seen by the bot = 400 (real position at the exchange: 300)
+new working TP = 400 @ 109.5
+```
+
+A TP larger than the real position is rejected by T-Invest on a cash account, so the Deal fails and the position has **no TP**. On a margin account it is accepted, and when it fills it **opens a short** of 100.
+
+**Required correction**
+
+1. `OrderManager` / `ALLOWED_TRANSITIONS`: a fill is a broker fact and must never be dropped. Allow `CANCEL_REQUESTED → PARTIALLY_FILLED / FILLED`. A fill reported for an order already `CANCELLED` (exchange race) must still be applied to the position and recorded, keeping the terminal state. If that needs a new state rule, keep it minimal and document it in §30.
+2. `_rearm_tp()`: after the cancel returns (confirmed or terminal), **re-read the position**:
+   - zero → `_close_deal` (no new TP);
+   - changed quantity or average → rebuild the intent (next `tp_rev`) and re-run `check_order()` (D7 keeps a reducing TP allowed);
+   - the new TP must never exceed the actual position.
+3. Tests, with a broker that fills the old TP **inside** `cancel_order`:
+   - partial fill → one working TP for exactly the remaining position;
+   - full fill → Deal CLOSED, no new TP;
+   - a fill arriving for an order already `CANCELLED` → position updated, no exception.
+4. REPORT → `.agent/REPORT-MVP-6.12-REV2.md`, pushed, citing the pushed SHA.
+
+### Observations (non-blocking)
+
+1. Cancelling a TP that is already fully filled at the exchange (the broker returns an error) currently ends in `UNKNOWN` → Deal ERROR, although the deal is done. It is safe but noisy; consider treating "order already filled" from the broker as a terminal FILLED after a refresh.
+2. Round-1 observation 1 (TP re-armed on every restart) remains open.
+3. With B2 a FLAT entry failure such as `SizingBelowLot` now puts the bot into ERROR instead of blocking a single cycle. This is consistent with B2 and acceptable; noted as a behavioural change to C3 ("blocked for this cycle" → "bot ERROR until START").
+
+**No publication to master.**

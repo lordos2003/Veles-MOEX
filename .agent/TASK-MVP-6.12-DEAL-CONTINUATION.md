@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN REVIEW — round 1 REJECTED (B1, B2); correction round 1 (+ D7) assigned to Кодер**
+**IN REVIEW — round 2 REJECTED (B3); correction round 2 assigned to Кодер**
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.12` (create from current `master` @ `59a3897`)
@@ -149,6 +149,10 @@ Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.12-REV1.
 - Reducing intents still go through `emergency_stop` (emergency stop blocks everything; the position is left for manual control, MVP-6.5 semantics), quantity, price and instrument-permission checks.
 - Non-reducing intents keep the existing MVP-6.6 behaviour unchanged.
 - Document D7 in `§30` and in `§10.1` (Risk Manager preconditions) of `TASK-09-LIVE-TRADING-MVP-6.md`.
+
+## Correction round 2 (review 2026-09-30)
+
+Review: `.agent/REVIEW-MVP-6.12.md` → "Round 2" — **REJECTED**, one blocking finding (B3). A fill of the old TP while its cancel is in flight is refused (`CANCEL_REQUESTED → PARTIALLY_FILLED` is not allowed), and `_rearm_tp()` sizes the new TP from the position read **before** the cancel. This regresses the D4 requirement "recompute from the actual position after the cancel". Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.12-REV2.md`.
 
 ## Publication (mandatory, see `AGENTS.md` §6 and `.agent/CODER-WORKFLOW.md` → "Mandatory push rule")
 
