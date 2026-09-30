@@ -18,10 +18,11 @@
 ## Current task
 
 ### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)
-**Status: IN REVIEW — round 2 REJECTED (B3: old-TP fill during its cancel is refused by the order state machine and the new TP is sized from the pre-cancel position → TP can exceed the real position). D7, B1, B2 closed. Correction round 2 assigned to Кодер.**
+**Status: IN REVIEW — round 2 REJECTED (B3), correction round 2 implemented (418c24e, pushed), round-3 review pending. D7, B1, B2 closed.**
 
-- Reviewed: `a4f792d`; review: `.agent/REVIEW-MVP-6.12.md`; reports: `.agent/REPORT-MVP-6.12.md`, `.agent/REPORT-MVP-6.12-REV1.md`
+- Reviewed: `a4f792d`; review: `.agent/REVIEW-MVP-6.12.md`; reports: `.agent/REPORT-MVP-6.12.md`, `.agent/REPORT-MVP-6.12-REV1.md`, `.agent/REPORT-MVP-6.12-REV2.md`
 - Correction round 1: `949bebe` (B1 risk-gate before TP cancel + per-event pump isolation; B2 deal errors → bot ERROR via lifecycle + `deal_error` in `GET /api/bots/{id}` + OPEN-without-Deal → ERROR; D7 reducing-intent exemption in `RiskManager`; review observation 2 regression test). Validation: pytest 447 passed/1 skipped, ruff clean, alembic single head `0005_deal_continuation`, npm build green.
+- Correction round 2: `418c24e` (B3: fills accepted in `CANCEL_REQUESTED` and for already-`CANCELLED` orders (terminal state kept, fill still applied to position/record); `_rearm_tp()` re-reads the position after the cancel and rebuilds the TP from the actual facts — never exceeding the position, zero → close; `recover()` no longer re-registers a Deal closed during recovery; 3 B3 tests). Validation: pytest 450 passed/1 skipped, ruff clean, alembic single head `0005_deal_continuation`, npm build green.
 
 - Control task: `.agent/TASK-MVP-6.12-DEAL-CONTINUATION.md`
 - Implementation branch: `agent/review/mvp-6.12` (from `master` @ `59a3897`)
