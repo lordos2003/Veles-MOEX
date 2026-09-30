@@ -71,8 +71,18 @@ ALLOWED_TRANSITIONS: dict[OrderState, frozenset[OrderState]] = {
             OrderState.UNKNOWN,
         }
     ),
+    # B3: a fill is a broker fact and may arrive while the cancel is in flight
+    # (exchange race) — it must be applied, not rejected as an invalid
+    # transition. The terminal CANCELLED state itself never accepts a status
+    # change, but apply_fill still updates the position (see OrderManager).
     OrderState.CANCEL_REQUESTED: frozenset(
-        {OrderState.CANCELLED, OrderState.FAILED, OrderState.UNKNOWN}
+        {
+            OrderState.PARTIALLY_FILLED,
+            OrderState.FILLED,
+            OrderState.CANCELLED,
+            OrderState.FAILED,
+            OrderState.UNKNOWN,
+        }
     ),
     OrderState.FILLED: frozenset(),
     OrderState.CANCELLED: frozenset(),

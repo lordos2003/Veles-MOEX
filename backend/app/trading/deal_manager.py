@@ -357,8 +357,12 @@ class DealManager:
         position is never left uncovered — and only a risk-accepted TP replaces
         it. Quantity (lot-rounded down) and price (average x (1 +- pct/100),
         tick aligned LONG up / SHORT down) come from |PositionManager| facts —
-        never the market price. A cancel/placement that cannot be confirmed
-        blocks new deal submissions and marks the Deal for reconciliation.
+        never the market price. After the cancel the position is re-read (B3):
+        the old TP may have filled (fully or partly) while its cancel was in
+        flight, and the new TP is rebuilt from the ACTUAL post-cancel facts
+        (never larger than the position), risk-gated again. A cancel/placement
+        that cannot be confirmed blocks new deal submissions and marks the Deal
+        for reconciliation.
         """
         pos = self._pm.get(deal.instrument_figi)
         if pos is None or pos.quantity == 0:
@@ -381,29 +385,10 @@ class DealManager:
             raise DealReconciliationRequired(
                 f"deal {deal.id}: take-profit price {price} is not positive"
             )
-        deal.tp_rev += 1
-        intent = ExecutionIntent(
-            intent_id=deal_tp_intent_id(deal.id, deal.tp_rev),
-            trade_id="",
-            instrument_figi=deal.instrument_figi,
-            side=_execute_side(deal.direction),
-            order_type=OrderType.LIMIT,
-            quantity=quantity,
-            limit_price=price,
-            reason=f"deal {deal.id} take-profit rev {deal.tp_rev}",
-            account_id=deal.account_id,
-            bot_id=deal.bot_id,
-        )
-        try:
-            self._rm.check_order(intent)
-        except RiskRejected as exc:
-            # B1: risk-acceptance comes FIRST — the working TP was not cancelled
-            # yet, so a risk rejection leaves the old TAKE-PROFIT in place and
-            # the position stays protected while the Deal transitions ERROR.
-            raise DealOrderRejected(
-                f"deal {deal.id}: take-profit {intent.intent_id} rejected by "
-                f"risk manager: {exc}"
-            ) from exc
+        # B1: risk-acceptance comes FIRST — the working TP is not cancelled yet,
+        # so a rejection leaves the old TP in place and the position stays
+        # protected while the Deal transitions ERROR.
+        intent = self._tp_intent(deal, quantity, price)
         # B1: only a risk-accepted TP replaces the working one (cancel first,
         # await the confirmation; then submit the new one).
         if deal.tp_order_id is not None:
@@ -420,6 +405,31 @@ class DealManager:
                         "confirmed; no second TP is placed and new deal "
                         "submissions are blocked (D4)"
                     )
+                # B3: the old TP can fill (fully or partly) while its cancel is
+                # in flight — the position is the source of truth and the new TP
+                # must never exceed it. Re-read and rebuild when facts changed.
+                pos = self._pm.get(deal.instrument_figi)
+                if pos is None or pos.quantity == 0:
+                    await self._close_deal(deal)
+                    return
+                if not _sign_matches(pos.quantity, deal.direction):
+                    raise DealPositionContradiction(
+                        f"deal {deal.id}: position quantity {pos.quantity} "
+                        f"contradicts direction {deal.direction.value}"
+                    )
+                fresh_quantity = _round_down_lots(abs(pos.quantity), deal.lot_size)
+                if fresh_quantity <= 0:
+                    await self._close_deal(deal)
+                    return
+                fresh_raw = deal.tp_price_from_average(pos.average_price)
+                fresh_price = align_tp_price(fresh_raw, deal.tick_size, deal.direction)
+                if fresh_price <= 0:
+                    raise DealReconciliationRequired(
+                        f"deal {deal.id}: take-profit price {fresh_price} is not positive"
+                    )
+                if fresh_quantity != quantity or fresh_price != price:
+                    intent = self._tp_intent(deal, fresh_quantity, fresh_price)
+                    quantity, price = fresh_quantity, fresh_price
         tp_order = await self._om.submit(intent)
         if tp_order.status in (OrderState.REJECTED, OrderState.FAILED):
             raise DealOrderRejected(
@@ -437,6 +447,38 @@ class DealManager:
         deal.tp_intent_id = tp_order.intent_id
         deal.tp_order_id = tp_order.order_id
         deal.tp_broker_order_id = tp_order.broker_order_id
+
+    def _tp_intent(self, deal: Deal, quantity: Decimal, price: Decimal) -> ExecutionIntent:
+        """Build the next TP intent (new tp_rev) and risk-gate it (B1/D7).
+
+        The intent id embeds the Deal id and the monotonically increasing
+        revision, so every attempt has a deterministic id. ``check_order`` is
+        called BEFORE any cancel: a |RiskRejected| raises |DealOrderRejected|
+        and the old TP keeps working (D7 exempts the reducing TP from the
+        growth limits, so a rejection here is an emergency-stop / permission
+        case, never a size-limit case).
+        """
+        deal.tp_rev += 1
+        intent = ExecutionIntent(
+            intent_id=deal_tp_intent_id(deal.id, deal.tp_rev),
+            trade_id="",
+            instrument_figi=deal.instrument_figi,
+            side=_execute_side(deal.direction),
+            order_type=OrderType.LIMIT,
+            quantity=quantity,
+            limit_price=price,
+            reason=f"deal {deal.id} take-profit rev {deal.tp_rev}",
+            account_id=deal.account_id,
+            bot_id=deal.bot_id,
+        )
+        try:
+            self._rm.check_order(intent)
+        except RiskRejected as exc:
+            raise DealOrderRejected(
+                f"deal {deal.id}: take-profit {intent.intent_id} rejected by "
+                f"risk manager: {exc}"
+            ) from exc
+        return intent
 
     # --- partial grid (D2.3) -------------------------------------------------------
 
@@ -577,6 +619,13 @@ class DealManager:
                 )
                 self._deals.pop(deal.bot_id, None)
                 safe = False
+                continue
+            if deal.status is DealStatus.CLOSED:
+                # `_recover_one` closed it (position zero / TP fully filled
+                # during the re-arm cancel) — `_close_deal` already popped it
+                # and persisted the CLOSED state; do not re-register a closed
+                # Deal as active (it would block the next entry).
+                self._deals.pop(deal.bot_id, None)
                 continue
             self._deals[deal.bot_id] = deal
             deal.updated_at = utcnow()

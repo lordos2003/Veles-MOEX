@@ -22,11 +22,17 @@ working and pump() isolates every event) and B2 (every deal failure surfaces
 to the bot lifecycle / API and an OPEN position without an owning Deal goes
 ERROR).
 
+Correction round 2 (independent review, 2026-09-30): B3 — a fill is a broker
+fact: fills are accepted in CANCEL_REQUESTED (and after a terminal CANCELLED),
+and the TP re-arm re-reads the position after the cancel, never placing a TP
+larger than the actual position.
+
 No real orders, no T-Invest, no fabricated market data or financial defaults.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -98,6 +104,15 @@ class FakeBroker:
         self.cancel_calls: list[tuple[str, str | None]] = []
         self.cancelled: set[str] = set()
         self.cancel_error = cancel_error
+        self._cancel_hook: Callable[[str], None] | None = None
+
+    def on_cancel(self, hook: Callable[[str], None]) -> None:
+        """B3: register a hook invoked inside every ``cancel_order`` call.
+
+        Simulates the exchange filling the order while its cancel is in
+        flight (the hook receives the broker order id).
+        """
+        self._cancel_hook = hook
 
     async def place_order(self, request: BrokerOrderRequest) -> BrokerOrder:
         self.place_calls += 1
@@ -116,6 +131,8 @@ class FakeBroker:
             raise self.cancel_error
         self.cancel_calls.append((order_id, account_id))
         self.cancelled.add(order_id)
+        if self._cancel_hook is not None:
+            self._cancel_hook(order_id)
 
 
 class DepositHolder:
@@ -1087,3 +1104,120 @@ def test_intent_ids_are_deterministic() -> None:
     assert deal_grid_intent_id(3, 0) == "deal-3-grid-0"
     assert deal_tp_intent_id(3, 2) == "deal-3-tp-2"
     assert validate_live_deal_config(_strategy()) is None
+
+
+# --- correction round 2: B3 (fill of the old TP during its cancel) ------------
+
+
+async def test_b3_partial_old_tp_fill_during_cancel_rebuilds_from_actual_position() -> None:
+    """B3 probe 3 (partial): the old TP partially fills while its cancel is in
+    flight after a DCA fill — the re-arm must rebuild from the ACTUAL position
+    and place one working TP for the remaining quantity, never a stale larger
+    one (round-1 regression: the stale TP of 250 would be placed over a
+    position of 150).
+    """
+    broker = FakeBroker()
+    dm, om = _pair(broker)
+    deal = await _open_simple(dm, om, levels=2, deposit=Decimal("40000"))
+    entry = om.get_order(deal.levels[0].order_id)
+    _fill(om, entry, "f-entry", Decimal("200"), Decimal("100"))
+    await dm.pump()
+    tp1 = om.get_order(deal.tp_order_id)  # 200 @ 110: the whole position
+    assert tp1.requested_quantity == Decimal("200")
+
+    def _fill_old_tp_during_cancel(broker_order_id: str) -> None:
+        if broker_order_id == tp1.broker_order_id:
+            _fill(om, tp1, "f-b3-part", Decimal("100"), Decimal("109.8"))
+
+    broker.on_cancel(_fill_old_tp_during_cancel)
+
+    # A DCA fill forces the re-arm; during the old-TP cancel the exchange
+    # fills 100 of it (position 250 -> 150).
+    dca = om.get_order(deal.levels[1].order_id)
+    _fill(om, dca, "f-dca", Decimal("50"), Decimal("99"))
+    await dm.pump()
+    assert om.positions().get(FIGI).quantity == Decimal("150")
+    working = [
+        o
+        for o in om.list_orders()
+        if o.intent_id.startswith(f"deal-{deal.id}-tp-")
+        and o.status
+        not in (OrderState.FILLED, OrderState.CANCELLED, OrderState.REJECTED, OrderState.FAILED)
+    ]
+    assert len(working) == 1  # exactly one working TP...
+    assert working[0].requested_quantity == Decimal("150")  # ...for the ACTUAL position
+    assert working[0].limit_price == Decimal("109.8")  # average (99.8) x 1.10
+    assert deal.tp_quantity == Decimal("150")
+    assert tp1.filled_quantity == Decimal("100")
+    assert tp1.status is OrderState.CANCELLED  # the cancel won for the remainder
+
+    # The old-TP fill event queued during the cancel is harmless: still one TP.
+    await dm.pump()
+    working_after = [
+        o
+        for o in om.list_orders()
+        if o.intent_id.startswith(f"deal-{deal.id}-tp-")
+        and o.status
+        not in (OrderState.FILLED, OrderState.CANCELLED, OrderState.REJECTED, OrderState.FAILED)
+    ]
+    assert len(working_after) == 1
+    assert working_after[0].requested_quantity == Decimal("150")
+
+
+async def test_b3_full_old_tp_fill_during_cancel_closes_deal() -> None:
+    """B3 probe 3 (full): the old TP fills FULLY while its cancel is in flight
+    and the position reaches zero — the Deal is CLOSED and no new TP is placed.
+    The terminal FILLED state wins (round-1 regression: invalid transition
+    CANCEL_REQUESTED -> FILLED and a cancel() overwriting it with CANCELLED).
+    """
+    broker = FakeBroker()
+    om = OrderManager(broker)
+    pm = om.positions()
+    store = InMemoryDealStore()
+    dm = DealManager(store, om, RiskManager(position_manager=pm))
+    deal = await _open_simple(dm, om, levels=1, deposit=Decimal("10000"))
+    entry = om.get_order(deal.levels[0].order_id)
+    _fill(om, entry, "f-entry", Decimal("100"), Decimal("100"))
+    await dm.pump()
+    tp1 = om.get_order(deal.tp_order_id)  # 100 @ 110; position 100
+    assert tp1.requested_quantity == Decimal("100")
+
+    def _kill_tp_during_cancel(broker_order_id: str) -> None:
+        if broker_order_id == tp1.broker_order_id:
+            _fill(om, tp1, "f-b3-full", Decimal("100"), Decimal("110"))
+
+    broker.on_cancel(_kill_tp_during_cancel)
+
+    # Restart: recovery re-arms the TP (the entry level is FILLED); the
+    # working TP fully fills during the cancel -> position zero -> CLOSED.
+    dm2 = DealManager(store, om, RiskManager(position_manager=pm))
+    assert await dm2.recover(ACC) is True
+    assert deal.status is DealStatus.CLOSED
+    assert tp1.status is OrderState.FILLED  # the fill wins, not CANCELLED
+    tps = [o for o in om.list_orders() if o.intent_id.startswith(f"deal-{deal.id}-tp-")]
+    assert len(tps) == 1  # no new TP was placed after the full fill
+    assert dm2.active_deal(1) is None  # a closed Deal is not re-registered
+
+
+async def test_b3_fill_after_cancel_still_updates_position() -> None:
+    """B3 probe 3 (race): a fill reported for an order already CANCELLED is a
+    broker fact — it is applied to the position and recorded, the terminal
+    state is kept and nothing raises (round-1 regression: OrderStateError
+    invalid transition CANCELLED -> PARTIALLY_FILLED lost the fill).
+    """
+    dm, om = _pair()
+    deal = await _open_simple(dm, om)
+    entry = om.get_order(deal.levels[0].order_id)
+    _fill(om, entry, "f-entry", Decimal("100"), Decimal("100"))
+    await dm.pump()
+    tp = om.get_order(deal.tp_order_id)
+    await om.cancel(tp.order_id)
+    assert tp.status is OrderState.CANCELLED
+
+    # The exchange reports the execution after the cancel was confirmed.
+    _fill(om, tp, "f-after-cancel", Decimal("40"), Decimal("110"))
+    assert tp.status is OrderState.CANCELLED  # terminal state kept
+    assert tp.filled_quantity == Decimal("40")  # still recorded
+    assert om.positions().get(FIGI).quantity == Decimal("60")  # position updated
+    await dm.pump()  # the queued reaction is handled without raising
+    assert deal.status is DealStatus.OPEN

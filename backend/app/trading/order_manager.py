@@ -19,6 +19,7 @@ from app.brokers.base import BrokerAdapter, BrokerOrder, BrokerOrderRequest
 from app.models.enums import OrderStatus
 from app.trading.domain import (
     ALLOWED_TRANSITIONS,
+    TERMINAL_STATES,
     ExecutionIntent,
     Fill,
     InternalOrder,
@@ -259,9 +260,15 @@ class OrderManager:
         order.updated_at = fill.timestamp
 
         if order.filled_quantity >= order.requested_quantity:
-            self._transition(order, OrderState.FILLED)
+            target = OrderState.FILLED
         else:
-            self._transition(order, OrderState.PARTIALLY_FILLED)
+            target = OrderState.PARTIALLY_FILLED
+        # B3: a fill is a broker fact. An order already in a terminal state
+        # (e.g. CANCELLED after an exchange race fill, FILLED after a late
+        # duplicate) keeps its state, but the fill still updates the recorded
+        # quantity/price and the position below — a fill is never dropped.
+        if order.status not in TERMINAL_STATES:
+            self._transition(order, target)
 
         if self._positions is not None:
             self._positions.apply_fill(
@@ -349,7 +356,12 @@ class OrderManager:
         if order.broker_order_id is not None:
             try:
                 await self._broker.cancel_order(order.broker_order_id, order.account_id)
-                self._transition(order, OrderState.CANCELLED)
+                # B3: the exchange may have filled the order while the cancel
+                # was in flight (CANCEL_REQUESTED -> PARTIALLY_FILLED/FILLED is
+                # allowed). A terminal outcome wins and is kept; a still-live
+                # order is confirmed CANCELLED.
+                if order.status not in TERMINAL_STATES:
+                    self._transition(order, OrderState.CANCELLED)
             except Exception:
                 self._transition(order, OrderState.UNKNOWN)
         else:

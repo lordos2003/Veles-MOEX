@@ -1409,6 +1409,24 @@ all live prices are tick-aligned in the safe direction (D3).
   `DealPositionContradiction` and puts the bot in ERROR instead of being
   silently ignored (replaces the former D6 no-op cycle behavior).
 
+### Correction round 2 (independent review, 2026-09-30)
+
+- **B3 (a fill is a broker fact; the TP is never larger than the position):**
+  - `OrderManager`/domain: `CANCEL_REQUESTED → PARTIALLY_FILLED / FILLED` is
+    now an allowed transition — a fill that arrives while the cancel is in
+    flight (exchange race) is applied instead of raising
+    `OrderStateError`. A fill reported for an order already in a terminal
+    state (e.g. `CANCELLED`) is still applied to the position and recorded,
+    keeping the terminal state. `OrderManager.cancel()` no longer overwrites
+    a terminal outcome: after the broker call it transitions to `CANCELLED`
+    only while the order is still live.
+  - `DealManager._rearm_tp()`: after the old-TP cancel returns (confirmed or
+    terminal) the position is **re-read**; zero → `_close_deal` (no new TP);
+    changed quantity/average → the intent is rebuilt at the next `tp_rev` and
+    risk-gated again (D7 keeps the reducing TP allowed). The new TP can never
+    exceed the actual position. Recovery no longer re-registers a Deal that
+    `_close_deal` just closed (it would block the next entry).
+
 ### Tests (validation commands)
 
 Run from `backend/` with the project venv:
