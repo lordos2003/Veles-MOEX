@@ -9,6 +9,7 @@ refused so unsafe new execution cannot resume.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
 
 from app.trading.bot_lifecycle import BotRuntimeManager, BotStateError
@@ -23,6 +24,7 @@ from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
 from app.trading.recovery import LiveRecoveryCoordinator, RecoveryResult
 from app.trading.risk_manager import RiskLimits, RiskManager
+from app.trading.sizing import PositionSizing
 from app.trading.state import LiveStateStore
 
 
@@ -224,6 +226,28 @@ def risk_limits_from_settings(settings) -> RiskLimits:
     )
 
 
+def make_deposit_provider(
+    bot_repository, bot_id: int
+) -> Callable[[], Awaitable[Decimal | None]]:
+    """Build the production C6 deposit provider for one bot (testable).
+
+    Returns an async callable that reads the **current** ``Bot.deposit`` from
+    the database on every call (``BotRepository.get_deposit`` reloads the row
+    with ``populate_existing``): the long-lived live session may already hold
+    the ``Bot`` in its identity map (``expire_on_commit=False``), and a
+    deposit edit arrives through a separate per-request session.
+    """
+
+    async def _deposit_provider() -> Decimal | None:
+        return await bot_repository.get_deposit(bot_id)
+
+    return _deposit_provider
+    async def _deposit_provider() -> Decimal | None:
+        return await bot_repository.get_deposit(bot_id)
+
+    return _deposit_provider
+
+
 async def build_live_service() -> LiveExecutionService:
     """Compose a live execution service from application settings.
 
@@ -261,13 +285,24 @@ async def build_live_service() -> LiveExecutionService:
     copied into the global Risk Manager; the execution Risk Manager uses the
     application settings only (documented boundary, no precedence invented).
 
-    Market-context / sizing boundary (MVP-6.8): a broker-neutral
-    ``MarketDataService`` is wired into the service and a live MarketContext is
-    built via ``build_market_context()`` from the real last price (no fabricated
-    prices/candles/timestamps). No authoritative position-sizing
-    source exists yet, so the per-bot ``TradingEngine`` is created without a
-    sizing source and ``process()`` blocks live strategy execution with
-    ``SizingNotConfigured`` until a sizing source is configured.
+    Market context (MVP-6.8): a broker-neutral ``MarketDataService`` is wired
+    into the service and a live MarketContext is built via
+    ``build_market_context()`` from the real last price (no fabricated
+    prices/candles/timestamps).
+
+    Bot deposit sizing (MVP-6.11 C5/C6): the per-bot ``TradingEngine`` is given
+    ``PositionSizing(lot_size=Instrument.lot_size, currency=Instrument.currency)``
+    and an async deposit provider reading ``Bot.deposit`` at **each FLAT entry**
+    as a **fresh database read** (``BotRepository.get_deposit`` with
+    ``populate_existing`` — review correction B2: the long-lived live session
+    must not return its identity-map copy of the bot) (C6, review correction B1:
+    entry sizing is an entry-only precondition — OPEN exits never read the
+    deposit). C2 converts the deposit to the DCA/Grid
+    base nominal; C3 rounds the grid down to whole lots. An unset deposit
+    (``None``) keeps the existing behavior: the FLAT entry blocks with
+    ``SizingNotConfigured`` while open-deal exits continue (B1). A deposit edit
+    applies from the next deal (C6). No financial default (100 / 1.0 / a
+    default lot / a default currency) is invented.
 
     Position quantity boundary (MVP-6.9): the wired ``PositionManager`` is the
     only authoritative source of live execution quantity. The per-bot
@@ -277,6 +312,15 @@ async def build_live_service() -> LiveExecutionService:
     authoritative positions are reconciled from the broker-neutral adapter
     (``get_open_positions``) during recovery; the broker is never queried inside
     the strategy/exit/trading layers.
+
+    Confirmed-flat entry (MVP-6.11 C4): the live position state is
+    three-valued (UNKNOWN / FLAT / OPEN, plus sign mismatch) and is established
+    only by a successful broker reconciliation during recovery
+    (``PositionManager.mark_reconciled``). UNKNOWN and sign mismatch block all
+    live intents (MVP-6.9 behavior preserved); FLAT allows entry only (the
+    fresh-snapshot grid, lot-rounded, and only when the bot has no active
+    non-terminal orders); OPEN allows exits only (no new grid/entry intents
+    from a fresh evaluation — deal continuation is a separate MVP).
 
     Market snapshot / per-bot timeframe (MVP-6.10): the bot runtime's
     market-context provider builds the live MarketContext for a strategy cycle
@@ -392,13 +436,24 @@ async def build_live_service() -> LiveExecutionService:
                 strategy_config=bot_strategy.config,
                 intent_factory=_intent_factory,
                 instrument_figi=instrument.figi,
-                # MVP-6.8/6.9 boundary: no authoritative position-sizing source is
-                # wired for a bot yet, so `sizing` stays None and
-                # `TradingEngine.process()` blocks live strategy execution with
-                # SizingNotConfigured until a sizing source is configured. No
-                # default (100 / 1.0) is used. The authoritative exit quantity
+                bot_id=bot_id,
+                # MVP-6.11 C5/C6: the sizing source uses the instrument lot
+                # size / currency for the MOEX lot-rounding contract (C3); the
+                # deposit itself is not snapshotted here — it is read from
+                # Bot.deposit at each FLAT entry via the async provider (C6:
+                # fresh DB read through make_deposit_provider, review
+                # correction B2; B1: entry sizing is entry-only, OPEN exits
+                # never read the deposit). An unset deposit (None) keeps the
+                # existing behavior: the FLAT entry blocks with
+                # SizingNotConfigured. No default (100 / 1.0 / a default lot /
+                # a default currency) is used. The authoritative exit quantity
                 # comes from the wired PositionManager (MVP-6.9), never a
                 # placeholder.
+                sizing=PositionSizing(
+                    lot_size=instrument.lot_size,
+                    currency=instrument.currency,
+                ),
+                deposit_provider=make_deposit_provider(bot_repository, bot_id),
             )
             await engine.start()
             return engine

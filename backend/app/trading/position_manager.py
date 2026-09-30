@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from app.models.enums import OrderSide
 from app.strategies.config import Direction
@@ -22,6 +23,22 @@ from app.trading.domain import PositionUpdate
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+class LivePositionState(StrEnum):
+    """Three-valued live position state for one bot instrument (MVP-6.11 C4).
+
+    The state is established **only** by a successful broker position
+    reconciliation (``BrokerAdapter.get_open_positions`` through the existing
+    ``LiveRecoveryCoordinator`` path); fills then keep it updated. Absence from
+    the position dict is *not* FLAT unless the reconciliation that produced the
+    state succeeded.
+    """
+
+    UNKNOWN = "unknown"  # never reconciled, reconciliation failed, or stale
+    FLAT = "flat"  # latest successful reconciliation confirmed zero/no position
+    OPEN = "open"  # reconciled non-zero position, sign matching the direction
+    SIGN_MISMATCH = "sign_mismatch"  # reconciled position with the opposite sign
 
 
 class PositionUnavailable(RuntimeError):
@@ -66,6 +83,43 @@ class PositionManager:
 
     def __init__(self) -> None:
         self._positions: dict[str, Position] = {}
+        # MVP-6.11 C4: whether a successful broker position reconciliation has
+        # established the live position state in this process. Until then every
+        # instrument is UNKNOWN (restored/snapshot state is not a confirmation).
+        self._reconciled = False
+
+    @property
+    def reconciled(self) -> bool:
+        """Whether the live position state is backed by a successful reconciliation."""
+        return self._reconciled
+
+    def mark_reconciled(self) -> None:
+        """Record that a successful broker position reconciliation completed (C4).
+
+        The caller (the recovery coordinator) applies the broker position facts
+        to the manager first; from this point the per-instrument state is
+        FLAT/OPEN/SIGN_MISMATCH instead of UNKNOWN.
+        """
+        self._reconciled = True
+
+    def invalidate_reconciliation(self) -> None:
+        """A position reconciliation failed: state is UNKNOWN until the next success."""
+        self._reconciled = False
+
+    def position_state(self, instrument_figi: str, direction: Direction) -> LivePositionState:
+        """Return the live position state for an instrument (MVP-6.11 C4).
+
+        Only a successful reconciliation (plus subsequent fill-driven changes)
+        may yield FLAT/OPEN/SIGN_MISMATCH; otherwise the state is UNKNOWN.
+        """
+        if not self._reconciled:
+            return LivePositionState.UNKNOWN
+        pos = self._positions.get(instrument_figi)
+        if pos is not None and pos.quantity != 0:
+            if _sign_matches(pos.quantity, direction):
+                return LivePositionState.OPEN
+            return LivePositionState.SIGN_MISMATCH
+        return LivePositionState.FLAT
 
     def get(self, instrument_figi: str) -> Position | None:
         return self._positions.get(instrument_figi)
@@ -101,14 +155,21 @@ class PositionManager:
 
     def clear(self) -> None:
         self._positions.clear()
+        self._reconciled = False
 
     def remove(self, instrument_figi: str) -> Position | None:
         """Drop a position so broker facts are authoritative (no stale state)."""
         return self._positions.pop(instrument_figi, None)
 
     def load_state(self, positions: list[Position]) -> None:
-        """Replace the manager state with a recovered set of positions."""
+        """Replace the manager state with a recovered set of positions.
+
+        Restored (durable) positions are not a reconciliation: the live state
+        is UNKNOWN again until a successful broker reconciliation completes
+        (MVP-6.11 C4).
+        """
         self._positions.clear()
+        self._reconciled = False
         for position in positions:
             self._positions[position.instrument_figi] = position
 

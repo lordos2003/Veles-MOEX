@@ -253,6 +253,27 @@ async def test_valid_market_snapshot_from_broker_data() -> None:
     assert all(c.figi == FIGI and c.timeframe is TF for c in snap.candles)
 
 
+async def test_snapshot_trimmed_to_exact_lookback_bars() -> None:
+    # GitHub Issue #3 (C7): the retrieval window is one bar wider than the
+    # configured lookback (to account for the forming bar), so the broker may
+    # return lookback_bars + 1 candles. The snapshot must contain exactly
+    # lookback_bars — the newest candle retained at the end, chronological
+    # order preserved.
+    broker = RecordingBroker(
+        last_price=LastPrice(figi=FIGI, price=Decimal("104.5"), timestamp=T0),
+        candles=_candles(11),  # lookback_bars + 1
+    )
+    snap = await MarketDataService(broker).get_snapshot(FIGI, TF, lookback_bars=10)
+    assert len(snap.candles) == 10
+    assert snap.candles[-1].timestamp == T0
+    # The oldest candle is dropped; the retained series stays contiguous and
+    # chronological (5-minute steps up to T0).
+    assert snap.candles[0].timestamp == T0 - timedelta(minutes=5 * 9)
+    assert [c.timestamp for c in snap.candles] == [
+        T0 - timedelta(minutes=5 * i) for i in range(9, -1, -1)
+    ]
+
+
 def test_market_snapshot_to_context_preserves_values() -> None:
     ctx = market_snapshot_to_context(_snapshot())
     assert ctx.price == 100.5
@@ -619,13 +640,18 @@ async def test_position_invariant_valid_snapshot_and_position() -> None:
     om = OrderManager(broker)
     pm = om.positions()
     pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
+    # MVP-6.11 C4: the OPEN live position state is established by a successful
+    # reconciliation. While OPEN, only exit intents are submitted — no new
+    # grid/entry intents from a fresh evaluation (deal continuation is out of
+    # scope), so exactly one order (the exit SELL) is expected.
+    pm.mark_reconciled()
     engine = _live_engine(broker, positions=pm)
     om = engine.order_manager
     await engine.start()
     await engine.process(_context())
     orders = om.list_orders()
     sells = [o for o in orders if o.side is OrderSide.SELL]
-    assert len(orders) == 2  # grid BUY + exit SELL
+    assert len(orders) == 1  # exit SELL only; no new grid entry while OPEN
     assert len(sells) == 1
     assert sells[0].requested_quantity == Decimal("10")
 

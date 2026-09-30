@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_bot_repository, get_bot_runtime_manager
 from app.bots.repository import BotRepository
-from app.bots.schemas import BotResponse
+from app.bots.schemas import BotDepositUpdate, BotResponse
 from app.bots.strategy import StrategyLoadError
 from app.models.bot import Bot
 from app.trading.bot_lifecycle import BotRuntimeManager, BotStartRejected, BotStateError
@@ -39,6 +39,7 @@ def _to_response(bot: Bot) -> BotResponse:
         strategy_version_id=bot.strategy_version_id,
         account_id=bot.account_id,
         instrument_id=bot.instrument_id,
+        deposit=bot.deposit,
         started_at=bot.started_at,
         stopped_at=bot.stopped_at,
     )
@@ -117,6 +118,22 @@ async def get_bot(
     repo: Annotated[BotRepository, Depends(get_bot_repository)],
 ) -> BotResponse:
     bot = await _load_bot(bot_id, repo)
+    return _to_response(bot)
+
+
+@router.patch("/bots/{bot_id}", response_model=BotResponse)
+async def update_bot_deposit(
+    bot_id: int,
+    payload: BotDepositUpdate,
+    repo: Annotated[BotRepository, Depends(get_bot_repository)],
+) -> BotResponse:
+    """Set or clear the bot deposit (MVP-6.11 C5).
+
+    ``deposit`` must be positive (or ``null`` to clear it); a non-positive
+    value is rejected by schema validation (422) and no default is invented.
+    """
+    bot = await _load_bot(bot_id, repo)
+    await repo.update_deposit(bot, payload.deposit)
     return _to_response(bot)
 
 

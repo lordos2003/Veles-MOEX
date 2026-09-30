@@ -122,6 +122,12 @@ class MarketDataService:
             raise MarketDataUnavailable(
                 f"no candle history for {figi} @ {timeframe.value}"
             )
+        # MVP-6.10 contract / Issue #3 (C7): the snapshot must contain exactly
+        # the newest ``lookback_bars`` candles. The request window is wider
+        # (lookback_bars + 1) so the forming candle is included, but the
+        # snapshot itself is trimmed strictly to the contract: newest candles
+        # kept, chronological order preserved.
+        candles = candles[-lookback_bars:]
         return MarketSnapshot(
             figi=figi,
             timeframe=timeframe,

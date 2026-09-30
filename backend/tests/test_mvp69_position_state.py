@@ -140,6 +140,9 @@ async def test_real_quantity_reaches_execution_intent() -> None:
     om = OrderManager(broker)
     pm = om.positions()
     pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
+    # MVP-6.11 C4: the OPEN live position state is established by a successful
+    # reconciliation; without it the state is UNKNOWN and no live order is made.
+    pm.mark_reconciled()
 
     def factory(plan, ctx):
         return plan_to_intents(plan, instrument_figi=FIGI, bot_id=1, account_id="acc-1")
@@ -252,6 +255,8 @@ async def test_no_fallback_quantity() -> None:
     om = OrderManager(broker)
     pm = om.positions()
     pm.apply_fill(FIGI, OrderSide.BUY, Decimal("10"), Decimal("100"))
+    # MVP-6.11 C4: OPEN live position state requires a successful reconciliation.
+    pm.mark_reconciled()
 
     def factory(plan, ctx):
         return plan_to_intents(plan, instrument_figi=FIGI, bot_id=1, account_id="acc-1")
