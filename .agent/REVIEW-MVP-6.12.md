@@ -194,3 +194,7 @@ D1–D6 (round 1), D7 + B1 + B2 (round 2), B3 (round 3) — all closed.
 2. Recovery re-arms the TP on every restart (round-1 observation 1).
 3. `SizingBelowLot` / tick errors at a FLAT entry now put the bot into ERROR (a behaviour change to C3, accepted with B2).
 4. Publication steps: PR `agent/review/mvp-6.12` → `master` (merge commit, pinned to `418c24e`); mirror the MVP-6.12 records; close Issue #7.
+
+### Publication record
+
+Published 2026-09-30: PR #8 (`agent/review/mvp-6.12` → `master`, merge commit pinned to the accepted SHA `418c24e`), merge commit `566d79277e3667ea80e3cccba148158248fafd83`.

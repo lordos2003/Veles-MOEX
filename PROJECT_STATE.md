@@ -17,22 +17,26 @@
 
 ## Current task
 
-### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)
-**Status: ACCEPTED (round 3, 2026-09-30) — awaiting publication to `master`.** Accepted implementation `418c24e`; review `.agent/REVIEW-MVP-6.12.md` (rounds 1–3); validation 450 passed, 1 skipped.
-
-- Reviewed: `a4f792d`; review: `.agent/REVIEW-MVP-6.12.md`; reports: `.agent/REPORT-MVP-6.12.md`, `.agent/REPORT-MVP-6.12-REV1.md`, `.agent/REPORT-MVP-6.12-REV2.md`
-- Correction round 1: `949bebe` (B1 risk-gate before TP cancel + per-event pump isolation; B2 deal errors → bot ERROR via lifecycle + `deal_error` in `GET /api/bots/{id}` + OPEN-without-Deal → ERROR; D7 reducing-intent exemption in `RiskManager`; review observation 2 regression test). Validation: pytest 447 passed/1 skipped, ruff clean, alembic single head `0005_deal_continuation`, npm build green.
-- Correction round 2: `418c24e` (B3: fills accepted in `CANCEL_REQUESTED` and for already-`CANCELLED` orders (terminal state kept, fill still applied to position/record); `_rearm_tp()` re-reads the position after the cancel and rebuilds the TP from the actual facts — never exceeding the position, zero → close; `recover()` no longer re-registers a Deal closed during recovery; 3 B3 tests). Validation: pytest 450 passed/1 skipped, ruff clean, alembic single head `0005_deal_continuation`, npm build green.
-
-- Control task: `.agent/TASK-MVP-6.12-DEAL-CONTINUATION.md`
-- Implementation branch: `agent/review/mvp-6.12` (from `master` @ `59a3897`)
-- Contracts D1–D7 approved by the project owner 2026-09-30: supported live configuration only (SIMPLE/CUSTOM + Simple TP, others rejected at START); event-driven deal lifecycle; tick rounding in the safe direction; TP from the average price, re-armed on every grid fill; durable Deal + recovery; the live cycle no longer produces exits; position-reducing orders exempt from growth limits (D7).
-- Next after 6.12: live cycle scheduler; Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode.
+No task is open. Next candidate: **live cycle scheduler** — who triggers `BotRuntime.execute_strategy` per bot and when (per-bot timeframe; Veles "at bar close" / "once per minute" calculation methods). Other follow-ups: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode; recovery TP churn; the misleading `FILLED -> UNKNOWN` error on cancelling an already executed TP.
 
 ## Current accepted MVP
 
-### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
+### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)
 **Status: ACCEPTED (round 3, 2026-09-30) and published to master.**
+
+- Accepted implementation: `418c24e`
+- Publication PR: #8
+- Publication merge commit: `566d79277e3667ea80e3cccba148158248fafd83`
+- Control task: `.agent/TASK-MVP-6.12-DEAL-CONTINUATION.md`; review: `.agent/REVIEW-MVP-6.12.md` (round 1 REJECTED B1/B2, round 2 REJECTED B3, round 3 ACCEPT); reports: `REPORT-MVP-6.12.md`, `-REV1.md`, `-REV2.md`
+- Contracts D1–D7 (owner-approved 2026-09-30): live deals only for SIMPLE/CUSTOM + Simple TP (others rejected at START); event-driven Deal lifecycle; safe-direction tick rounding; TP from the PositionManager average re-armed on every grid fill (never two TPs, never larger than the position); durable Deal (`0005_deal_continuation`) + recovery; no exits from the live cycle; reducing orders exempt from position-size / daily-loss limits.
+- Deal failures move the bot to ERROR (persisted; `deal_error` in `GET /api/bots/{id}`); an OPEN position without an owning Deal errors the bot.
+- Validation (independent, clean env): `pytest 450 passed, 1 skipped`; `ruff` clean; alembic head `0005_deal_continuation`.
+
+Known boundaries: no live cycle scheduler; only Simple TP; position state per FIGI (one bot per instrument); Backtest sizing differs from the Live deposit contract.
+
+
+### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
+**Status: ACCEPTED (round 3, 2026-09-30) and published to master.** (Deal-related boundaries superseded by MVP-6.12.)
 
 - Accepted implementation: `e026886dfdc6f98112dfc214060c5fc2bb2ae075`
 - Publication PR: #6
