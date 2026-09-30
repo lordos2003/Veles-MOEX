@@ -1,4 +1,4 @@
-"""Live cycle scheduler (MVP-6.13, contracts S1-S5).
+"""Live cycle scheduler (MVP-6.13, contracts S1-S6).
 
 The scheduler decides *when* a RUNNING bot's strategy cycle runs: it calls the
 existing |BotRuntime.execute_strategy| with a broker-neutral |MarketContext|
@@ -14,12 +14,19 @@ Timing is driven by the Veles calculation method of the bot
   snapshot with ``is_complete is True`` (``None`` counts as not confirmed);
   otherwise the tick is retried every ``retry`` seconds up to ``max_wait``
   after the boundary, then skipped and counted as a transient failure (S4).
+  Confirmation is a timestamp **range** check, not exact equality (B1): a
+  complete candle whose start lies inside the bar interval is accepted, so a
+  broker that stamps day/week/month bars at a non-epoch-aligned start is
+  still confirmed.
 - ``PER_MINUTE`` (S2): one tick at every UTC minute boundary; the forming bar
   is used as-is (|FilterEvaluator| already handles it).
 
 Before every cycle the scheduler asks the broker whether the instrument is
-tradable *now* (S3): not tradable skips the tick without counting it; an
-unknown/failed status skips it and counts a transient failure.
+tradable *now* (S3). When the tick falls while the instrument is not tradable
+the tick is **deferred** — not dropped and not counted — and runs exactly once
+at the next tradable moment, on the closed bar of the deferred boundary (S6).
+An unknown/failed status skips the tick and counts a transient failure (S3
+preserved).
 
 Failure policy (S4): transient failures (|MarketDataUnavailable|, broker
 transport errors, confirmation timeout, unknown trading status) are counted per
@@ -27,7 +34,9 @@ bot in memory; after ``max_consecutive_failures`` consecutive ones the bot goes
 to ERROR through |BotRuntime.fail|. Non-transient failures (configuration and
 engine errors, unexpected exceptions) fail the bot immediately. A successful
 cycle resets the counter. The last failure reason stays observable via
-:meth:`LiveCycleScheduler.last_error_for`.
+:meth:`LiveCycleScheduler.last_error_for`. ``DealError`` is exempt: the Deal
+layer already surfaced every deal failure to the bot lifecycle (MVP-6.12 B2)
+before re-raising, so the scheduler does not double-handle it (S4).
 
 Correctness guards (S1): bots are scheduled independently (each bot's pass runs
 in its own task, so a slow/failing bot never delays another); at most one cycle
@@ -36,6 +45,14 @@ skipped, with no catch-up of missed ticks; only RUNNING bots are ticked; the
 scheduler does not tick while the safety gate (the live service being SAFE) is
 closed. Clock and sleeping are injectable (:class:`Clock`); tests never use
 real sleeps (S5).
+
+Round-1 review corrections: B1 (range confirmation, above) with the new S6
+(AT_BAR_CLOSE deferral: a DAY_1 boundary falls at 00:00 UTC — outside the MOEX
+session — so without a deferral such a bot would never tick); B2 — the live
+long-lived AsyncSession is shared by concurrent bot passes and must be
+serialized (see ``app/persistence`` and ``app/bots``); B3 — a bot state change
+(in particular a restart after ERROR) resets the per-bot scheduler state
+(:meth:`LiveCycleScheduler.advance`).
 """
 
 from __future__ import annotations
@@ -54,9 +71,11 @@ from app.domain.marketdata import (
     MarketSnapshot,
     Timeframe,
 )
+from app.models.enums import BotState
 from app.strategies.config import StrategyConfig
 from app.strategies.filters import CalculationMethod
 from app.trading.bot_lifecycle import BotRuntime, BotRuntimeManager
+from app.trading.deal import DealError
 from app.trading.market_context import (
     LookbackNotConfigured,
     TimeframeNotConfigured,
@@ -139,18 +158,28 @@ class SchedulerSettings:
 
 @dataclass
 class _BotTicker:
-    """Per-bot scheduler state (in memory; S4 counter restarts on restart)."""
+    """Per-bot scheduler state (in memory; S4 counter restarts on restart).
+
+    B3 (review round 1): the state below is reset on bot state changes
+    (:meth:`LiveCycleScheduler._reset_ticker_state`), except
+    ``last_done_boundary``: a concluded bar must never be ticked twice.
+    """
 
     runtime: BotRuntime
     figi: str
     failures: int = 0
-    # S2 (AT_BAR_CLOSE): bar-boundary processing state. A boundary is claimed
-    # when it first becomes due and concluded once its tick ran / was skipped.
+    # S2/S6 (AT_BAR_CLOSE): bar-boundary processing state. A boundary is
+    # claimed when it first becomes due and concluded once its tick ran / was
+    # skipped. ``deferred`` marks an S6 deferral: the tick fell while the
+    # instrument was not tradable and waits for the next tradable moment.
     pending_boundary: datetime | None = None
+    deferred: bool = False
     last_attempt_index: int = -1
     last_done_boundary: datetime | None = None
     # S2 (PER_MINUTE): the last minute boundary claimed for a single attempt.
     last_minute: datetime | None = None
+    # B3: the last state observed by advance(); a change resets the state above.
+    last_seen_state: BotState | None = None
 
 
 class _StatusVerdict(Enum):
@@ -226,6 +255,15 @@ class LiveCycleScheduler:
         time, no catch-up of missed ticks.
         """
         for runtime in self._manager.list():
+            ticker = self._tickers.get(runtime.bot_id)
+            if ticker is not None and ticker.last_seen_state != runtime.state:
+                # B3 (review round 1): a bot state change — in particular a
+                # restart after ERROR — resets the per-bot scheduler state
+                # (failure counter, pending/deferred boundary, PER_MINUTE
+                # claim). The last concluded boundary is kept so a finished
+                # bar is never ticked twice.
+                self._reset_ticker_state(ticker)
+                ticker.last_seen_state = runtime.state
             if runtime.bot_id in self._inflight:
                 continue  # S1: overlap -> this tick is skipped
             if not runtime.running:
@@ -256,7 +294,9 @@ class LiveCycleScheduler:
             try:
                 if ticker is None:
                     ticker = _BotTicker(
-                        runtime=runtime, figi=await self._figi_provider(runtime)
+                        runtime=runtime,
+                        figi=await self._figi_provider(runtime),
+                        last_seen_state=runtime.state,
                     )
                     self._tickers[runtime.bot_id] = ticker
                 if not runtime.running or not self._is_safe():
@@ -290,64 +330,115 @@ class LiveCycleScheduler:
                 f"bot {ticker.runtime.bot_id}: strategy lookback_bars is not configured"
             )
 
-    # --- AT_BAR_CLOSE (S2) ------------------------------------------------------
+    # --- AT_BAR_CLOSE (S2 + S6) -------------------------------------------------
 
     async def _process_at_bar_close(
         self, ticker: _BotTicker, config: StrategyConfig, now: datetime
     ) -> None:
         tf = config.timeframe
+        if ticker.deferred:
+            # S6 (B1): the deferred boundary is fixed — a closed session passes
+            # no newer closed bar, so the clock must not advance the deferral.
+            await self._process_deferred(ticker, config, now)
+            return
         boundary = self._bar_start(
             now - timedelta(seconds=self._settings.bar_close_delay_seconds), tf
         )
         if boundary == ticker.last_done_boundary:
             return  # this boundary's tick already ran / was concluded
-        if (
-            boundary == ticker.pending_boundary
-            and ticker.last_attempt_index >= self._attempt_index(now, boundary)
-        ):
-            return  # no new retry is due yet
-        if now > boundary + timedelta(seconds=self._settings.bar_close_max_wait_seconds):
-            # S2: the confirmation window for this tick has already expired.
-            await self._handle_stale_boundary(ticker, boundary)
-            return
+        if ticker.pending_boundary is not None:
+            if boundary > ticker.pending_boundary:
+                # S6/S2: a newer boundary is due while an older one is still
+                # pending -> only the latest pending boundary is kept (no
+                # catch-up of missed bars).
+                self._supersede_pending(ticker)
+            elif boundary < ticker.pending_boundary:
+                return  # clock moved back: defensive, never observed normally
         if ticker.pending_boundary != boundary:
             ticker.pending_boundary = boundary
             ticker.last_attempt_index = -1
         idx = self._attempt_index(now, boundary)
         if idx <= ticker.last_attempt_index:
-            return
+            return  # no new retry slot is due yet
         ticker.last_attempt_index = idx
         verdict = await self._status_verdict(ticker)
         if verdict is _StatusVerdict.UNAVAILABLE:
-            self._conclude_boundary(ticker, boundary)  # S3: skip, not counted
+            # S6 (B1): the tick fell while the instrument is not tradable (a
+            # DAY_1 boundary falls at 00:00 UTC, always outside the MOEX
+            # session). The tick is deferred — not dropped, not counted — and
+            # runs once at the next tradable moment, on the closed bar of this
+            # boundary.
+            ticker.deferred = True
             return
         if verdict is _StatusVerdict.FAILED:
             self._conclude_boundary(ticker, boundary)  # counted in _status_verdict
             return
         # Tradable now: the raw snapshot must confirm the just-closed bar (S2).
+        await self._confirm_boundary(ticker, config, tf, now, boundary)
+
+    async def _process_deferred(
+        self, ticker: _BotTicker, config: StrategyConfig, now: datetime
+    ) -> None:
+        """S6 (B1): re-check the session for a deferred tick at the scheduler cadence.
+
+        While the instrument is not tradable the deferral persists (it is never
+        a failure count). An unknown/failed status is counted as a transient
+        (S3) but does not drop the deferral; the tick itself is skipped. The
+        moment the instrument is tradable again the deferred tick runs exactly
+        once on the closed bar of the deferred boundary: the S2 max-wait
+        timeout does not apply (the tick was deferred, not lost), and the
+        confirmation retries on the next pass while the bar is absent.
+        """
+        boundary = ticker.pending_boundary
+        assert boundary is not None
+        verdict = await self._status_verdict(ticker)
+        if verdict is not _StatusVerdict.AVAILABLE:
+            return  # UNAVAILABLE: deferral persists; FAILED: counted (S3)
+        snapshot = await self._snapshot_provider(ticker.figi, config)
+        if not self._closed_bar_confirmed(snapshot, boundary, config.timeframe):
+            return  # bar data not there yet: retry confirmation next pass
+        ticker.deferred = False
+        success = await self._run_cycle(ticker, snapshot)
+        if success:
+            ticker.failures = 0
+        self._conclude_boundary(ticker, boundary)
+
+    async def _confirm_boundary(
+        self, ticker: _BotTicker, config: StrategyConfig, tf: Timeframe,
+        now: datetime, boundary: datetime,
+    ) -> None:
+        """S2: confirm the just-closed bar in the raw snapshot, then one cycle.
+
+        Retry slots keep re-checking until ``max_wait``; past it the tick is
+        skipped and counted as one transient failure (S2/S4). While not
+        confirmed no failure is counted (the tick is simply pending).
+        """
+        if now > boundary + timedelta(seconds=self._settings.bar_close_max_wait_seconds):
+            await self._count_transient(
+                ticker,
+                f"closed bar not confirmed within max wait (boundary {boundary.isoformat()})",
+            )
+            self._conclude_boundary(ticker, boundary)
+            return
         snapshot = await self._snapshot_provider(ticker.figi, config)
         if self._closed_bar_confirmed(snapshot, boundary, tf):
             success = await self._run_cycle(ticker, snapshot)
             if success:
                 ticker.failures = 0
             self._conclude_boundary(ticker, boundary)
-        # else: not confirmed yet -> the next retry (every ``retry`` seconds,
-        # no later than ``max_wait``) re-checks; no failure is counted here.
+        # else: not confirmed yet -> the next retry slot re-checks (S2).
 
-    async def _handle_stale_boundary(self, ticker: _BotTicker, boundary: datetime) -> None:
-        """The tick is late (S2 skip after max wait) — ask S3 first, then count."""
-        verdict = await self._status_verdict(ticker)
-        if verdict is _StatusVerdict.UNAVAILABLE:
-            self._conclude_boundary(ticker, boundary)  # S3: not a failure
-            return
-        if verdict is _StatusVerdict.FAILED:
-            self._conclude_boundary(ticker, boundary)  # counted already
-            return
-        await self._count_transient(
-            ticker,
-            f"closed bar not confirmed within max wait (boundary {boundary.isoformat()})",
-        )
-        self._conclude_boundary(ticker, boundary)
+    def _supersede_pending(self, ticker: _BotTicker) -> None:
+        """S6/S2: a newer boundary supersedes an older pending one (no catch-up).
+
+        Only the latest pending boundary is kept. The older pending is dropped
+        without a failure count — a confirming pending that was never concluded
+        is only reachable when the confirmation window spans more than one bar
+        (MIN_1-scale settings), and the newer boundary's own S2/S3/S6 rules
+        govern from here. A deferred boundary never reaches this path: the
+        deferred tick is fixed to its own boundary.
+        """
+        self._conclude_boundary(ticker, ticker.pending_boundary)
 
     def _attempt_index(self, now: datetime, boundary: datetime) -> int:
         """Which retry slot ``now`` falls into for the boundary (0 = first)."""
@@ -359,22 +450,46 @@ class LiveCycleScheduler:
     def _closed_bar_confirmed(
         self, snapshot: MarketSnapshot, boundary: datetime, tf: Timeframe
     ) -> bool:
-        """S2: the bar that closed at ``boundary`` is present and complete.
+        """S2/B1: the bar that closed at ``boundary`` is present and complete.
 
         Confirmed from the *raw* snapshot: ``is_complete is True`` counts, and
         ``None`` (or False) counts as not confirmed — |market_snapshot_to_context|
         maps ``None`` to True, so S2 must not rely on that mapping.
+
+        B1 correction: confirmation is a timestamp **range** check, not exact
+        equality — a candle that starts anywhere inside the bar interval
+        (``[bar_start(boundary - 1 s), boundary)``) is accepted, so a broker
+        stamping day/week/month bars at a non-epoch-aligned start (e.g. a day
+        candle at 03:00 UTC) is still confirmed.
         """
-        target_start = self._bar_start(boundary - timedelta(seconds=1), tf)
+        range_start = self._bar_start(boundary - timedelta(seconds=1), tf)
         for candle in snapshot.candles:
-            if candle.timestamp == target_start and candle.is_complete is True:
+            if (
+                candle.is_complete is True
+                and range_start <= candle.timestamp < boundary
+            ):
                 return True
         return False
 
     def _conclude_boundary(self, ticker: _BotTicker, boundary: datetime) -> None:
         ticker.pending_boundary = None
+        ticker.deferred = False
         ticker.last_attempt_index = -1
         ticker.last_done_boundary = boundary
+
+    def _reset_ticker_state(self, ticker: _BotTicker) -> None:
+        """B3 (review round 1): reset the per-bot scheduler state on restart.
+
+        A bot that left RUNNING (ERROR/STOP/...) must not carry its failure
+        counter, its pending/deferred boundary or its PER_MINUTE claim into
+        its next START. ``last_done_boundary`` is intentionally kept: a
+        concluded bar is never ticked twice.
+        """
+        ticker.failures = 0
+        ticker.pending_boundary = None
+        ticker.deferred = False
+        ticker.last_attempt_index = -1
+        ticker.last_minute = None
 
     # --- PER_MINUTE (S2) --------------------------------------------------------
 
@@ -424,7 +539,16 @@ class LiveCycleScheduler:
         return True
 
     async def _handle_exception(self, ticker: _BotTicker | None, exc: Exception) -> None:
-        """S4: transient failures are counted; everything else is immediate ERROR."""
+        """S4: transient failures are counted; everything else is immediate ERROR.
+
+        ``DealError`` is exempt: the Deal layer already surfaced every deal
+        failure to the bot lifecycle (MVP-6.12 B2 ``_fail_deal`` /
+        ``assert_deal_for_open_position``) *before* re-raising, so the scheduler
+        must not double-handle it or overwrite the deal reason (S4, review
+        round-1 observation 1).
+        """
+        if isinstance(exc, DealError):
+            return
         if isinstance(exc, self._transient_error_types):
             await self._count_transient(ticker, str(exc))
         else:
@@ -457,8 +581,11 @@ class LiveCycleScheduler:
     def _bar_start(self, dt: datetime, tf: Timeframe) -> datetime:
         """Start of the T-Invest bar interval containing ``dt`` (UTC boundaries).
 
-        Minute .. day intervals are fixed-length from the epoch; WEEK_1 bars
-        start Monday 00:00 UTC, MONTH_1 bars on the 1st 00:00 UTC.
+        Assumption (not confirmed by the official T-Invest docs — see the
+        REPORT / §31 limitations): minute .. day intervals are fixed-length
+        from the epoch, WEEK_1 bars start Monday 00:00 UTC and MONTH_1 bars
+        on the 1st 00:00 UTC. The B1 range-confirmation rule does not depend
+        on exact equality, so a non-epoch-aligned broker stamp still confirms.
         """
         if tf is Timeframe.WEEK_1:
             day = dt.date() - timedelta(days=dt.weekday())

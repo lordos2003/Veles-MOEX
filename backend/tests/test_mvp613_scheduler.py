@@ -1,22 +1,28 @@
 """MVP-6.13 Live Cycle Scheduler tests.
 
-Focused on the new scheduler boundary (contracts S1-S5 of TASK-MVP-6.13):
+Focused on the new scheduler boundary (contracts S1-S6 of TASK-MVP-6.13):
 tick timing by calculation method (AT_BAR_CLOSE / PER_MINUTE), the
-trading-session gate (S3), the failure policy (S4) and the correctness guards
-(S1). Deterministic and broker-neutral: a fake Clock (no real sleeps), duck-typed
-bot runtimes and broker/snapshot fakes. The T-Invest status mapping is tested
-against the fake client at the end (adapter boundary, not the scheduler).
+trading-session gate (S3, with the S6 deferral — B1 round-1 correction), the
+confirmation range check (B1), the failure policy (S4), the correctness guards
+(S1) and the round-1 corrections B2 (shared live-session serialization) and B3
+(state reset on restart), plus the S4 DealError exemption (a deal failure is
+already surfaced by the Deal layer). Deterministic and broker-neutral: a fake
+Clock (no real sleeps), duck-typed bot runtimes and broker/snapshot fakes. The
+T-Invest status mapping is tested against the fake client at the end (adapter
+boundary, not the scheduler).
 """
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from app.backtest.broker import BacktestBroker
+from app.bots.repository import BotRepository
 from app.brokers.tinvest import TInvestAdapter
 from app.brokers.tinvest_errors import BrokerApiError, MarketDataError
 from app.domain.instrument import TradingStatus
@@ -42,6 +48,7 @@ from app.trading import (
     RiskManager,
     SchedulerSettings,
 )
+from app.trading.deal import DealBlocked
 from app.trading.live_execution import LiveExecutionBlocked, LiveExecutionService
 from tests.fakes import TInvestFakeClient
 
@@ -53,6 +60,17 @@ TF = Timeframe.MIN_5
 STATUS_PATH = (
     "tinkoff.public.invest.api.contract.v1.MarketDataService/GetTradingStatus"
 )
+# Fixed-length bar intervals for building test snapshots (WEEK_1/MONTH_1 use
+# calendar boundaries and are not needed here).
+_BAR_SECONDS = {
+    Timeframe.MIN_1: 60,
+    Timeframe.MIN_5: 300,
+    Timeframe.MIN_15: 900,
+    Timeframe.MIN_30: 1800,
+    Timeframe.HOUR_1: 3600,
+    Timeframe.HOUR_4: 14400,
+    Timeframe.DAY_1: 86400,
+}
 
 
 class FakeClock:
@@ -247,6 +265,89 @@ def _session_snapshot(first_start: datetime, count: int) -> MarketSnapshot:
     )
 
 
+def _bars_ending_at(
+    close: datetime,
+    tf: Timeframe,
+    count: int = 2,
+    *,
+    offset: timedelta = timedelta(0),
+) -> MarketSnapshot:
+    """Snapshot of ``tf`` candles whose last bar closes at ``close``.
+
+    Each candle starts ``offset`` into its interval (``offset`` > 0 simulates
+    a non-epoch-aligned broker stamp, e.g. a day candle at 03:00 UTC — the
+    B1 range-confirmation case).
+    """
+    length = timedelta(seconds=_BAR_SECONDS[tf])
+    candles = tuple(
+        Candle(
+            figi=FIGI,
+            timeframe=tf,
+            timestamp=close - length * (i + 1) + offset,
+            open=Decimal(100) + i,
+            high=Decimal(101) + i,
+            low=Decimal(99) + i,
+            close=Decimal("100.5") + i,
+            volume=1000,
+            is_complete=True,
+        )
+        for i in range(count)
+    )
+    return MarketSnapshot(
+        figi=FIGI, timeframe=tf, timestamp=close, last_price=Decimal("100.5"),
+        candles=candles,
+    )
+
+
+class _BotStub:
+    """Minimal duck-typed Bot row for the B2 session stand-in."""
+
+    def __init__(self, bot_id: int, deposit: Decimal | None) -> None:
+        self.id = bot_id
+        self.deposit = deposit
+        self.status = BotState.RUNNING.value
+
+
+class _OverlapDetectingSession:
+    """Session stand-in that exposes overlapping operations (B2 regression).
+
+    The reviewer reproduced the production defect on PostgreSQL: one
+    long-lived AsyncSession used by concurrent bot passes raises
+    (ResourceClosedError / IllegalStateChangeError). This stand-in detects the
+    *condition* directly — more than one operation in flight at once — so the
+    regression test needs no database, while the repository is exercised with
+    the same call pattern as production ``_scheduler_figi`` /
+    ``_persist_bot_error`` (get + get_deposit + update_state).
+    """
+
+    def __init__(self) -> None:
+        self._active = 0
+        self.max_active = 0
+        self.deposit = Decimal("1000")
+
+    async def get(self, model, bot_id, **kwargs):
+        async with self._in_progress():
+            return _BotStub(bot_id, self.deposit)
+
+    async def commit(self):
+        async with self._in_progress():
+            return None
+
+    async def refresh(self, obj):
+        async with self._in_progress():
+            return obj
+
+    @asynccontextmanager
+    async def _in_progress(self):
+        self._active += 1
+        self.max_active = max(self.max_active, self._active)
+        try:
+            await asyncio.sleep(0)  # let concurrent owners interleave
+            yield
+        finally:
+            self._active -= 1
+
+
 def _runtime(
     bot_id: int,
     *,
@@ -262,6 +363,7 @@ def _make_scheduler(
     *,
     broker: FakeTradingStatusBroker | ProgrammedTradingStatusBroker | None = None,
     snapshot_provider: FakeSnapshotProvider | None = None,
+    figi_provider=None,
     gate=None,
     on_bot_error=None,
     settings: SchedulerSettings | None = None,
@@ -275,13 +377,17 @@ def _make_scheduler(
 
         transient_error_types = _DEFAULT_TRANSIENT_ERRORS
 
-    async def _figi(runtime) -> str:
-        return FIGI
+    if figi_provider is None:
+
+        async def _figi(runtime) -> str:
+            return FIGI
+
+        figi_provider = _figi
 
     return LiveCycleScheduler(
         bot_runtime_manager=manager,
         broker=broker or FakeTradingStatusBroker(),
-        figi_provider=_figi,
+        figi_provider=figi_provider,
         snapshot_provider=snapshot_provider
         or FakeSnapshotProvider(
             _single_candle_snapshot(T0 - timedelta(minutes=5))
@@ -292,6 +398,23 @@ def _make_scheduler(
         on_bot_error=on_bot_error,
         transient_error_types=transient_error_types,
     )
+
+
+def _repo_figi(repo: BotRepository):
+    """figi_provider shaped like production ``_scheduler_figi``.
+
+    Every scheduler pass of a live bot touches the shared session exactly like
+    this (``bot_repository.get`` + a fresh ``get_deposit`` read), which is the
+    B2 concurrent-use surface.
+    """
+
+    async def _figi(runtime) -> str:
+        bot = await repo.get(runtime.bot_id)
+        assert bot is not None
+        await repo.get_deposit(runtime.bot_id)
+        return FIGI
+
+    return _figi
 
 
 async def _poll_until(predicate, timeout: float = 2.0) -> None:
@@ -448,30 +571,134 @@ async def test_per_minute_ticks_once_per_minute_boundary() -> None:
     assert len(snaps.requests) == 2
 
 
-# --- S3: trading-session gate --------------------------------------------------
+# --- S3: trading-session gate + S6 deferral (B1) -------------------------------
 
 
-async def test_s3_not_tradable_skips_tick_without_counting() -> None:
+async def test_s3_not_tradable_defers_tick_without_counting() -> None:
+    # B1/S6: the tick fell while the instrument is not tradable -> deferred,
+    # not dropped and not counted; it runs exactly once at the next tradable
+    # moment, on the closed bar of the deferred boundary.
     clock = FakeClock(T0 + timedelta(seconds=5))
     rt = _runtime(1)
-    broker = FakeTradingStatusBroker(status=TradingStatus.TRADING_UNAVAILABLE)
+    broker = ProgrammedTradingStatusBroker(
+        TradingStatus.TRADING_UNAVAILABLE,  # boundary tick: deferral
+        TradingStatus.TRADING_UNAVAILABLE,  # still closed a bit later
+        TradingStatus.TRADING_AVAILABLE,    # tradable -> the deferred tick runs
+    )
     snaps = FakeSnapshotProvider(_single_candle_snapshot(T0 - timedelta(minutes=5)))
     sched = _make_scheduler(clock, rt, broker=broker, snapshot_provider=snaps)
 
     await sched.advance()
     await sched.settle()
     assert rt.executions == []
-    assert snaps.requests == []  # the snapshot is never fetched
+    assert snaps.requests == []  # the snapshot is never fetched while deferred
     assert rt.fail_reasons == []
-    assert sched.last_error_for(1) is None  # a market-closed skip is NOT a failure
+    assert sched.last_error_for(1) is None  # a deferral is NOT a failure
 
-    # The boundary is concluded: no further attempts in this bar.
+    # Still closed: the deferral persists (no conclusion, no count).
     clock.set(T0 + timedelta(seconds=30))
     await sched.advance()
     await sched.settle()
     assert rt.executions == []
     assert len(snaps.requests) == 0
     assert rt.fail_reasons == []
+
+    # Tradable: exactly one cycle on the closed bar (no earlier attempts).
+    clock.set(T0 + timedelta(seconds=35))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+    assert len(snaps.requests) == 1
+    assert rt.fail_reasons == []
+
+
+async def test_s6_day1_boundary_outside_session_defers_to_next_tradable() -> None:
+    # B1: a DAY_1 bar closes at 00:00 UTC = 03:00 MSK — always outside the
+    # MOEX session. Without the S6 deferral such a bot would never tick. The
+    # Friday bar [2026-05-01 00:00, 2026-05-02 00:00) closes at Sat 00:00 UTC;
+    # the tick is deferred and runs exactly once at the next tradable moment
+    # (Monday 07:00 UTC = 10:00 MSK) on the Friday closed bar.
+    friday_bar_close = datetime(2026, 5, 2, 0, 0, tzinfo=UTC)  # Sat 00:00 UTC
+    clock = FakeClock(friday_bar_close + timedelta(seconds=5))
+    rt = _runtime(1, timeframe=Timeframe.DAY_1)
+    broker = ProgrammedTradingStatusBroker(
+        TradingStatus.TRADING_UNAVAILABLE,  # Sat 00:00:05 -> deferral
+        TradingStatus.TRADING_UNAVAILABLE,  # Sunday: still closed
+        TradingStatus.TRADING_AVAILABLE,    # Monday session open -> run once
+    )
+    snaps = FakeSnapshotProvider(_bars_ending_at(friday_bar_close, Timeframe.DAY_1))
+    sched = _make_scheduler(clock, rt, broker=broker, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert snaps.requests == []
+    assert rt.fail_reasons == []
+
+    # Sunday 00:00:05 (another day boundary passed in the closed session).
+    clock.set(friday_bar_close + timedelta(days=1, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert snaps.requests == []
+    assert rt.fail_reasons == []
+
+    # Monday 07:00 UTC: tradable -> one deferred cycle on the Friday bar.
+    clock.set(friday_bar_close + timedelta(days=2, hours=7))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+    assert len(snaps.requests) == 1
+    assert rt.fail_reasons == []
+
+
+async def test_s6_several_closed_session_boundaries_produce_one_deferred_cycle() -> None:
+    # Several bar boundaries pass in a row while the session is closed; the
+    # deferred tick stays fixed to the boundary that fell first (the last bar
+    # that actually closed) and produces exactly ONE cycle, no catch-up.
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = ProgrammedTradingStatusBroker(
+        TradingStatus.TRADING_UNAVAILABLE,  # boundary B: deferred
+        TradingStatus.TRADING_UNAVAILABLE,  # B + 5m boundary passed
+        TradingStatus.TRADING_UNAVAILABLE,  # B + 10m boundary passed
+        TradingStatus.TRADING_AVAILABLE,    # tradable -> one deferred cycle
+    )
+    snaps = FakeSnapshotProvider(_session_snapshot(T0 - timedelta(minutes=5), 5))
+    sched = _make_scheduler(clock, rt, broker=broker, snapshot_provider=snaps)
+
+    for minutes in (0, 5, 10):
+        clock.set(T0 + timedelta(minutes=minutes, seconds=5))
+        await sched.advance()
+        await sched.settle()
+    assert rt.executions == []
+    assert snaps.requests == []
+    assert rt.fail_reasons == []
+
+    clock.set(T0 + timedelta(minutes=15, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+    assert len(snaps.requests) == 1
+    assert rt.fail_reasons == []
+
+
+async def test_b1_closed_bar_confirmed_by_range_not_exact_equality() -> None:
+    # B1: the closed bar is confirmed by a timestamp *range*, not exact
+    # equality. A day candle stamped at a non-midnight start (03:00 UTC) still
+    # confirms the bar that closed at 00:00 UTC.
+    friday_bar_close = datetime(2026, 5, 2, 0, 0, tzinfo=UTC)
+    clock = FakeClock(friday_bar_close + timedelta(seconds=5))
+    rt = _runtime(1, timeframe=Timeframe.DAY_1)
+    snaps = FakeSnapshotProvider(
+        _bars_ending_at(friday_bar_close, Timeframe.DAY_1, offset=timedelta(hours=3))
+    )
+    sched = _make_scheduler(clock, rt, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+    assert len(snaps.requests) == 1
 
 
 async def test_s3_unknown_status_is_counted_transient() -> None:
@@ -615,9 +842,35 @@ async def test_s4_non_transient_config_error_fails_bot_immediately() -> None:
     assert rt.state is BotState.ERROR
 
 
+class _DealErrorRuntime(FakeRuntime):
+    """Runtime whose cycle raises a DealError (already surfaced by the Deal layer)."""
+
+    def __init__(self, bot_id: int, exc: Exception) -> None:
+        super().__init__(bot_id, FakeStrategy(_strategy()))
+        self._exc = exc
+
+    async def execute_strategy(self, context=None):
+        self.execute_starts += 1
+        raise self._exc
+
+
+async def test_s4_deal_error_is_not_double_handled() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _DealErrorRuntime(1, DealBlocked("bot 1 already has an open deal"))
+    sched = _make_scheduler(clock, rt)
+
+    await sched.advance()
+    await sched.settle()
+
+    # The Deal layer already moved the bot to ERROR with the deal reason (B2);
+    # the scheduler must not fail it again or overwrite last_error (S4).
+    assert rt.execute_starts == 1
+    assert rt.fail_reasons == []
+    assert rt.state is not BotState.ERROR
+    assert sched.last_error_for(1) is None
+
+
 # --- S1: correctness guards ----------------------------------------------------
-
-
 async def test_s1_overlap_skips_tick_no_parallel_cycles() -> None:
     clock = FakeClock(T0 + timedelta(seconds=5))
     rt = _runtime(1)
@@ -763,6 +1016,79 @@ async def test_scheduler_not_started_before_safe_recovery() -> None:
     with pytest.raises(LiveExecutionBlocked):
         await service.run_scheduler_forever()
     assert rt.executions == []
+
+
+# --- B2/B3: review round-1 corrections ----------------------------------------
+
+
+async def test_b3_failures_reset_after_error_and_restart() -> None:
+    # B3: a bot that went ERROR must not carry its failure counter (nor its
+    # pending/deferred boundary) into its next START. Without the reset the
+    # first failure after the restart would already be the 4th -> ERROR again.
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = ProgrammedTradingStatusBroker(
+        "SOME_FUTURE_STATUS",  # 1st transient
+        "SOME_FUTURE_STATUS",  # 2nd transient
+        "SOME_FUTURE_STATUS",  # 3rd transient -> terminal ERROR
+        "SOME_FUTURE_STATUS",  # after restart: 1st transient only
+    )
+    sched = _make_scheduler(clock, rt, broker=broker)
+
+    await sched.advance()
+    await sched.settle()
+    clock.set(T0 + timedelta(minutes=5, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    clock.set(T0 + timedelta(minutes=10, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.fail_reasons) == 1
+    assert rt.state is BotState.ERROR
+
+    # The scheduler observes the ERROR state on its next pass (B3 reset).
+    clock.set(T0 + timedelta(minutes=10, seconds=30))
+    await sched.advance()
+    await sched.settle()
+
+    # Owner restarts the bot: one failure after the restart stays transient.
+    rt.set_state(BotState.RUNNING)
+    clock.set(T0 + timedelta(minutes=15, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.fail_reasons) == 1  # the old error only
+    assert rt.state is BotState.RUNNING  # 1 failure < 3 -> bot still runs
+
+
+async def test_b2_shared_session_without_lock_overlaps_under_concurrent_passes() -> None:
+    # The 0c12cf1 wiring (one long-lived session, no serialization): several
+    # bot passes touch the shared session at once — the exact condition the
+    # reviewer reproduced on PostgreSQL (ResourceClosedError). The stand-in
+    # detects overlapping operations directly (no database needed).
+    session = _OverlapDetectingSession()
+    repo = BotRepository(session)  # no lock: the reviewed wiring
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    runtimes = [_runtime(i) for i in (1, 2, 3)]
+    sched = _make_scheduler(clock, runtimes, figi_provider=_repo_figi(repo))
+
+    await sched.advance()
+    await sched.settle()
+    assert session.max_active >= 2  # the B2 defect condition was reproduced
+
+
+async def test_b2_shared_session_with_lock_stays_serialised_under_concurrent_passes() -> None:
+    # Fix: BotRepository is given the single live-session lock; concurrent
+    # passes keep working and no operation ever overlaps on the session.
+    session = _OverlapDetectingSession()
+    repo = BotRepository(session, lock=asyncio.Lock())
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    runtimes = [_runtime(i) for i in (1, 2, 3)]
+    sched = _make_scheduler(clock, runtimes, figi_provider=_repo_figi(repo))
+
+    await sched.advance()
+    await sched.settle()
+    assert [len(rt.executions) for rt in runtimes] == [1, 1, 1]
+    assert session.max_active == 1  # serialized by the live session lock
 
 
 # --- S3 adapter boundary (T-Invest mapping) ------------------------------------

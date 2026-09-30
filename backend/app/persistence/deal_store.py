@@ -8,6 +8,8 @@ protocol.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from decimal import Decimal
 
 from sqlalchemy import delete, select
@@ -91,12 +93,35 @@ def _to_domain(row: DealRow, levels: list[DealLevelRow]) -> Deal:
 
 
 class SqlAlchemyDealStore:
-    """Persists Deal state in PostgreSQL/SQLite via the ORM (flush semantics)."""
+    """Persists Deal state in PostgreSQL/SQLite via the ORM (flush semantics).
 
-    def __init__(self, session: AsyncSession) -> None:
+    ``lock`` (B2, MVP-6.13 review round 1): the production live graph shares
+    one long-lived ``AsyncSession`` between the stream and the scheduler
+    passes; an ``AsyncSession`` is not safe for concurrent use, so the store
+    accepts an optional ``asyncio.Lock`` serializing every operation. Tests
+    keep the default ``None``.
+    """
+
+    def __init__(
+        self, session: AsyncSession, *, lock: asyncio.Lock | None = None
+    ) -> None:
         self._session = session
+        self._lock = lock
+
+    @asynccontextmanager
+    async def _session_guard(self):
+        """B2: serialize access when the session is shared by concurrent owners."""
+        if self._lock is not None:
+            async with self._lock:
+                yield
+        else:
+            yield
 
     async def save(self, deal: Deal) -> Deal:
+        async with self._session_guard():
+            return await self._save_locked(deal)
+
+    async def _save_locked(self, deal: Deal) -> Deal:
         if deal.id is None:
             row = DealRow(
                 bot_id=deal.bot_id,
@@ -159,6 +184,10 @@ class SqlAlchemyDealStore:
         return deal
 
     async def get(self, deal_id: int) -> Deal | None:
+        async with self._session_guard():
+            return await self._get_locked(deal_id)
+
+    async def _get_locked(self, deal_id: int) -> Deal | None:
         row = await self._session.get(DealRow, deal_id)
         if row is None:
             return None
@@ -176,6 +205,10 @@ class SqlAlchemyDealStore:
         return _to_domain(row, list(levels))
 
     async def list_unclosed(self) -> list[Deal]:
+        async with self._session_guard():
+            return await self._list_unclosed_locked()
+
+    async def _list_unclosed_locked(self) -> list[Deal]:
         rows = (
             (await self._session.execute(select(DealRow).where(DealRow.status != "CLOSED")))
             .scalars()

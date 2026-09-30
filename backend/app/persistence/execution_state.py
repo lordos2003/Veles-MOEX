@@ -8,6 +8,8 @@ PositionManager) depends only on the broker-neutral snapshot/store Protocol.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -157,30 +159,51 @@ async def _upsert(session: AsyncSession, model, row) -> None:
 
 
 class SqlAlchemyLiveStateStore:
-    """Persists the live execution snapshot in PostgreSQL/SQLite via SQLAlchemy."""
+    """Persists the live execution snapshot in PostgreSQL/SQLite via SQLAlchemy.
 
-    def __init__(self, session: AsyncSession) -> None:
+    ``lock`` (B2, MVP-6.13 review round 1): the production live graph shares
+    one long-lived ``AsyncSession`` between the stream and the scheduler
+    passes; an ``AsyncSession`` is not safe for concurrent use, so the store
+    accepts an optional ``asyncio.Lock`` serializing every operation. Tests
+    keep the default ``None``.
+    """
+
+    def __init__(
+        self, session: AsyncSession, *, lock: asyncio.Lock | None = None
+    ) -> None:
         self._session = session
+        self._lock = lock
+
+    @asynccontextmanager
+    async def _session_guard(self):
+        """B2: serialize access when the session is shared by concurrent owners."""
+        if self._lock is not None:
+            async with self._lock:
+                yield
+        else:
+            yield
 
     async def save_snapshot(self, snapshot: LiveStateSnapshot) -> None:
-        for intent in snapshot.intents:
-            await _upsert(self._session, LiveIntent, _to_row_intent(intent))
-        for order in snapshot.orders:
-            await _upsert(self._session, LiveOrder, _to_row_order(order))
-        for fill in snapshot.fills:
-            await _upsert(self._session, LiveFill, _to_row_fill(fill))
-        for position in snapshot.positions:
-            await _upsert(self._session, LivePosition, _to_row_position(position))
-        await self._session.flush()
+        async with self._session_guard():
+            for intent in snapshot.intents:
+                await _upsert(self._session, LiveIntent, _to_row_intent(intent))
+            for order in snapshot.orders:
+                await _upsert(self._session, LiveOrder, _to_row_order(order))
+            for fill in snapshot.fills:
+                await _upsert(self._session, LiveFill, _to_row_fill(fill))
+            for position in snapshot.positions:
+                await _upsert(self._session, LivePosition, _to_row_position(position))
+            await self._session.flush()
 
     async def load_snapshot(self) -> LiveStateSnapshot:
-        intents = (await self._session.execute(select(LiveIntent))).scalars().all()
-        orders = (await self._session.execute(select(LiveOrder))).scalars().all()
-        fills = (await self._session.execute(select(LiveFill))).scalars().all()
-        positions = (await self._session.execute(select(LivePosition))).scalars().all()
-        return LiveStateSnapshot(
-            intents=[_to_domain_intent(row) for row in intents],
-            orders=[_to_domain_order(row) for row in orders],
-            fills=[_to_domain_fill(row) for row in fills],
-            positions=[_to_domain_position(row) for row in positions],
-        )
+        async with self._session_guard():
+            intents = (await self._session.execute(select(LiveIntent))).scalars().all()
+            orders = (await self._session.execute(select(LiveOrder))).scalars().all()
+            fills = (await self._session.execute(select(LiveFill))).scalars().all()
+            positions = (await self._session.execute(select(LivePosition))).scalars().all()
+            return LiveStateSnapshot(
+                intents=[_to_domain_intent(row) for row in intents],
+                orders=[_to_domain_order(row) for row in orders],
+                fills=[_to_domain_fill(row) for row in fills],
+                positions=[_to_domain_position(row) for row in positions],
+            )

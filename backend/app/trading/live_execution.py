@@ -9,6 +9,7 @@ refused so unsafe new execution cannot resume.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
 
@@ -409,7 +410,13 @@ async def build_live_service() -> LiveExecutionService:
 
     broker = TInvestAdapter()
     session = SessionLocal()
-    store = SqlAlchemyLiveStateStore(session)
+    # B2 (review round 1): the long-lived live AsyncSession is shared by the
+    # stream, the scheduler passes and the lifecycle/API paths. An AsyncSession
+    # is not safe for concurrent use (the reviewer reproduced overlapping
+    # operations raising ResourceClosedError), so every owner serializes access
+    # through this single lock.
+    session_lock = asyncio.Lock()
+    store = SqlAlchemyLiveStateStore(session, lock=session_lock)
     order_manager = OrderManager(broker)
     position_manager = order_manager.positions()
     risk_manager = RiskManager(
@@ -420,15 +427,22 @@ async def build_live_service() -> LiveExecutionService:
         broker, None, order_manager, position_manager, risk_manager
     )
     strategy_engine = compose_strategy_engine()
-    bot_repository = BotRepository(session)
+    bot_repository = BotRepository(session, lock=session_lock)
     market_data = MarketDataService(broker)
+
+    async def _session_get(model, key):
+        """B2: serialize direct ORM reads on the shared live session."""
+        async with session_lock:
+            return await session.get(model, key)
 
     async def _submit_cb(intent: ExecutionIntent) -> InternalOrder:
         return await trading_engine.submit_intent(intent)
 
     def _make_runtime(bot_id: int, state: BotState = BotState.STOPPED) -> BotRuntime:
         async def _load_strategy() -> BotStrategy:
-            return await load_bot_strategy_by_id(session, bot_id)
+            # B2: the shared live session is serialized (see session_lock).
+            async with session_lock:
+                return await load_bot_strategy_by_id(session, bot_id)
 
         async def _make_market_context(bot_strategy: BotStrategy) -> MarketContext:
             # MVP-6.10: the live MarketContext for this bot's strategy cycle is
@@ -441,7 +455,7 @@ async def build_live_service() -> LiveExecutionService:
             bot = await bot_repository.get(bot_id)
             if bot is None:
                 raise StrategyLoadError(f"bot {bot_id} not found")
-            instrument = await session.get(Instrument, bot.instrument_id)
+            instrument = await _session_get(Instrument, bot.instrument_id)
             if instrument is None:
                 raise StrategyLoadError(
                     f"bot {bot_id} references missing instrument "
@@ -460,13 +474,13 @@ async def build_live_service() -> LiveExecutionService:
             bot = await bot_repository.get(bot_id)
             if bot is None:
                 raise StrategyLoadError(f"bot {bot_id} not found")
-            instrument = await session.get(Instrument, bot.instrument_id)
+            instrument = await _session_get(Instrument, bot.instrument_id)
             if instrument is None:
                 raise StrategyLoadError(
                     f"bot {bot_id} references missing instrument "
                     f"{bot.instrument_id}"
                 )
-            account = await session.get(Account, bot.account_id)
+            account = await _session_get(Account, bot.account_id)
 
             def _intent_factory(
                 plan: Plan, context: MarketContext
@@ -554,7 +568,7 @@ async def build_live_service() -> LiveExecutionService:
     # every deal failure is surfaced to the bot lifecycle via the callback
     # above (bot ERROR, persisted) and stays observable via last_error_for.
     deal_manager = DealManager(
-        SqlAlchemyDealStore(session),
+        SqlAlchemyDealStore(session, lock=session_lock),
         order_manager,
         risk_manager,
         on_bot_error=_persist_bot_error,
@@ -586,7 +600,7 @@ async def build_live_service() -> LiveExecutionService:
         bot = await bot_repository.get(runtime.bot_id)
         if bot is None:
             raise StrategyLoadError(f"bot {runtime.bot_id} not found")
-        instrument = await session.get(Instrument, bot.instrument_id)
+        instrument = await _session_get(Instrument, bot.instrument_id)
         if instrument is None:
             raise StrategyLoadError(
                 f"bot {runtime.bot_id} references missing instrument "
