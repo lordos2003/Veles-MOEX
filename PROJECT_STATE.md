@@ -17,7 +17,13 @@
 
 ## Current task
 
-No task is open. Next candidate: **live cycle scheduler** — who triggers `BotRuntime.execute_strategy` per bot and when (per-bot timeframe; Veles "at bar close" / "once per minute" calculation methods). Other follow-ups: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode; recovery TP churn; the misleading `FILLED -> UNKNOWN` error on cancelling an already executed TP.
+### MVP-6.13 — Live Cycle Scheduler
+**Status: OPEN — assigned to Кодер.**
+
+- Control task: `.agent/TASK-MVP-6.13-LIVE-CYCLE-SCHEDULER.md`
+- Implementation branch: `agent/review/mvp-6.13` (from `master` @ `eb08fbf`)
+- Contracts S1–S5 approved by the project owner 2026-09-30: one cycle per tick per RUNNING bot via `execute_strategy`, started only after a SAFE recovery; `AT_BAR_CLOSE` at boundary +5 s with closed-bar confirmation (retry 5 s, max 60 s); `PER_MINUTE` every minute; broker trading-status gate (`GetTradingStatus`, no hard-coded MOEX schedule); transient failures skipped, 3 in a row → bot ERROR, non-transient → ERROR immediately.
+- Other follow-ups: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode; recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error.
 
 ## Current accepted MVP
 
