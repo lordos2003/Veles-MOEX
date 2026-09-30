@@ -18,10 +18,11 @@
 ## Current task
 
 ### MVP-6.13 — Live Cycle Scheduler
-**Status: OPEN — assigned to Кодер.**
+**Status: IN REVIEW — implementation pushed (`0c12cf1`), awaiting independent review.**
 
 - Control task: `.agent/TASK-MVP-6.13-LIVE-CYCLE-SCHEDULER.md`
 - Implementation branch: `agent/review/mvp-6.13` (from `master` @ `eb08fbf`)
+- Implementation HEAD: `0c12cf1` (pushed, in sync with origin); report: `.agent/REPORT-MVP-6.13.md`
 - Contracts S1–S5 approved by the project owner 2026-09-30: one cycle per tick per RUNNING bot via `execute_strategy`, started only after a SAFE recovery; `AT_BAR_CLOSE` at boundary +5 s with closed-bar confirmation (retry 5 s, max 60 s); `PER_MINUTE` every minute; broker trading-status gate (`GetTradingStatus`, no hard-coded MOEX schedule); transient failures skipped, 3 in a row → bot ERROR, non-transient → ERROR immediately.
 - Other follow-ups: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode; recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error.
 
@@ -38,7 +39,7 @@
 - Deal failures move the bot to ERROR (persisted; `deal_error` in `GET /api/bots/{id}`); an OPEN position without an owning Deal errors the bot.
 - Validation (independent, clean env): `pytest 450 passed, 1 skipped`; `ruff` clean; alembic head `0005_deal_continuation`.
 
-Known boundaries: no live cycle scheduler; only Simple TP; position state per FIGI (one bot per instrument); Backtest sizing differs from the Live deposit contract.
+Known boundaries: no live cycle scheduler (superseded by MVP-6.13, in review); only Simple TP; position state per FIGI (one bot per instrument); Backtest sizing differs from the Live deposit contract.
 
 
 ### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
