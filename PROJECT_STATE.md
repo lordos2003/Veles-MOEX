@@ -17,10 +17,13 @@
 
 ## Current task
 
-No task is open. Next candidates (to be specified on `agent/control` before assignment):
-- live cycle scheduler (who triggers `BotRuntime.execute_strategy`, per-bot timeframe, "at bar close" / "once per minute" Veles methods);
-- deal continuation across cycles (persisted grid state, averaging after entry with the deposit captured at entry, C3 on every level, TP from the average entry price);
-- clean-up: unreachable duplicate in `make_deposit_provider()` (`live_execution.py`).
+### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)
+**Status: OPEN — assigned to OpenCode.**
+
+- Control task: `.agent/TASK-MVP-6.12-DEAL-CONTINUATION.md`
+- Implementation branch: `agent/review/mvp-6.12` (from `master` @ `59a3897`)
+- Contracts D1–D6 approved by the project owner 2026-09-30: supported live configuration only (SIMPLE/CUSTOM + Simple TP, others rejected at START); event-driven deal lifecycle; tick rounding in the safe direction; TP from the average price, re-armed on every grid fill; durable Deal + recovery; the live cycle no longer produces exits.
+- Next after 6.12: live cycle scheduler; Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode.
 
 ## Current accepted MVP
 
