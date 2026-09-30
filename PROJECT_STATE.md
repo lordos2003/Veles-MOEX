@@ -18,14 +18,16 @@
 ## Current task
 
 ### MVP-6.13 — Live Cycle Scheduler
-**Status: IN REVIEW — round 1 REJECTED (B1: bars closing outside the session never trade → new contract S6, deferred tick; B2: concurrent passes share one AsyncSession, failing on PostgreSQL; B3: failure counter survives restart). Correction round 1 assigned to Кодер.**
+**Status: IN REVIEW — round-2 decision awaited (round 1 REJECTED: B1 — bars closing outside the session never trade → new owner contract S6, deferred tick; B2 — concurrent passes share one AsyncSession, failing on PostgreSQL; B3 — failure counter survives restart; correction round 1 pushed 2026-10-01).**
 
 - Review: `.agent/REVIEW-MVP-6.13.md`
 
 - Control task: `.agent/TASK-MVP-6.13-LIVE-CYCLE-SCHEDULER.md`
 - Implementation branch: `agent/review/mvp-6.13` (from `master` @ `eb08fbf`)
-- Implementation HEAD: `0c12cf1` (pushed, in sync with origin); report: `.agent/REPORT-MVP-6.13.md`
+- Implementation HEAD: `a945b10` (correction round 1, pushed, in sync with origin); reports: `.agent/REPORT-MVP-6.13.md`, `.agent/REPORT-MVP-6.13-REV1.md`
 - Contracts S1–S5 approved by the project owner 2026-09-30: one cycle per tick per RUNNING bot via `execute_strategy`, started only after a SAFE recovery; `AT_BAR_CLOSE` at boundary +5 s with closed-bar confirmation (retry 5 s, max 60 s); `PER_MINUTE` every minute; broker trading-status gate (`GetTradingStatus`, no hard-coded MOEX schedule); transient failures skipped, 3 in a row → bot ERROR, non-transient → ERROR immediately.
+- Contract **S6** (owner decision 2026-09-30, round-1 review): an `AT_BAR_CLOSE` tick that falls while the instrument is not tradable is **deferred** — runs once at the next tradable moment on the closed bar of the deferred boundary; only the latest pending boundary is kept; deferral is not a failure.
+- Round-1 corrections (2026-10-01): B1 range confirmation (no exact-equality candle-stamp check), B2 shared live-session serialization behind one `asyncio.Lock` (MVP-6.11 B2 fresh-read kept), B3 per-bot scheduler-state reset on a bot state change (keeps `last_done_boundary`); review observation 1 implemented (`DealError` not double-handled).
 - Other follow-ups: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode; recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error.
 
 ## Current accepted MVP
