@@ -16,7 +16,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_bot_repository, get_bot_runtime_manager, get_live_deal_manager
+from app.api.deps import (
+    get_bot_repository,
+    get_bot_runtime_manager,
+    get_live_deal_manager,
+    get_live_scheduler,
+)
 from app.bots.repository import BotRepository
 from app.bots.schemas import BotDepositUpdate, BotResponse
 from app.bots.strategy import StrategyLoadError
@@ -24,6 +29,7 @@ from app.models.bot import Bot
 from app.trading.bot_lifecycle import BotRuntimeManager, BotStartRejected, BotStateError
 from app.trading.deal import DealConfigUnsupported
 from app.trading.deal_manager import DealManager
+from app.trading.scheduler import LiveCycleScheduler
 
 router = APIRouter(tags=["bots"])
 
@@ -33,7 +39,11 @@ _RUNTIME_UNAVAILABLE = (
 )
 
 
-def _to_response(bot: Bot, deal_error: str | None = None) -> BotResponse:
+def _to_response(
+    bot: Bot,
+    deal_error: str | None = None,
+    last_error: str | None = None,
+) -> BotResponse:
     return BotResponse(
         id=bot.id,
         name=bot.name,
@@ -45,6 +55,7 @@ def _to_response(bot: Bot, deal_error: str | None = None) -> BotResponse:
         started_at=bot.started_at,
         stopped_at=bot.stopped_at,
         deal_error=deal_error,
+        last_error=last_error,
     )
 
 
@@ -132,6 +143,7 @@ async def get_bot(
     bot_id: int,
     repo: Annotated[BotRepository, Depends(get_bot_repository)],
     deal_manager: Annotated[DealManager | None, Depends(get_live_deal_manager)] = None,
+    scheduler: Annotated[LiveCycleScheduler | None, Depends(get_live_scheduler)] = None,
 ) -> BotResponse:
     bot = await _load_bot(bot_id, repo)
     # B2: surface the last Deal-layer failure (if any) as a read-only field —
@@ -140,7 +152,12 @@ async def get_bot(
     deal_error = (
         deal_manager.last_error_for(bot_id) if deal_manager is not None else None
     )
-    return _to_response(bot, deal_error=deal_error)
+    # MVP-6.13 S4: the scheduler records the last cycle failure reason (skipped
+    # transients, timeout, or the terminal error that moved the bot to ERROR).
+    last_error = (
+        scheduler.last_error_for(bot_id) if scheduler is not None else None
+    )
+    return _to_response(bot, deal_error=deal_error, last_error=last_error)
 
 
 @router.patch("/bots/{bot_id}", response_model=BotResponse)

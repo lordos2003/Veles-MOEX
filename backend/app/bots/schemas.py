@@ -22,6 +22,11 @@ class BotResponse(BaseModel):
     # B2 (MVP-6.12 correction round 1): the last Deal-layer failure reason for
     # this bot (None when no deal failure has been recorded). Read-only.
     deal_error: str | None = None
+    # MVP-6.13 S4: the last live-cycle failure reason recorded by the cycle
+    # scheduler (None when the scheduler has not recorded one). Read-only and
+    # generic (transient-skip reason or the terminal error that moved the bot
+    # to ERROR); distinct from the deal-specific `deal_error` above.
+    last_error: str | None = None
 
 
 class BotDepositUpdate(BaseModel):

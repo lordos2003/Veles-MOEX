@@ -25,10 +25,12 @@ async def lifespan(app: FastAPI):
 
     Live execution is only allowed to resume after a SAFE reconciliation. When
     recovery is blocked the service stays disabled (no new live orders). The
-    OrderStateStream live runtime is started only after a SAFE startup recovery.
+    OrderStateStream live runtime and the live cycle scheduler (MVP-6.13) are
+    started only after a SAFE startup recovery, next to each other.
     """
     service = None
     stream_task = None
+    scheduler_task = None
     if get_settings().live_trading_enabled:
         from app.trading.live_execution import build_live_service
 
@@ -38,16 +40,26 @@ async def lifespan(app: FastAPI):
             app.state.live_execution = service
             if result.safe:
                 stream_task = asyncio.create_task(service.run_stream_forever())
+                scheduler_task = asyncio.create_task(service.run_scheduler_forever())
             else:
                 logger.warning("live execution blocked at startup: %s", result.reason)
         except Exception as exc:  # noqa: BLE001 - startup must not crash the API
             logger.exception("live execution recovery failed; live trading disabled: %s", exc)
             service = None
             stream_task = None
+            scheduler_task = None
     try:
         yield
     finally:
         if service is not None:
+            # Stop the cycle scheduler first: it runs per-bot tasks that use
+            # the same DB session the stream shutdown below closes.
+            if scheduler_task is not None:
+                scheduler_task.cancel()
+                try:
+                    await scheduler_task
+                except asyncio.CancelledError:
+                    pass
             if stream_task is not None:
                 await service.shutdown()
                 try:

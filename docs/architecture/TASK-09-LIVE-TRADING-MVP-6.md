@@ -1452,3 +1452,126 @@ Run from `backend/` with the project venv:
 - `./.venv/Scripts/python.exe -m pytest -q` — full backend suite.
 - `ruff check app tests scripts` (from `backend/`), `alembic heads` (single
   head, `0005`), `npm run build` (frontend unchanged, stays green).
+
+## 31. Live cycle scheduler — MVP-6.13
+
+This section records MVP-6.13 (approved contracts S1–S5, 2026-09-30, GitHub
+Issue #9): **when** a RUNNING bot's strategy cycle runs is decided by a new
+broker-neutral `LiveCycleScheduler` (`app/trading/scheduler.py`); it never
+changes *what* runs. The scheduler calls the existing
+`BotRuntime.execute_strategy(MarketContext)` once per tick with a
+broker-neutral context built from the raw market snapshot (MVP-6.10
+`market_snapshot_to_context`), and the MVP-6.11/6.12 gates (risk, deposit,
+deal) stay authoritative.
+
+### S1. Scheduler runtime and correctness guards
+
+- The scheduler is started by the application lifespan **only after a SAFE
+  startup recovery**, next to the stream task, and is stopped on shutdown
+  (`app/main.py`). Per-bot pass tasks use the same long-lived DB session, so
+  the scheduler is cancelled before the stream shutdown closes the session.
+- One strategy cycle per tick per bot; each bot's pass runs in its own
+  asyncio task, so a slow or failing bot never delays another.
+- At most one cycle per bot at a time: a tick that arrives while the
+  previous pass is still in flight is **skipped** (no catch-up of missed
+  ticks). The in-flight marker is a per-bot id set claimed synchronously in
+  `advance()` (the per-bot ticker is created inside the pass task, so it
+  cannot carry the marker itself).
+- Only `RUNNING` bots are ticked (STOPPED / ERROR / EMERGENCY_STOP are
+  skipped).
+- The scheduler never ticks while the safety gate is closed
+  (`safety_gate=service.can_execute`); `LiveExecutionService.run_scheduler_forever()`
+  raises `LiveExecutionBlocked` before a SAFE recovery or when no scheduler
+  is wired.
+
+### S2. Tick timing by calculation method
+
+- `AT_BAR_CLOSE`: one tick per bar of the bot's configured timeframe, due at
+  the UTC bar boundary + `bar_close_delay_seconds` (default 5). The
+  just-closed bar must be present in the raw `MarketSnapshot` with
+  `is_complete is True` — a `None` completeness counts as **not confirmed**
+  (the `market_snapshot_to_context` None→True mapping must not be used for
+  confirmation). Unconfirmed ticks are retried every
+  `bar_close_retry_seconds` (default 5) up to `bar_close_max_wait_seconds`
+  (default 60) after the boundary, then skipped and counted as one transient
+  failure (S4).
+- `PER_MINUTE`: one tick at each UTC minute boundary; the forming bar is
+  used as-is (`FilterEvaluator` semantics unchanged).
+- Ops parameters (settings, non-financial): `scheduler_bar_close_delay_seconds=5`,
+  `scheduler_bar_close_retry_seconds=5`,
+  `scheduler_bar_close_max_wait_seconds=60`,
+  `scheduler_max_consecutive_failures=3`.
+
+### S3. Trading-session gate (no hard-coded schedule)
+
+- Before every tick the scheduler asks the broker via the new abstract
+  `BrokerAdapter.get_trading_status(figi)`.
+- `TRADING_UNAVAILABLE` → the tick is skipped and **not** counted as a
+  failure; the boundary is concluded (weekend / market-closed safe).
+- A failed or unknown status → skip + count one transient failure (S4).
+- T-Invest implementation: `MarketDataService/GetTradingStatus`, mapped
+  inside `TInvestAdapter`; only `SECURITY_TRADING_STATUS_NORMAL_TRADING`
+  with `api_trade_available_flag == true` is tradable, every other
+  documented exchange state maps to `TRADING_UNAVAILABLE`, and `UNSPECIFIED`
+  or an unrecognized value raises `BrokerApiError` (unknown must never be
+  silently "not tradable"). No exchange session schedule is hard-coded.
+- The backtest broker returns `TRADING_AVAILABLE` (no session concept).
+
+### S4. Failure policy
+
+- Transient failures — `MarketDataUnavailable`, broker transport errors
+  (the broker-neutral `BrokerTransportError` marker: `BrokerConnectionError`,
+  `RateLimitError`, `BrokerApiError`), network timeouts, a closed bar not
+  confirmed within max wait, an unknown trading status — are counted per bot
+  in memory; after `scheduler_max_consecutive_failures` (default 3)
+  consecutive ones the bot goes to ERROR (production callback:
+  `BotRuntime.fail` + `BotRepository` ERROR; without a callback the
+  scheduler falls back to `BotRuntime.fail`).
+- Non-transient failures (`TimeframeNotConfigured`, `LookbackNotConfigured`,
+  `SizingNotConfigured`/`SizingError`, `DealConfigUnsupported`,
+  `RiskRejected`, `BotStateError`, unexpected exceptions) fail the bot
+  immediately.
+- A successful cycle resets the counter; S3 UNAVAILABLE skips do not count.
+- Observability: a generic read-only `last_error` field was added to
+  `GET /api/bots/{id}` (`BotResponse.last_error`, fed by
+  `LiveCycleScheduler.last_error_for`) — distinct from the deal-specific
+  `deal_error` (B2). It is absent when the live service is not running.
+
+### S5. Correctness ("what runs" is unchanged)
+
+- The scheduler decides only *when* a cycle runs and never touches
+  entry/grid/TP/Deal/Risk semantics; the MVP-6.11/6.12 gates remain
+  authoritative.
+- Clock and sleeps are injectable (`Clock` protocol, `SystemClock`
+  production); tests never sleep real time.
+- Broker neutrality: `app/trading` facing code imports only
+  `app.brokers.base` (and the `BrokerTransportError` marker), never
+  `app.brokers.tinvest*`; T-Invest types stay inside the adapter
+  (`build_live_service` is the documented composition exception).
+
+### Known limitations (documented, not changed)
+
+- `market_snapshot_to_context()` maps `is_complete is None → True`; S2
+  confirmation deliberately reads the raw `MarketSnapshot` instead, so the
+  confirmation rule and the context mapping can disagree on a `None`
+  completeness without a warning.
+- WEEK_1 / MONTH_1 tick boundaries are calendar-aligned (ISO Monday 00:00
+  UTC / the 1st of the month 00:00 UTC); MIN_1..DAY_1 are fixed UTC
+  intervals from the epoch (T-Invest interval convention).
+- On scheduler start, a bar whose confirmation window has already expired is
+  skipped and counted as one transient: the scheduler cannot know whether
+  that tick ran before the restart.
+
+### Tests (validation commands)
+
+- `./.venv/Scripts/python.exe -m pytest tests/test_mvp613_scheduler.py -q`
+  — S1–S5 coverage (tick at boundary+5 / exactly once per bar, retry every
+  5s until confirmed, skip+count at max wait, `is_complete=None` not
+  confirmed, PER_MINUTE once per minute, not-tradable skip without count,
+  unknown/failed status counted, 3 consecutive transients → ERROR, reset on
+  success, non-transient immediate ERROR, overlap skip / no parallel cycles,
+  slow and failing bot isolation, only RUNNING ticked, gate closed / not
+  SAFE start, T-Invest `GetTradingStatus` mapping, backtest no-session).
+- `./.venv/Scripts/python.exe -m pytest -q` — full backend suite.
+- `ruff check app tests scripts` (from `backend/`), `alembic heads` (single
+  head), `npm run build` (frontend unchanged, stays green).

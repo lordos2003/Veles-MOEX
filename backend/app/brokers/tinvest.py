@@ -28,6 +28,7 @@ from app.brokers.tinvest_client import TInvestClient
 from app.brokers.tinvest_errors import (
     AccountNotFoundError,
     AuthenticationError,
+    BrokerApiError,
     InstrumentNotFoundError,
     InvalidRequestError,
     ResourceNotFoundError,
@@ -160,6 +161,68 @@ def _map_instrument_type(value: str | None) -> InstrumentType | None:
 
 def _map_trading_status(api_available: bool) -> TradingStatus:
     return TradingStatus.TRADING_AVAILABLE if api_available else TradingStatus.TRADING_UNAVAILABLE
+
+
+# GetTradingStatus response ``trading_status`` (SecurityTradingStatus) values.
+# The REST layer may serialize the enum either as a name (proto3 JSON) or as a
+# raw number; both forms are normalized before mapping.
+_SECURITY_STATUS_BY_NUMBER = {
+    0: "SECURITY_TRADING_STATUS_UNSPECIFIED",
+    1: "SECURITY_TRADING_STATUS_NOT_AVAILABLE_FOR_TRADING",
+    2: "SECURITY_TRADING_STATUS_OPENING_PERIOD",
+    3: "SECURITY_TRADING_STATUS_CLOSING_PERIOD",
+    4: "SECURITY_TRADING_STATUS_BREAK_IN_TRADING",
+    5: "SECURITY_TRADING_STATUS_NORMAL_TRADING",
+    6: "SECURITY_TRADING_STATUS_CLOSING_AUCTION",
+    7: "SECURITY_TRADING_STATUS_DARK_POOL_AUCTION",
+    8: "SECURITY_TRADING_STATUS_DISCRETE_AUCTION",
+    9: "SECURITY_TRADING_STATUS_OPENING_AUCTION_PERIOD",
+    10: "SECURITY_TRADING_STATUS_TRADING_AT_CLOSING_AUCTION_PRICE",
+    11: "SECURITY_TRADING_STATUS_SESSION_ASSIGNED",
+    12: "SECURITY_TRADING_STATUS_SESSION_CLOSE",
+    13: "SECURITY_TRADING_STATUS_SESSION_OPEN",
+    14: "SECURITY_TRADING_STATUS_DEALER_NORMAL_TRADING",
+    15: "SECURITY_TRADING_STATUS_DEALER_BREAK_IN_TRADING",
+    16: "SECURITY_TRADING_STATUS_DEALER_NOT_AVAILABLE_FOR_TRADING",
+}
+
+
+def _normalize_security_status(value: object) -> str:
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, int):
+        return _SECURITY_STATUS_BY_NUMBER.get(value, f"UNKNOWN_{value}")
+    return "UNKNOWN"
+
+
+# Every *documented* status that GetTradingStatus may return. UNSPECIFIED is
+# deliberately excluded: it is not a trading state and must raise (an unknown
+# value must never be silently treated as "not tradable").
+_SECURITY_STATUS_NAMES = frozenset(
+    name
+    for name in _SECURITY_STATUS_BY_NUMBER.values()
+    if name != "SECURITY_TRADING_STATUS_UNSPECIFIED"
+)
+
+
+def _map_security_trading_status(raw_status: object, api_available: object) -> TradingStatus:
+    """Map a GetTradingStatus response to the domain TradingStatus (MVP-6.13 S3).
+
+    Only NORMAL_TRADING with API trading enabled is tradable. Every other
+    documented exchange state (opening/closing periods, breaks, auctions,
+    closed/non-trading sessions, dealer-only states) maps to
+    ``TRADING_UNAVAILABLE``: the tick is skipped and *not* counted as a failure.
+    ``UNSPECIFIED`` or any unrecognized value raises |BrokerApiError| — an
+    unknown state must not be silently treated as "not tradable" (the scheduler
+    counts it as a transient failure instead). ``api_trade_available_flag``
+    missing/False keeps only the explicit-flag case available.
+    """
+    name = _normalize_security_status(raw_status)
+    if name not in _SECURITY_STATUS_NAMES:
+        raise BrokerApiError(f"unexpected trading status from broker: {raw_status!r}")
+    if name == "SECURITY_TRADING_STATUS_NORMAL_TRADING" and api_available is True:
+        return TradingStatus.TRADING_AVAILABLE
+    return TradingStatus.TRADING_UNAVAILABLE
 
 
 def _map_order_status(value: str | None) -> OrderStatus:
@@ -335,6 +398,20 @@ class TInvestAdapter(BrokerAdapter):
         data = await client.call(f"{_MARKET}/GetCandles", body)
         raw_candles = data.get("candles", [])
         return [self._to_candle(item, figi, timeframe) for item in raw_candles]
+
+    async def get_trading_status(self, figi: str) -> TradingStatus:
+        """S3: ask the broker whether the instrument is tradable right now.
+
+        Uses the official ``MarketDataService/GetTradingStatus``; the mapping
+        (including the "unknown vs. not tradable" distinction) stays inside the
+        adapter. No hard-coded exchange session schedule.
+        """
+        client = self._require_client()
+        data = await client.call(f"{_MARKET}/GetTradingStatus", {"instrumentId": figi})
+        return _map_security_trading_status(
+            data.get("trading_status"),
+            data.get("api_trade_available_flag"),
+        )
 
     async def get_open_positions(self, account_id: str | None = None) -> list[BrokerPosition]:
         client = self._require_client()

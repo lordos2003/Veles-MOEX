@@ -15,6 +15,7 @@ from app.services.instruments import InstrumentService
 from app.services.market_data import MarketDataService
 from app.trading.bot_lifecycle import BotRuntimeManager
 from app.trading.deal_manager import DealManager
+from app.trading.scheduler import LiveCycleScheduler
 
 
 def get_broker_adapter() -> BrokerAdapter:
@@ -78,4 +79,18 @@ def get_live_deal_manager(request: Request) -> DealManager | None:
     service = getattr(request.app.state, "live_execution", None)
     if service is not None:
         return service.deal_manager
+    return None
+
+
+def get_live_scheduler(request: Request) -> LiveCycleScheduler | None:
+    """Return the application LiveCycleScheduler, or ``None`` when unavailable.
+
+    Read-only (MVP-6.13 S4): the per-bot last cycle failure is exposed through
+    ``last_error_for`` so ``GET /bots/{id}`` can surface it. No fallback
+    scheduler is created; when the live execution service is not running the
+    field is simply absent.
+    """
+    service = getattr(request.app.state, "live_execution", None)
+    if service is not None:
+        return service.scheduler
     return None

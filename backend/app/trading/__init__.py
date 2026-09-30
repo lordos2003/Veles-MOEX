@@ -68,6 +68,12 @@ from app.trading.repository import (
     InMemoryPositionRepository,
 )
 from app.trading.risk_manager import RiskLimits, RiskManager, RiskRejected
+from app.trading.scheduler import (
+    Clock,
+    LiveCycleScheduler,
+    SchedulerSettings,
+    SystemClock,
+)
 from app.trading.sizing import (
     CurrencyUnavailable,
     CustomDepositExceeded,
@@ -88,6 +94,7 @@ __all__ = [
     "BotRuntimeManager",
     "BotStateError",
     "BotStartRejected",
+    "Clock",
     "CurrencyUnavailable",
     "CustomDepositExceeded",
     "Deal",
@@ -114,6 +121,7 @@ __all__ = [
     "InvalidPositionQuantity",
     "LiveExecutionBlocked",
     "LiveExecutionService",
+    "LiveCycleScheduler",
     "LivePositionState",
     "LiveRecoveryCoordinator",
     "LiveStateSnapshot",
@@ -139,6 +147,8 @@ __all__ = [
     "SizingBelowLot",
     "SizingError",
     "SizingNotConfigured",
+    "SchedulerSettings",
+    "SystemClock",
     "TimeframeNotConfigured",
     "TradeFill",
     "TradingEngine",

@@ -1,0 +1,825 @@
+"""MVP-6.13 Live Cycle Scheduler tests.
+
+Focused on the new scheduler boundary (contracts S1-S5 of TASK-MVP-6.13):
+tick timing by calculation method (AT_BAR_CLOSE / PER_MINUTE), the
+trading-session gate (S3), the failure policy (S4) and the correctness guards
+(S1). Deterministic and broker-neutral: a fake Clock (no real sleeps), duck-typed
+bot runtimes and broker/snapshot fakes. The T-Invest status mapping is tested
+against the fake client at the end (adapter boundary, not the scheduler).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
+import pytest
+
+from app.backtest.broker import BacktestBroker
+from app.brokers.tinvest import TInvestAdapter
+from app.brokers.tinvest_errors import BrokerApiError, MarketDataError
+from app.domain.instrument import TradingStatus
+from app.domain.marketdata import (
+    Candle,
+    MarketDataUnavailable,
+    MarketSnapshot,
+    Timeframe,
+)
+from app.models.enums import BotState
+from app.strategies.config import (
+    DCAGridConfig,
+    Direction,
+    EntryConfig,
+    ExitConfig,
+    FixedPercentageTP,
+    StrategyConfig,
+)
+from app.strategies.filters import CalculationMethod
+from app.trading import (
+    BotRuntimeManager,
+    LiveCycleScheduler,
+    RiskManager,
+    SchedulerSettings,
+)
+from app.trading.live_execution import LiveExecutionBlocked, LiveExecutionService
+from tests.fakes import TInvestFakeClient
+
+# --- fixtures / fakes ----------------------------------------------------------
+
+T0 = datetime(2026, 5, 1, 9, 30, tzinfo=UTC)  # an M5 UTC boundary (bar close)
+FIGI = "BBG004730N88"
+TF = Timeframe.MIN_5
+STATUS_PATH = (
+    "tinkoff.public.invest.api.contract.v1.MarketDataService/GetTradingStatus"
+)
+
+
+class FakeClock:
+    """Injectable clock: tests set the current time explicitly."""
+
+    def __init__(self, start: datetime) -> None:
+        self._now = start
+        self.sleeps: list[float] = []
+
+    def now(self) -> datetime:
+        return self._now
+
+    def set(self, dt: datetime) -> None:
+        self._now = dt
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self._now += timedelta(seconds=seconds)
+        # Yield once so an outer producer/consumer (e.g. task cancellation)
+        # can interleave; this fake never sleeps real time (S5).
+        await asyncio.sleep(0)
+
+
+class FakeTradingStatusBroker:
+    """Returns a fixed status, or raises a fixed error, per request."""
+
+    def __init__(
+        self,
+        status: TradingStatus = TradingStatus.TRADING_AVAILABLE,
+        error: Exception | None = None,
+    ) -> None:
+        self._status = status
+        self._error = error
+        self.calls: list[str] = []
+
+    async def get_trading_status(self, figi: str) -> TradingStatus:
+        self.calls.append(figi)
+        if self._error is not None:
+            raise self._error
+        return self._status
+
+
+class ProgrammedTradingStatusBroker:
+    """Replays a scripted sequence of statuses/errors (last step repeats)."""
+
+    def __init__(self, *steps: object) -> None:
+        self._steps = list(steps)
+        self.calls: list[str] = []
+
+    async def get_trading_status(self, figi: str) -> TradingStatus:
+        self.calls.append(figi)
+        step = self._steps[0]
+        if len(self._steps) > 1:
+            self._steps.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+
+class FakeStrategy:
+    def __init__(self, config: StrategyConfig) -> None:
+        self.config = config
+
+
+class FakeRuntime:
+    """Duck-typed BotRuntime: records executions/failures, can block."""
+
+    def __init__(
+        self,
+        bot_id: int,
+        strategy: FakeStrategy,
+        state: BotState = BotState.RUNNING,
+    ) -> None:
+        self.bot_id = bot_id
+        self._strategy = strategy
+        self._state = state
+        self.executions: list[object] = []
+        self.execute_starts = 0
+        self.fail_reasons: list[str] = []
+        self.started_event: asyncio.Event | None = None
+        self.execute_gate: asyncio.Event | None = None
+
+    @property
+    def running(self) -> bool:
+        return self._state is BotState.RUNNING
+
+    @property
+    def state(self) -> BotState:
+        return self._state
+
+    @property
+    def strategy(self) -> FakeStrategy:
+        return self._strategy
+
+    def set_state(self, state: BotState) -> None:
+        self._state = state
+
+    def fail(self, reason: str) -> None:
+        self.fail_reasons.append(reason)
+        self._state = BotState.ERROR
+
+    async def execute_strategy(self, context=None):
+        self.execute_starts += 1
+        if self.started_event is not None:
+            self.started_event.set()
+        if self.execute_gate is not None:
+            await self.execute_gate.wait()
+        self.executions.append(context)
+
+
+class FakeSnapshotProvider:
+    """Returns the current snapshot; tests mutate fields to script the flow."""
+
+    def __init__(self, snapshot: MarketSnapshot | None = None) -> None:
+        self.snapshot = snapshot if snapshot is not None else _single_candle_snapshot()
+        self.requests: list[tuple[str, StrategyConfig]] = []
+        self.unconfirmed_attempts = 0
+        self.error: Exception | None = None
+
+    async def __call__(self, figi: str, config: StrategyConfig) -> MarketSnapshot:
+        self.requests.append((figi, config))
+        if self.error is not None:
+            raise self.error
+        if self.unconfirmed_attempts > 0:
+            self.unconfirmed_attempts -= 1
+            return _single_candle_snapshot(None)
+        return self.snapshot
+
+
+def _strategy(
+    method: CalculationMethod = CalculationMethod.AT_BAR_CLOSE,
+    timeframe: Timeframe | None = TF,
+    lookback_bars: int | None = 5,
+) -> StrategyConfig:
+    return StrategyConfig(
+        direction=Direction.LONG,
+        timeframe=timeframe,
+        lookback_bars=lookback_bars,
+        entry=EntryConfig(method=method),
+        exit=ExitConfig(take_profit=FixedPercentageTP(percent=10.0)),
+        dca_grid=DCAGridConfig(levels=1),
+    )
+
+
+def _single_candle_snapshot(
+    start: datetime | None = None,
+    complete: bool | None = True,
+) -> MarketSnapshot:
+    """Snapshot whose single candle starts at ``start`` (None = no candle)."""
+    candles: tuple[Candle, ...] = ()
+    if start is not None:
+        candles = (
+            Candle(
+                figi=FIGI,
+                timeframe=TF,
+                timestamp=start,
+                open=Decimal(100),
+                high=Decimal(101),
+                low=Decimal(99),
+                close=Decimal("100.5"),
+                volume=1000,
+                is_complete=complete,
+            ),
+        )
+    return MarketSnapshot(
+        figi=FIGI,
+        timeframe=TF,
+        timestamp=T0,
+        last_price=Decimal("100.5"),
+        candles=candles,
+    )
+
+
+def _session_snapshot(first_start: datetime, count: int) -> MarketSnapshot:
+    """Candles on consecutive M5 boundaries (covers multi-bar tests)."""
+    candles = tuple(
+        Candle(
+            figi=FIGI,
+            timeframe=TF,
+            timestamp=first_start + timedelta(seconds=300 * i),
+            open=Decimal(100) + i,
+            high=Decimal(101) + i,
+            low=Decimal(99) + i,
+            close=Decimal("100.5") + i,
+            volume=1000,
+            is_complete=True,
+        )
+        for i in range(count)
+    )
+    return MarketSnapshot(
+        figi=FIGI, timeframe=TF, timestamp=T0, last_price=Decimal("100.5"), candles=candles
+    )
+
+
+def _runtime(
+    bot_id: int,
+    *,
+    state: BotState = BotState.RUNNING,
+    **strategy_kwargs,
+) -> FakeRuntime:
+    return FakeRuntime(bot_id, FakeStrategy(_strategy(**strategy_kwargs)), state=state)
+
+
+def _make_scheduler(
+    clock: FakeClock,
+    runtimes: list[FakeRuntime],
+    *,
+    broker: FakeTradingStatusBroker | ProgrammedTradingStatusBroker | None = None,
+    snapshot_provider: FakeSnapshotProvider | None = None,
+    gate=None,
+    on_bot_error=None,
+    settings: SchedulerSettings | None = None,
+    transient_error_types=None,
+) -> LiveCycleScheduler:
+    manager = BotRuntimeManager(RiskManager())
+    for runtime in ([runtimes] if isinstance(runtimes, FakeRuntime) else runtimes):
+        manager.register(runtime)
+    if transient_error_types is None:
+        from app.trading.scheduler import _DEFAULT_TRANSIENT_ERRORS
+
+        transient_error_types = _DEFAULT_TRANSIENT_ERRORS
+
+    async def _figi(runtime) -> str:
+        return FIGI
+
+    return LiveCycleScheduler(
+        bot_runtime_manager=manager,
+        broker=broker or FakeTradingStatusBroker(),
+        figi_provider=_figi,
+        snapshot_provider=snapshot_provider
+        or FakeSnapshotProvider(
+            _single_candle_snapshot(T0 - timedelta(minutes=5))
+        ),
+        clock=clock,
+        settings=settings,
+        safety_gate=gate,
+        on_bot_error=on_bot_error,
+        transient_error_types=transient_error_types,
+    )
+
+
+async def _poll_until(predicate, timeout: float = 2.0) -> None:
+    deadline = asyncio.get_event_loop().time() + timeout
+    while not predicate():
+        if asyncio.get_event_loop().time() > deadline:
+            raise AssertionError("condition not reached in time")
+        await asyncio.sleep(0.01)
+
+
+# --- S2: tick timing -----------------------------------------------------------
+
+
+def test_scheduler_settings_defaults() -> None:
+    settings = SchedulerSettings()
+    assert settings.bar_close_delay_seconds == 5.0
+    assert settings.bar_close_retry_seconds == 5.0
+    assert settings.bar_close_max_wait_seconds == 60.0
+    assert settings.max_consecutive_failures == 3
+
+
+async def test_at_bar_close_ticks_at_boundary_plus_delay_only() -> None:
+    # Bar [09:20, 09:25) closed at 09:25:00; its tick is due at 09:25:05.
+    clock = FakeClock(T0 - timedelta(minutes=5) + timedelta(seconds=5))
+    rt = _runtime(1)
+    snaps = FakeSnapshotProvider(_single_candle_snapshot(T0 - timedelta(minutes=10)))
+    sched = _make_scheduler(clock, rt, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1  # ticked at boundary + 5s
+
+    # Just after the 09:30:00 close the next tick is not due yet: boundary+5
+    # (and the previous boundary is already done -> nothing runs at all).
+    for offset in (1, 4):
+        clock.set(T0 + timedelta(seconds=offset))
+        snaps.snapshot = _single_candle_snapshot(T0 - timedelta(minutes=5))
+        await sched.advance()
+        await sched.settle()
+        assert len(rt.executions) == 1
+
+    # At exactly boundary + 5s the just-closed bar ticks exactly once.
+    clock.set(T0 + timedelta(seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 2
+
+    # Later in the same bar no second tick happens.
+    clock.set(T0 + timedelta(seconds=30))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 2
+
+
+async def test_at_bar_close_retries_every_retry_seconds_until_confirmed() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    snaps = FakeSnapshotProvider(_single_candle_snapshot(T0 - timedelta(minutes=5)))
+    snaps.unconfirmed_attempts = 2  # attempts at +5 and +10 are not confirmed
+    sched = _make_scheduler(clock, rt, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+
+    clock.set(T0 + timedelta(seconds=10))
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+
+    # Confirmed at +15 -> exactly one cycle for the bar.
+    clock.set(T0 + timedelta(seconds=15))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+    assert len(snaps.requests) == 3
+
+
+async def test_at_bar_close_skips_and_counts_transient_after_max_wait() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    snaps = FakeSnapshotProvider(_single_candle_snapshot(None))  # never confirmed
+    sched = _make_scheduler(clock, rt, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+
+    # Retries inside the window never count a failure and the tick is pending.
+    for offset in (10, 30, 55):
+        clock.set(T0 + timedelta(seconds=offset))
+        await sched.advance()
+        await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []
+    assert sched.last_error_for(1) is None
+
+    # Past boundary + max_wait: skip and count exactly one transient.
+    clock.set(T0 + timedelta(seconds=61))
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []  # 1 < max_consecutive_failures -> still RUNNING
+    # The boundary is concluded: no further retries for the same bar.
+    clock.set(T0 + timedelta(seconds=90))
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert len(snaps.requests) == 4  # +5, +10, +30, +55 only
+
+
+async def test_at_bar_close_none_completeness_is_not_confirmed() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    # The target candle is present but is_complete=None => not confirmed (S2).
+    snaps = FakeSnapshotProvider(
+        _single_candle_snapshot(T0 - timedelta(minutes=5), complete=None)
+    )
+    sched = _make_scheduler(clock, rt, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+
+    # Once the broker marks the same bar complete, the pending tick runs.
+    clock.set(T0 + timedelta(seconds=10))
+    snaps.snapshot = _single_candle_snapshot(T0 - timedelta(minutes=5), complete=True)
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+
+
+async def test_per_minute_ticks_once_per_minute_boundary() -> None:
+    clock = FakeClock(T0)
+    rt = _runtime(1, method=CalculationMethod.PER_MINUTE)
+    snaps = FakeSnapshotProvider(_single_candle_snapshot(T0))
+    sched = _make_scheduler(clock, rt, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+
+    # Same UTC minute: no second tick.
+    clock.set(T0 + timedelta(seconds=30))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+
+    # Next minute boundary: exactly one more tick.
+    clock.set(T0 + timedelta(minutes=1))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 2
+    assert len(snaps.requests) == 2
+
+
+# --- S3: trading-session gate --------------------------------------------------
+
+
+async def test_s3_not_tradable_skips_tick_without_counting() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = FakeTradingStatusBroker(status=TradingStatus.TRADING_UNAVAILABLE)
+    snaps = FakeSnapshotProvider(_single_candle_snapshot(T0 - timedelta(minutes=5)))
+    sched = _make_scheduler(clock, rt, broker=broker, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert snaps.requests == []  # the snapshot is never fetched
+    assert rt.fail_reasons == []
+    assert sched.last_error_for(1) is None  # a market-closed skip is NOT a failure
+
+    # The boundary is concluded: no further attempts in this bar.
+    clock.set(T0 + timedelta(seconds=30))
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert len(snaps.requests) == 0
+    assert rt.fail_reasons == []
+
+
+async def test_s3_unknown_status_is_counted_transient() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = ProgrammedTradingStatusBroker(
+        "SOME_FUTURE_STATUS",
+        "SOME_FUTURE_STATUS",
+        "SOME_FUTURE_STATUS",
+    )
+    sched = _make_scheduler(clock, rt, broker=broker)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []  # 1 transient < 3
+
+    clock.set(T0 + timedelta(minutes=5, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert rt.fail_reasons == []
+
+    # Third consecutive unknown status -> terminal failure (S4).
+    clock.set(T0 + timedelta(minutes=10, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.fail_reasons) == 1
+    assert "consecutive transient cycle failures" in rt.fail_reasons[0]
+    assert sched.last_error_for(1) == rt.fail_reasons[0]
+    assert rt.state is BotState.ERROR
+
+
+async def test_s3_failed_status_request_is_counted_transient() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = FakeTradingStatusBroker(error=MarketDataUnavailable("no session data"))
+    sched = _make_scheduler(clock, rt, broker=broker)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []  # 1 transient < 3; the tick is skipped
+    assert sched.last_error_for(1) is None
+
+
+# --- S4: failure policy --------------------------------------------------------
+
+
+async def test_s4_three_consecutive_transients_fail_bot() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = FakeTradingStatusBroker(error=MarketDataUnavailable("no session data"))
+    reported: list[tuple[int, str]] = []
+
+    async def _on_bot_error(bot_id: int, reason: str) -> None:
+        reported.append((bot_id, reason))
+
+    sched = _make_scheduler(
+        clock, rt, broker=broker, on_bot_error=_on_bot_error
+    )
+
+    await sched.advance()
+    await sched.settle()
+    assert reported == []
+
+    clock.set(T0 + timedelta(minutes=5, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert reported == []
+
+    clock.set(T0 + timedelta(minutes=10, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(reported) == 1
+    assert reported[0][0] == 1
+    assert "consecutive transient cycle failures" in reported[0][1]
+    assert sched.last_error_for(1) == reported[0][1]
+    # The production callback is responsible for runtime.fail + persistence;
+    # when no callback is wired the scheduler falls back to runtime.fail.
+    assert rt.fail_reasons == []
+
+
+async def test_s4_two_failures_then_success_resets_counter() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = ProgrammedTradingStatusBroker(
+        "SOME_FUTURE_STATUS",  # 1st transient
+        "SOME_FUTURE_STATUS",  # 2nd transient
+        TradingStatus.TRADING_AVAILABLE,  # success -> reset
+        "SOME_FUTURE_STATUS",  # 1st transient after reset
+        "SOME_FUTURE_STATUS",  # 2nd
+        "SOME_FUTURE_STATUS",  # 3rd -> terminal failure
+    )
+    snaps = FakeSnapshotProvider(_session_snapshot(T0 - timedelta(minutes=5), 8))
+    sched = _make_scheduler(clock, rt, broker=broker, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    clock.set(T0 + timedelta(minutes=5, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == [] and rt.fail_reasons == []
+
+    # Third bar: tradable -> the cycle succeeds and resets the counter.
+    clock.set(T0 + timedelta(minutes=10, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+    assert rt.fail_reasons == []
+    assert rt.state is BotState.RUNNING
+
+    # Three failures again -> terminal error (the reset mattered).
+    clock.set(T0 + timedelta(minutes=15, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    clock.set(T0 + timedelta(minutes=20, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    clock.set(T0 + timedelta(minutes=25, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+    assert len(rt.fail_reasons) == 1
+    assert "consecutive transient cycle failures" in rt.fail_reasons[0]
+    assert rt.state is BotState.ERROR
+
+
+async def test_s4_non_transient_config_error_fails_bot_immediately() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1, lookback_bars=None)  # LookbackNotConfigured (non-transient)
+    snaps = FakeSnapshotProvider(_single_candle_snapshot(T0 - timedelta(minutes=5)))
+    sched = _make_scheduler(clock, rt, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert snaps.requests == []  # failed before any broker snapshot
+    assert len(rt.fail_reasons) == 1
+    assert "lookback_bars is not configured" in rt.fail_reasons[0]
+    assert sched.last_error_for(1) == rt.fail_reasons[0]
+    assert rt.state is BotState.ERROR
+
+
+# --- S1: correctness guards ----------------------------------------------------
+
+
+async def test_s1_overlap_skips_tick_no_parallel_cycles() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    rt.execute_gate = asyncio.Event()
+    rt.started_event = asyncio.Event()
+    sched = _make_scheduler(clock, rt)
+
+    await sched.advance()
+    await asyncio.wait_for(rt.started_event.wait(), timeout=2)
+    assert rt.execute_starts == 1
+
+    # The cycle is still in flight: the next tick is skipped (no catch-up).
+    clock.set(T0 + timedelta(seconds=10))
+    await sched.advance()
+    assert rt.execute_starts == 1
+    assert rt.executions == []
+
+    rt.execute_gate.set()
+    await sched.settle()
+    assert rt.execute_starts == 1
+    assert len(rt.executions) == 1
+
+
+async def test_s1_slow_bot_does_not_delay_another_bot() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    slow = _runtime(1)
+    slow.execute_gate = asyncio.Event()
+    slow.started_event = asyncio.Event()
+    fast = _runtime(2)
+    sched = _make_scheduler(clock, [slow, fast])
+
+    await sched.advance()
+    await asyncio.wait_for(slow.started_event.wait(), timeout=2)
+    await _poll_until(lambda: len(fast.executions) == 1)
+
+    assert fast.executions != []
+    assert slow.execute_starts == 1
+    assert slow.executions == []  # still blocked; the other bot is not delayed
+
+    slow.execute_gate.set()
+    await sched.settle()
+    assert len(slow.executions) == 1
+
+
+async def test_s1_failing_bot_does_not_block_other_bots() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    failing = _runtime(1, lookback_bars=None)  # fails immediately (non-transient)
+    healthy = _runtime(2)
+    sched = _make_scheduler(clock, [failing, healthy])
+
+    await sched.advance()
+    await sched.settle()
+    assert len(failing.fail_reasons) == 1
+    assert len(healthy.executions) == 1  # processed in the same pass
+
+
+async def test_s1_only_running_bots_are_ticked() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    runtimes = [
+        _runtime(0, state=BotState.STOPPED),
+        _runtime(1, state=BotState.RUNNING),
+        _runtime(2, state=BotState.ERROR),
+        _runtime(3, state=BotState.EMERGENCY_STOP),
+    ]
+    sched = _make_scheduler(clock, runtimes)
+
+    await sched.advance()
+    await sched.settle()
+    assert [len(rt.executions) for rt in runtimes] == [0, 1, 0, 0]
+    assert all(rt.fail_reasons == [] for rt in runtimes)
+
+
+async def test_s1_stopped_bot_is_not_ticked_anymore() -> None:
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    sched = _make_scheduler(clock, rt)
+
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+
+    rt.set_state(BotState.STOPPED)
+    clock.set(T0 + timedelta(minutes=5, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+
+
+async def test_s1_no_ticks_while_safety_gate_closed() -> None:
+    gate = [False]
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    snaps = FakeSnapshotProvider(_single_candle_snapshot(T0 - timedelta(minutes=5)))
+    sched = _make_scheduler(clock, rt, snapshot_provider=snaps, gate=lambda: gate[0])
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []
+    assert snaps.requests == []
+
+    # Reopening the gate (service SAFE again) lets the same tick run.
+    gate[0] = True
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+
+
+async def test_run_forever_cancellation_stops_per_bot_tasks() -> None:
+    # Application shutdown cancels run_forever while a per-bot pass is in
+    # flight; the finally-shutdown must cancel that pass too (it uses the same
+    # DB session the live stream shutdown closes next).
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    rt.execute_gate = asyncio.Event()
+    rt.started_event = asyncio.Event()
+    sched = _make_scheduler(clock, rt)
+
+    task = asyncio.create_task(sched.run_forever())
+    await asyncio.wait_for(rt.started_event.wait(), timeout=2)
+    assert sched._tasks  # the per-bot pass is in flight
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert sched._tasks == set()
+    assert sched._inflight == set()
+
+
+async def test_scheduler_not_started_before_safe_recovery() -> None:
+    # Production: the application lifespan starts the scheduler only when the
+    # startup recovery result is SAFE (see app/main.py); the service enforces it.
+    service = LiveExecutionService(
+        broker=None, store=None, order_manager=None, position_manager=None
+    )
+    with pytest.raises(LiveExecutionBlocked):
+        await service.run_scheduler_forever()
+
+    # Even when a scheduler is wired, it must not run before a SAFE recovery.
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    scheduler = _make_scheduler(clock, rt)
+    service._scheduler = scheduler
+    with pytest.raises(LiveExecutionBlocked):
+        await service.run_scheduler_forever()
+    assert rt.executions == []
+
+
+# --- S3 adapter boundary (T-Invest mapping) ------------------------------------
+
+
+async def test_tinvest_adapter_maps_trading_status() -> None:
+    adapter = TInvestAdapter(client=TInvestFakeClient())
+    client: TInvestFakeClient = adapter._client  # type: ignore[attr-defined]
+
+    def respond(status, flag=True):
+        client.calls.clear()
+        client.responses[STATUS_PATH] = {
+            "trading_status": status,
+            "api_trade_available_flag": flag,
+        }
+
+    # Normal trading with API trading available -> tradable.
+    respond("SECURITY_TRADING_STATUS_NORMAL_TRADING", True)
+    assert await adapter.get_trading_status(FIGI) is TradingStatus.TRADING_AVAILABLE
+    assert client.calls[0] == (STATUS_PATH, {"instrumentId": FIGI})
+
+    # Normal trading but API trading disabled -> not tradable (S3 skip).
+    respond("SECURITY_TRADING_STATUS_NORMAL_TRADING", False)
+    assert await adapter.get_trading_status(FIGI) is TradingStatus.TRADING_UNAVAILABLE
+
+    # Every documented non-trading state -> not tradable, never a failure.
+    for state in (
+        "SECURITY_TRADING_STATUS_CLOSING_PERIOD",
+        "SECURITY_TRADING_STATUS_BREAK_IN_TRADING",
+        "SECURITY_TRADING_STATUS_NOT_AVAILABLE_FOR_TRADING",
+        "SECURITY_TRADING_STATUS_OPENING_PERIOD",
+        "SECURITY_TRADING_STATUS_SESSION_CLOSE",
+    ):
+        respond(state, True)
+        assert (
+            await adapter.get_trading_status(FIGI) is TradingStatus.TRADING_UNAVAILABLE
+        ), state
+
+    # Numeric status values (the raw investAPI proto) map the same way.
+    respond(5, True)
+    assert await adapter.get_trading_status(FIGI) is TradingStatus.TRADING_AVAILABLE
+    respond(4, True)
+    assert await adapter.get_trading_status(FIGI) is TradingStatus.TRADING_UNAVAILABLE
+
+    # An unknown/UNSPECIFIED state must raise (never silently "not tradable").
+    for unknown in ("SECURITY_TRADING_STATUS_UNSPECIFIED", "SECURITY_TRADING_STATUS_X"):
+        respond(unknown, True)
+        with pytest.raises(BrokerApiError):
+            await adapter.get_trading_status(FIGI)
+
+    # A failed request propagates to the scheduler as a transient (S3).
+    client.responses.clear()
+    client.errors[STATUS_PATH] = MarketDataError("status unavailable")
+    with pytest.raises(MarketDataError):
+        await adapter.get_trading_status(FIGI)
+
+
+async def test_backtest_broker_has_no_session_restriction() -> None:
+    broker = BacktestBroker()
+    assert await broker.get_trading_status(FIGI) is TradingStatus.TRADING_AVAILABLE

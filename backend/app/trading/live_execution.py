@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
 
-from app.trading.bot_lifecycle import BotRuntimeManager, BotStateError
+from app.trading.bot_lifecycle import BotRuntime, BotRuntimeManager, BotStateError
 from app.trading.deal import validate_live_deal_config
 from app.trading.deal_manager import DealManager
 from app.trading.domain import ExecutionIntent, InternalOrder
@@ -26,6 +26,7 @@ from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
 from app.trading.recovery import LiveRecoveryCoordinator, RecoveryResult
 from app.trading.risk_manager import RiskLimits, RiskManager
+from app.trading.scheduler import LiveCycleScheduler, SchedulerSettings
 from app.trading.sizing import PositionSizing
 from app.trading.state import LiveStateStore
 
@@ -51,6 +52,7 @@ class LiveExecutionService:
         bot_runtime_manager: BotRuntimeManager | None = None,
         market_data: object | None = None,
         deal_manager: DealManager | None = None,
+        scheduler: LiveCycleScheduler | None = None,
     ) -> None:
         self._broker = broker
         self._order_manager = order_manager
@@ -69,6 +71,7 @@ class LiveExecutionService:
             broker, None, order_manager, position_manager, self._risk_manager
         )
         self._bot_runtime_manager = bot_runtime_manager
+        self._scheduler = scheduler
 
     async def build_context(self, instrument_figi: str):
         """Construct a last-price-only live MarketContext from broker data.
@@ -99,6 +102,11 @@ class LiveExecutionService:
     def deal_manager(self) -> DealManager | None:
         """The wired DealManager (None when deal continuation is not wired)."""
         return self._deal_manager
+
+    @property
+    def scheduler(self) -> LiveCycleScheduler | None:
+        """The live cycle scheduler (MVP-6.13); None when it is not wired."""
+        return self._scheduler
 
     @property
     def coordinator(self) -> LiveRecoveryCoordinator:
@@ -181,6 +189,22 @@ class LiveExecutionService:
             self._stream_transport = await self._build_transport()
         self._stream_manager = self.build_stream_manager(self._stream_transport)
         await self._stream_manager.run()
+
+    async def run_scheduler_forever(self) -> None:
+        """Run the live cycle scheduler until :meth:`shutdown` (MVP-6.13 S1).
+
+        Started only after a SAFE startup recovery (the application lifespan
+        creates it next to the stream task); the scheduler additionally holds
+        its own safety gate, so it never ticks while the service is not SAFE
+        (e.g. after a blocked reconnect recovery).
+        """
+        if not self._safe:
+            raise LiveExecutionBlocked(
+                "cannot start cycle scheduler before a SAFE recovery"
+            )
+        if self._scheduler is None:
+            raise LiveExecutionBlocked("no cycle scheduler is wired")
+        await self._scheduler.run_forever()
 
     async def shutdown(self) -> None:
         """Stop the live stream and close the session/transport."""
@@ -370,12 +394,14 @@ async def build_live_service() -> LiveExecutionService:
     from app.brokers import TInvestAdapter
     from app.core.config import get_settings
     from app.core.db import SessionLocal
+    from app.domain.marketdata import MarketSnapshot
     from app.models.account import Account
     from app.models.enums import BotState
     from app.models.instrument import Instrument
     from app.persistence.deal_store import SqlAlchemyDealStore
     from app.persistence.execution_state import SqlAlchemyLiveStateStore
     from app.services.market_data import MarketDataService
+    from app.strategies.config import StrategyConfig
     from app.strategies.domain import MarketContext, Plan
     from app.trading.bot_lifecycle import BotRuntime
     from app.trading.engine import compose_strategy_engine
@@ -506,13 +532,14 @@ async def build_live_service() -> LiveExecutionService:
 
     bot_runtime_manager = BotRuntimeManager(risk_manager, runtime_factory=_make_runtime)
 
-    async def _deal_bot_error(bot_id: int, reason: str) -> None:
-        """B2: surface a Deal-layer failure to the bot lifecycle and DB.
+    async def _persist_bot_error(bot_id: int, reason: str) -> None:
+        """Surface a lifecycle-layer failure to the bot lifecycle and DB.
 
-        The DealManager is broker-neutral and knows nothing about bots; this
-        production callback moves the owning bot to ERROR (blocked until an
-        explicit START) and persists that state through the BotRepository so
-        the API reflects the failure.
+        The DealManager (B2) and the cycle scheduler (MVP-6.13 S4) are
+        broker-neutral and know nothing about bots; this production callback
+        moves the owning bot to ERROR (blocked until an explicit START) and
+        persists that state through the BotRepository so the API reflects the
+        failure.
         """
         runtime = bot_runtime_manager.get(bot_id)
         if runtime is not None:
@@ -530,7 +557,7 @@ async def build_live_service() -> LiveExecutionService:
         SqlAlchemyDealStore(session),
         order_manager,
         risk_manager,
-        on_bot_error=_deal_bot_error,
+        on_bot_error=_persist_bot_error,
     )
 
     await bot_runtime_manager.restore_persisted_states(bot_repository)
@@ -547,4 +574,46 @@ async def build_live_service() -> LiveExecutionService:
         deal_manager=deal_manager,
     )
     service._session_owner = session
+
+    # MVP-6.13 (S1-S5): the live cycle scheduler is wired into the composition
+    # root. It resolves each bot's FIGI and raw snapshot through the same
+    # broker-neutral session paths as the market-context provider (the rows are
+    # already in the session identity map after START), is gated on the service
+    # being SAFE and uses the same bot-ERROR persistence callback as deals.
+    scheduler_cfg = get_settings()
+
+    async def _scheduler_figi(runtime: BotRuntime) -> str:
+        bot = await bot_repository.get(runtime.bot_id)
+        if bot is None:
+            raise StrategyLoadError(f"bot {runtime.bot_id} not found")
+        instrument = await session.get(Instrument, bot.instrument_id)
+        if instrument is None:
+            raise StrategyLoadError(
+                f"bot {runtime.bot_id} references missing instrument "
+                f"{bot.instrument_id}"
+            )
+        return instrument.figi
+
+    async def _scheduler_snapshot(figi: str, config: StrategyConfig) -> MarketSnapshot:
+        # The scheduler validates timeframe/lookback before calling; the
+        # snapshot is the raw one S2 confirms from (no fabrication).
+        return await market_data.get_snapshot(
+            figi, config.timeframe, config.lookback_bars
+        )
+
+    scheduler = LiveCycleScheduler(
+        bot_runtime_manager=bot_runtime_manager,
+        broker=broker,
+        figi_provider=_scheduler_figi,
+        snapshot_provider=_scheduler_snapshot,
+        settings=SchedulerSettings(
+            bar_close_delay_seconds=scheduler_cfg.scheduler_bar_close_delay_seconds,
+            bar_close_retry_seconds=scheduler_cfg.scheduler_bar_close_retry_seconds,
+            bar_close_max_wait_seconds=scheduler_cfg.scheduler_bar_close_max_wait_seconds,
+            max_consecutive_failures=scheduler_cfg.scheduler_max_consecutive_failures,
+        ),
+        safety_gate=service.can_execute,
+        on_bot_error=_persist_bot_error,
+    )
+    service._scheduler = scheduler
     return service
