@@ -111,7 +111,7 @@ Independent review works only from the remote repository. Before reporting compl
 4. verify with `git ls-remote origin agent/review/mvp-X agent/control` that the remote SHAs equal the local ones;
 5. cite the **pushed** SHA in the REPORT ("pushed, in sync with origin"). A REPORT stating "no push performed" is incomplete and is not reviewed.
 
-Never push `master`. Details: `agent/control:.agent/OPENCODE-WORKFLOW.md` → "Mandatory push rule".
+Never push `master`. Details: `agent/control:.agent/CODER-WORKFLOW.md` → "Mandatory push rule".
 
 ## 7. Current project recovery source
 

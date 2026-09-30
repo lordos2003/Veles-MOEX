@@ -126,4 +126,4 @@ Add focused regression tests covering:
 
 Round 2 independent review accepted the implementation after the lookback-boundary correction. The accepted implementation is `c7429fd`; publication to current `master` was completed as merge commit `14168ca`.
 
-OpenCode must not publish directly to `master`. ChatGPT performs the independent review and publication step.
+Кодер must not publish directly to `master`. ChatGPT performs the independent review and publication step.
