@@ -2,7 +2,7 @@
 
 ## Status
 
-**OPEN — assigned to Кодер**
+**IN REVIEW — round 1 REJECTED (B1–B3); correction round 1 (+ S6) assigned to Кодер**
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.13` (create from current `master` @ `eb08fbf`)
@@ -101,6 +101,22 @@ Full `pytest`, `ruff check app tests scripts`, `alembic heads` (unchanged unless
 REPORT → `agent/control:.agent/REPORT-MVP-6.13.md` with: task, branch, **pushed** commit SHA ("pushed, in sync with origin"), exact changes, validation results, known limitations, documentation/specification gaps, AGENTS.md compliance.
 
 Do not publish to `master`. Do not self-declare acceptance.
+
+## Correction round 1 (review 2026-09-30)
+
+Review: `.agent/REVIEW-MVP-6.13.md` — **REJECTED**:
+- **B1**: bars that close outside the session (4h / day / week / month) never produce a cycle. This is a gap in S3; fixed by S6 below. The closed-bar confirmation must use a timestamp range, not exact equality.
+- **B2**: concurrent per-bot passes share one long-lived `AsyncSession`. Reproduced on PostgreSQL + asyncpg: `IllegalStateChangeError` / `InterfaceError`.
+- **B3**: the failure counter survives an ERROR and a restart.
+
+Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.13-REV1.md`.
+
+### S6. Deferred bar-close tick (owner decision, 2026-09-30; supersedes the S3 "skip" rule for `AT_BAR_CLOSE`)
+
+- When an `AT_BAR_CLOSE` tick falls while the instrument is **not tradable**, the tick is **deferred**, not dropped. It runs **once**, at the first moment the instrument is tradable again, on the latest closed bar. This is Veles semantics: the condition is met at the bar close, and the action happens on the next candle.
+- Only the **latest** pending boundary is kept. Several boundaries that pass while the session is closed produce **one** deferred cycle, not a catch-up.
+- Deferral is not a failure and is not counted. While deferred, the S3 status is re-checked at the normal scheduler cadence.
+- `PER_MINUTE` keeps the S3 rule: not tradable → skip, not counted.
 
 ## Publication (mandatory, see `AGENTS.md` §6 and `.agent/CODER-WORKFLOW.md` → "Mandatory push rule")
 
