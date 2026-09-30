@@ -1217,12 +1217,20 @@ GitHub Issue #3 carry-over from MVP-6.10).
   value; a deposit edit therefore applies from the next deal **without a bot
   restart**, and never affects an already open deal (OPEN never reads the
   provider).
+- The production provider always reads the **current** database value:
+  `BotRepository.get_deposit` reloads the row with
+  `populate_existing=True`, because the long-lived live session
+  (`expire_on_commit=False`) may still hold the `Bot` in its identity map
+  and must not hand that copy to the engine (round-2 review correction B2).
 - When the provider is not wired (generic engines / tests) the static
   `PositionSizing` source is used unchanged.
 - Regression coverage: edit while RUNNING + FLAT → next entry uses the new
   value (no restart); edit while OPEN → exit repeats unchanged, the next FLAT
   entry uses the new value; deposit cleared while OPEN → the exit is
-  unaffected, the next FLAT entry fails with `SizingNotConfigured`.
+  unaffected, the next FLAT entry fails with `SizingNotConfigured`; B2
+  two-session regression — an edit committed through a separate per-request
+  session is returned by the production provider (a plain `get` still hands
+  back the stale identity-map copy).
 
 ### C7 (round-2). Snapshot trimmed to exactly `lookback_bars` (GitHub Issue #3)
 
@@ -1241,7 +1249,7 @@ GitHub Issue #3 carry-over from MVP-6.10).
 
 ### Testing
 
-`tests/test_mvp611_deposit_sizing.py` (37 tests) covers the approved
+`tests/test_mvp611_deposit_sizing.py` (38 tests) covers the approved
 contracts and the round-1 correction: SIMPLE split with/without martingale
 (nominals and the sum == D), CUSTOM split and the >100% block, the explicit
 SIGNAL block, sizing independence from the DCA engine math, lot rounding
@@ -1256,7 +1264,10 @@ intents, unchanged Backtest-style evaluation, B1 regressions (OPEN + deposit
 unset / SIGNAL / CUSTOM-over-100% -> exit submitted; FLAT + deposit unset ->
 `SizingNotConfigured`) and C6 regressions (deposit edit applies from the next
 FLAT entry without a restart; edit while OPEN affects only the next deal;
-deposit cleared while OPEN keeps the exit, the next FLAT entry is blocked).
+deposit cleared while OPEN keeps the exit, the next FLAT entry is blocked)
+and the B2 two-session regression (a deposit edit committed through a
+separate per-request session is returned by the production provider while a
+plain `get` still returns the stale identity-map copy).
 `tests/test_mvp69_position_state.py` and
 `tests/test_mvp610_market_snapshot.py` were updated for the explicit
 reconciliation (the OPEN state now requires `mark_reconciled`; an OPEN cycle

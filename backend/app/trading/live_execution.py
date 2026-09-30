@@ -9,6 +9,7 @@ refused so unsafe new execution cannot resume.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
 
 from app.trading.bot_lifecycle import BotRuntimeManager, BotStateError
@@ -225,6 +226,28 @@ def risk_limits_from_settings(settings) -> RiskLimits:
     )
 
 
+def make_deposit_provider(
+    bot_repository, bot_id: int
+) -> Callable[[], Awaitable[Decimal | None]]:
+    """Build the production C6 deposit provider for one bot (testable).
+
+    Returns an async callable that reads the **current** ``Bot.deposit`` from
+    the database on every call (``BotRepository.get_deposit`` reloads the row
+    with ``populate_existing``): the long-lived live session may already hold
+    the ``Bot`` in its identity map (``expire_on_commit=False``), and a
+    deposit edit arrives through a separate per-request session.
+    """
+
+    async def _deposit_provider() -> Decimal | None:
+        return await bot_repository.get_deposit(bot_id)
+
+    return _deposit_provider
+    async def _deposit_provider() -> Decimal | None:
+        return await bot_repository.get_deposit(bot_id)
+
+    return _deposit_provider
+
+
 async def build_live_service() -> LiveExecutionService:
     """Compose a live execution service from application settings.
 
@@ -270,8 +293,11 @@ async def build_live_service() -> LiveExecutionService:
     Bot deposit sizing (MVP-6.11 C5/C6): the per-bot ``TradingEngine`` is given
     ``PositionSizing(lot_size=Instrument.lot_size, currency=Instrument.currency)``
     and an async deposit provider reading ``Bot.deposit`` at **each FLAT entry**
-    (C6, review correction B1: entry sizing is an entry-only precondition —
-    OPEN exits never read the deposit). C2 converts the deposit to the DCA/Grid
+    as a **fresh database read** (``BotRepository.get_deposit`` with
+    ``populate_existing`` — review correction B2: the long-lived live session
+    must not return its identity-map copy of the bot) (C6, review correction B1:
+    entry sizing is an entry-only precondition — OPEN exits never read the
+    deposit). C2 converts the deposit to the DCA/Grid
     base nominal; C3 rounds the grid down to whole lots. An unset deposit
     (``None``) keeps the existing behavior: the FLAT entry blocks with
     ``SizingNotConfigured`` while open-deal exits continue (B1). A deposit edit
@@ -401,15 +427,6 @@ async def build_live_service() -> LiveExecutionService:
                     ),
                 )
 
-            async def _deposit_provider() -> Decimal | None:
-                # MVP-6.11 C6: the deposit is read at each FLAT entry, never
-                # snapshotted when the per-bot engine is built, so a deposit
-                # edit applies from the next deal (an open deal is unaffected).
-                # A missing bot blocks the entry explicitly via
-                # SizingNotConfigured (no fabricated deposit).
-                bot = await bot_repository.get(bot_id)
-                return bot.deposit if bot is not None else None
-
             engine = TradingEngine(
                 broker,
                 strategy_engine,
@@ -423,8 +440,9 @@ async def build_live_service() -> LiveExecutionService:
                 # MVP-6.11 C5/C6: the sizing source uses the instrument lot
                 # size / currency for the MOEX lot-rounding contract (C3); the
                 # deposit itself is not snapshotted here — it is read from
-                # Bot.deposit at each FLAT entry via the async provider (C6,
-                # review correction B1: entry sizing is entry-only, OPEN exits
+                # Bot.deposit at each FLAT entry via the async provider (C6:
+                # fresh DB read through make_deposit_provider, review
+                # correction B2; B1: entry sizing is entry-only, OPEN exits
                 # never read the deposit). An unset deposit (None) keeps the
                 # existing behavior: the FLAT entry blocks with
                 # SizingNotConfigured. No default (100 / 1.0 / a default lot /
@@ -435,7 +453,7 @@ async def build_live_service() -> LiveExecutionService:
                     lot_size=instrument.lot_size,
                     currency=instrument.currency,
                 ),
-                deposit_provider=_deposit_provider,
+                deposit_provider=make_deposit_provider(bot_repository, bot_id),
             )
             await engine.start()
             return engine

@@ -24,12 +24,15 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.deps import get_bot_repository
+from app.bots.repository import BotRepository
 from app.bots.schemas import BotDepositUpdate
 from app.brokers.base import BrokerOrder, BrokerOrderRequest
 from app.domain.marketdata import Timeframe
 from app.main import app
+from app.models.base import Base
 from app.models.bot import Bot
 from app.models.enums import OrderSide, OrderStatus, OrderType
 from app.strategies.bars import Bar, BarSeries, Snapshot
@@ -71,6 +74,7 @@ from app.trading.domain import (
     OrderState,
     OrderUpdate,
 )
+from app.trading.live_execution import make_deposit_provider
 from app.trading.plan_intent import plan_to_intents
 
 T0 = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
@@ -866,3 +870,71 @@ async def test_deposit_cleared_while_open_exit_continues_then_flat_blocks() -> N
     with pytest.raises(SizingNotConfigured):
         await engine.process(_context())
     assert len(om.list_orders()) == 1
+
+
+# --- B2: the production deposit provider must read the current DB value ---------
+
+
+async def test_production_deposit_provider_reads_fresh_value_after_other_session_commit(
+    tmp_path,
+) -> None:
+    # B2 (round-2 review): the live service uses a long-lived session
+    # (expire_on_commit=False); a deposit edit arrives through a different
+    # per-request session. The provider wired in production must return the
+    # current database value, not the identity-map copy of the bot.
+    #
+    # A file-based database gives each session its own connection (as in
+    # production). The long-lived session keeps a strong reference to the
+    # loaded Bot: the Session identity map is a WeakInstanceDict, so a plain
+    # get would silently re-read the row once the transient result is
+    # collected — holding the instance makes the staleness scenario
+    # deterministic and proves the provider needs the fresh read.
+    db_path = tmp_path / "b2.sqlite"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
+    async with engine.begin() as conn:
+        await conn.run_sync(lambda c: Base.metadata.create_all(c, tables=[Bot.__table__]))
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with maker() as seed:
+            seed.add(
+                Bot(
+                    id=1,
+                    name="bot",
+                    strategy_version_id=1,
+                    account_id=1,
+                    instrument_id=1,
+                    deposit=Decimal("10000"),
+                )
+            )
+            await seed.commit()
+
+        # Session A: the long-lived live session, loaded at startup.
+        async with maker() as live:
+            live_repo = BotRepository(live)
+            bot = await live_repo.get(1)
+            assert bot.deposit == Decimal("10000")
+            # End the live read transaction (the live session does commit
+            # between cycles); expire_on_commit=False keeps the identity-map
+            # copy of the Bot cached in this session.
+            await live.commit()
+
+            # Session B: the per-request API session edits the deposit.
+            async with maker() as api:
+                api_repo = BotRepository(api)
+                await api_repo.update_deposit(await api_repo.get(1), Decimal("20000"))
+            # A plain get still returns the cached copy (the B2 staleness
+            # scenario); the production provider must not — it is wired to a
+            # fresh database read.
+            assert bot.deposit == Decimal("10000")
+            assert (await live_repo.get(1)).deposit == Decimal("10000")
+            provider = make_deposit_provider(live_repo, 1)
+            assert await provider() == Decimal("20000")
+
+            # A clearing edit through the API session is visible the same way.
+            await live.commit()
+            async with maker() as api2:
+                api2_repo = BotRepository(api2)
+                await api2_repo.update_deposit(await api2_repo.get(1), None)
+            assert await provider() is None
+    finally:
+        await engine.dispose()

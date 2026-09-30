@@ -43,3 +43,15 @@ class BotRepository:
         await self._session.commit()
         await self._session.refresh(bot)
         return bot
+
+    async def get_deposit(self, bot_id: int) -> Decimal | None:
+        """Read the current deposit value from the database (MVP-6.11 C6).
+
+        A deposit edit arrives through a per-request session while this
+        long-lived session may already hold the ``Bot`` in its identity map
+        (``expire_on_commit=False``); ``populate_existing=True`` forces a
+        fresh read so the returned value is the current one, not the cached
+        instance a plain ``get`` would return.
+        """
+        bot = await self._session.get(Bot, bot_id, populate_existing=True)
+        return bot.deposit if bot is not None else None
