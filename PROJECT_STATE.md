@@ -18,7 +18,9 @@
 ## Current task
 
 ### MVP-6.13 — Live Cycle Scheduler
-**Status: IN REVIEW — implementation pushed (`0c12cf1`), awaiting independent review.**
+**Status: IN REVIEW — round 1 REJECTED (B1: bars closing outside the session never trade → new contract S6, deferred tick; B2: concurrent passes share one AsyncSession, failing on PostgreSQL; B3: failure counter survives restart). Correction round 1 assigned to Кодер.**
+
+- Review: `.agent/REVIEW-MVP-6.13.md`
 
 - Control task: `.agent/TASK-MVP-6.13-LIVE-CYCLE-SCHEDULER.md`
 - Implementation branch: `agent/review/mvp-6.13` (from `master` @ `eb08fbf`)
