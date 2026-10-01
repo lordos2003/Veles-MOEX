@@ -116,3 +116,7 @@ Never push `master`. Details: `agent/control:.agent/CODER-WORKFLOW.md` → "Mand
 ## 7. Current project recovery source
 
 `PROJECT_STATE.md` is the canonical recovery document. Keep it current after accepted MVP changes according to the project workflow.
+
+## Контекстная передача (handoff)
+
+Если в корне проекта есть файл `.ai/context.md` — прочитай его в начале сессии и используй как контекст для продолжения ранее начатой работы. Файл создаётся и обновляется командой `/next`. Если пользователь начинает новую несвязанную задачу, упомяни, что есть сохранённый handoff, и продолжай только по его просьбе.

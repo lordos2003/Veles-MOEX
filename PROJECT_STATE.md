@@ -17,9 +17,28 @@
 
 ## Current task
 
-No task is open. Next candidate: **live cycle scheduler** — who triggers `BotRuntime.execute_strategy` per bot and when (per-bot timeframe; Veles "at bar close" / "once per minute" calculation methods). Other follow-ups: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode; recovery TP churn; the misleading `FILLED -> UNKNOWN` error on cancelling an already executed TP.
+No task is open. Candidates (owner to choose):
+- **Owner decision:** treat a bar without trades (no T-Invest candle) as an uncounted skip instead of a transient failure (thin M1/M5 instruments otherwise go to ERROR after 3 quiet bars).
+- **Snapshot by bar count across session gaps** (replace the MVP-6.10 wall-clock window; affects indicator input after night/weekend gaps and the S6 deferred tick for intraday bots).
+- Verify `HOUR_4` / `WEEK_1` / `MONTH_1` T-Invest candle start times.
+- Exit modes: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL grid mode.
+- Clean-ups: recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error.
 
 ## Current accepted MVP
+
+### MVP-6.13 — Live Cycle Scheduler
+**Status: ACCEPTED (round 5, 2026-10-01) and published to master.**
+
+- Accepted implementation: `db09a39`
+- Publication PR: #10
+- Publication merge commit: `0279507e06db5403f063b66072298e8c1dd3d2cd`
+- Control task: `.agent/TASK-MVP-6.13-LIVE-CYCLE-SCHEDULER.md`; review: `.agent/REVIEW-MVP-6.13.md` (rounds 1–4 REJECTED: B1–B6; round 5 ACCEPT); reports: `REPORT-MVP-6.13.md`, `-REV1` … `-REV4`
+- Contracts S1–S6 (owner-approved 2026-09-30): per-bot ticks by Veles calculation method (`AT_BAR_CLOSE` +5 s with closed-bar confirmation / `PER_MINUTE`), started only after a SAFE recovery; broker trading-status gate (`GetTradingStatus`); one transient failure per tick, 3 consecutive ticks → bot ERROR, non-transient → ERROR immediately; S6 deferred bar-close tick outside the session (bounded, 5-s status polling).
+- Live-session DB access serialised behind one `asyncio.Lock` (verified on PostgreSQL 16 + asyncpg).
+- Validation (independent, clean env): `pytest 486 passed, 1 skipped`; `ruff` clean; alembic head `0005_deal_continuation`.
+
+Known boundaries: a no-trade bar costs one transient failure; wall-clock snapshot window (MVP-6.10) after session gaps; `HOUR_4`/`WEEK_1`/`MONTH_1` candle start times unverified; only Simple TP; one bot per instrument.
+
 
 ### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)
 **Status: ACCEPTED (round 3, 2026-09-30) and published to master.**
@@ -32,7 +51,7 @@ No task is open. Next candidate: **live cycle scheduler** — who triggers `BotR
 - Deal failures move the bot to ERROR (persisted; `deal_error` in `GET /api/bots/{id}`); an OPEN position without an owning Deal errors the bot.
 - Validation (independent, clean env): `pytest 450 passed, 1 skipped`; `ruff` clean; alembic head `0005_deal_continuation`.
 
-Known boundaries: no live cycle scheduler; only Simple TP; position state per FIGI (one bot per instrument); Backtest sizing differs from the Live deposit contract.
+Known boundaries: no live cycle scheduler (superseded by MVP-6.13, in review); only Simple TP; position state per FIGI (one bot per instrument); Backtest sizing differs from the Live deposit contract.
 
 
 ### MVP-6.11 — Bot Deposit Sizing & Entry from Confirmed Flat
