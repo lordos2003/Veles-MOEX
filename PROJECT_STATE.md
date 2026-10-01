@@ -18,11 +18,13 @@
 ## Current task
 
 ### MVP-6.14 — No-Trade Bars Are Skipped, Not Failures
-**Status: OPEN — assigned to Кодер.**
+**Status: IN REVIEW — round-1 implementation pushed (`c1558bd`); `.agent/REPORT-MVP-6.14.md` submitted; awaiting round-1 review.**
 
-- Control task: `.agent/TASK-MVP-6.14-NO-TRADE-BAR.md`
+- Control task: `.agent/TASK-MVP-6.14-NO-TRADE-BAR.md`; report: `.agent/REPORT-MVP-6.14.md`
 - Implementation branch: `agent/review/mvp-6.14` (from `master` @ `bb52d36`)
+- Round-1 implementation: `c1558bde659df94a42689a8f658650e7b254acd3` (7 files: `marketdata.py`, `market_data.py`, `scheduler.py`, `api/bots.py`, `bots/schemas.py`, `tests/test_mvp614_no_trade_bar.py`, docs §32)
 - Contract N1–N3 approved by the owner 2026-10-01: a **proven** no-trade bar (no candle in the bar, and either a newer candle exists or the broker's last-trade time is before the bar) is a skipped tick (no cycle, not counted, `last_skip_reason` in the API); unproven → the MVP-6.13 behaviour is unchanged.
+- Round-1 validation: `pytest 499 passed, 1 skipped`; `ruff` clean; alembic single head `0005_deal_continuation`; `npm run build` green.
 - Remaining candidates: snapshot by bar count across session gaps; `HOUR_4`/`WEEK_1`/`MONTH_1` candle times; exit modes; recovery TP churn; `FILLED -> UNKNOWN` cancel error.
 
 ## Current accepted MVP
