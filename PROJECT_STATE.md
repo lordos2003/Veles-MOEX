@@ -18,17 +18,18 @@
 ## Current task
 
 ### MVP-6.13 — Live Cycle Scheduler
-**Status: IN REVIEW — round 3 REJECTED (B5: at session reopen a deferred intraday bot goes to ERROR within ~3 s, because the wall-clock snapshot window is empty and each 1-s pass counts a transient failure). B1–B4 closed. Correction round 3 assigned to Кодер.**
+**Status: IN REVIEW — round 3 REJECTED (B5: at session reopen a deferred intraday bot goes to ERROR within ~3 s, because the wall-clock snapshot window is empty and each 1-s pass counts a transient failure). B1–B4 closed. Correction round 3 submitted (2026-10-01); awaiting round-4 review.**
 
 - Review: `.agent/REVIEW-MVP-6.13.md`
 
 - Control task: `.agent/TASK-MVP-6.13-LIVE-CYCLE-SCHEDULER.md`
 - Implementation branch: `agent/review/mvp-6.13` (from `master` @ `eb08fbf`)
-- Implementation HEAD: `5b1a300` (correction round 2 (B4), pushed, in sync with origin); reports: `.agent/REPORT-MVP-6.13.md`, `.agent/REPORT-MVP-6.13-REV1.md`, `.agent/REPORT-MVP-6.13-REV2.md`
+- Implementation HEAD: `b46c5e2` (correction round 3 (B5), pushed, in sync with origin); reports: `.agent/REPORT-MVP-6.13.md`, `.agent/REPORT-MVP-6.13-REV1.md`, `.agent/REPORT-MVP-6.13-REV2.md`, `.agent/REPORT-MVP-6.13-REV3.md`
 - Contracts S1–S5 approved by the project owner 2026-09-30: one cycle per tick per RUNNING bot via `execute_strategy`, started only after a SAFE recovery; `AT_BAR_CLOSE` at boundary +5 s with closed-bar confirmation (retry 5 s, max 60 s); `PER_MINUTE` every minute; broker trading-status gate (`GetTradingStatus`, no hard-coded MOEX schedule); transient failures skipped, 3 in a row → bot ERROR, non-transient → ERROR immediately.
 - Contract **S6** (owner decision 2026-09-30, round-1 review): an `AT_BAR_CLOSE` tick that falls while the instrument is not tradable is **deferred** — runs once at the next tradable moment on the closed bar of the deferred boundary; only the latest pending boundary is kept; deferral is not a failure.
 - Round-1 corrections (2026-10-01): B1 range confirmation (no exact-equality candle-stamp check), B2 shared live-session serialization behind one `asyncio.Lock` (MVP-6.11 B2 fresh-read kept; verified by the reviewer on PostgreSQL 16), B3 per-bot scheduler-state reset on a bot state change (keeps `last_done_boundary`); review observation 1 implemented (`DealError` not double-handled).
 - Round-2 correction **B4** (2026-10-01, `5b1a300`): the deferred tick is confirmed by the **latest closed bar** (any complete candle with `start < deferred boundary`) instead of a candle inside the deferred bar's own range (a bar without trades has no candle → the bot could stall in `deferred` forever, reproduced); the deferral is bounded — while tradable, an unconfirmed deferral with a newer boundary already passed concludes with **one transient failure** and normal boundary processing resumes. Open owner observation (non-blocking): the non-deferred S2 path still errors a bot after three consecutive no-trade bars — follow-up decision.
+- Round-3 correction **B5** (2026-10-01, `b46c5e2`): at session reopen the wall-clock snapshot window (`(lookback_bars + 1) × timeframe` before now, MVP-6.10) lies in the night/weekend gap → `MarketDataUnavailable` per 1-s pass in the deferred path; now this is **"not confirmed yet"**, never a per-pass failure, and only the B4 bound concludes the deferral (one transient). Consequence documented: for intraday bots the deferred tick is usually concluded by the B4 bound rather than run (pre-close bars are outside the window); `DAY_1` unaffected; snapshot-by-bar-count across gaps = separate follow-up.
 - Other follow-ups: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode; recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error.
 
 ## Current accepted MVP
