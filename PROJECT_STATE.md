@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-6.13 — Live Cycle Scheduler
-**Status: IN REVIEW — round 4 REJECTED (B6: transient failures are counted per retry attempt instead of per tick; the B4 bound fires immediately at reopen; deferred status polled every second). B1–B5 closed. Correction round 4 in progress (implementation pushed, REPORT-REV4 submitted).**
+**Status: ACCEPTED (round 5, 2026-10-01) — awaiting publication to `master`.** Accepted implementation `db09a39`; review `.agent/REVIEW-MVP-6.13.md` (rounds 1–5); validation 486 passed, 1 skipped.
 
 - Review: `.agent/REVIEW-MVP-6.13.md`
 

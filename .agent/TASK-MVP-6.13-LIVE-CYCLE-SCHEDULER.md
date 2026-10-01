@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN REVIEW — round 4 REJECTED (B6); correction round 4 assigned to Кодер**
+**ACCEPTED (round 5, 2026-10-01)** — accepted implementation `db09a39`; awaiting publication to `master`
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.13` (create from current `master` @ `eb08fbf`)

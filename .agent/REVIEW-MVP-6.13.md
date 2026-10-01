@@ -226,3 +226,46 @@ Report: `.agent/REPORT-MVP-6.13-REV3.md` (`agent/control @ 9e71175`). Reviewer: 
 Bars without trades on thin instruments: after B6.1 such a bar costs one transient failure per tick, so three quiet bars in a row → ERROR. Whether a no-trade bar should be an uncounted skip remains an owner decision for a follow-up.
 
 **No publication to master.**
+
+---
+
+## Round 5 — Verdict
+
+**ACCEPT**
+
+Accepted implementation: `db09a39` (`agent/review/mvp-6.13`, pushed, in sync with origin), base `master @ eb08fbf`.
+Report: `.agent/REPORT-MVP-6.13-REV4.md` (`agent/control @ c76eee5`). Reviewer: Claude, 2026-10-01.
+
+### Independent re-run (clean environment, Python 3.12)
+
+| Check | Result |
+|---|---|
+| `pytest` (full) | **486 passed, 1 skipped** |
+| `ruff check app tests scripts` | All checks passed |
+| `alembic heads` | single head `0005_deal_continuation` |
+
+### B6 — CLOSED. All reviewer probes from rounds 2–4 re-run on `db09a39`
+
+| Probe | Result |
+|---|---|
+| P1 reopen: deferred at close, 5 min of open session without data, then data | no failure during the 5 min; **one** cycle once data appears; 61 status calls in 5 min (5-s cadence) |
+| P2 one `AT_BAR_CLOSE` tick, 25 s without data | **0** failures (pending until `max_wait`) |
+| P3 three consecutive ticks time out | bot → ERROR after the 3rd tick (S4 threshold intact) |
+| P4 round-2 stall (no candle in the deferred range) | cycle runs on the latest closed bar, no failure |
+| P5 deferred, 60 s of closed session | 13 status calls (≈5-s cadence, not 1 s) |
+
+- B6.1: an unconfirmed or transient-failing retry is "not confirmed yet"; one transient failure is counted per tick, at `max_wait`. Non-transient errors still fail the bot immediately.
+- B6.2: the B4 bound is relative to the first tradable moment (one full bar + `max_wait`).
+- B6.3: deferred status polling at `bar_close_retry_seconds`; a failed status counts at most once per bar.
+
+### MVP-6.13 summary (all rounds)
+
+S1–S5, S6 (owner), B1–B6 — all closed. Verified on PostgreSQL 16 + asyncpg for B2.
+
+### Follow-ups (non-blocking)
+
+1. **Owner decision pending:** a bar without trades (no candle at T-Invest) still costs one transient failure per tick. Three quiet bars in a row put a thin-instrument M1/M5 bot into ERROR.
+2. **Snapshot by bar count across session gaps** (replace the MVP-6.10 wall-clock window). Today intraday deferred ticks are usually concluded by the bound rather than run on the pre-close bar, and indicators see fewer bars right after gaps.
+3. `HOUR_4` / `WEEK_1` / `MONTH_1` T-Invest candle start times are not verified (`DAY_1` is verified).
+4. Earlier follow-ups (MVP-6.12): recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error; Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode.
+5. Publication: PR `agent/review/mvp-6.13` → `master` (merge commit pinned to `db09a39`); mirror the MVP-6.13 records **and** the owner's `AGENTS.md` handoff section (`agent/control @ 5abd376`); close Issue #9.
