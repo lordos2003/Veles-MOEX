@@ -53,6 +53,14 @@ long-lived AsyncSession is shared by concurrent bot passes and must be
 serialized (see ``app/persistence`` and ``app/bots``); B3 — a bot state change
 (in particular a restart after ERROR) resets the per-bot scheduler state
 (:meth:`LiveCycleScheduler.advance`).
+
+Round-2 review correction (B4): the deferred tick runs on the **latest closed
+bar** (a complete candle that started before the deferred boundary), not on a
+candle inside the deferred bar's own range — a bar without trades has no
+candle, so the old rule could stall the bot in ``deferred`` forever. The
+deferral is also bounded: while tradable, if no such candle exists and a newer
+bar boundary has passed, the deferral is concluded with one transient failure
+and normal boundary processing resumes.
 """
 
 from __future__ import annotations
@@ -379,15 +387,21 @@ class LiveCycleScheduler:
     async def _process_deferred(
         self, ticker: _BotTicker, config: StrategyConfig, now: datetime
     ) -> None:
-        """S6 (B1): re-check the session for a deferred tick at the scheduler cadence.
+        """S6 (B1) + B4: re-check the session for a deferred tick at the cadence.
 
         While the instrument is not tradable the deferral persists (it is never
         a failure count). An unknown/failed status is counted as a transient
-        (S3) but does not drop the deferral; the tick itself is skipped. The
-        moment the instrument is tradable again the deferred tick runs exactly
-        once on the closed bar of the deferred boundary: the S2 max-wait
-        timeout does not apply (the tick was deferred, not lost), and the
-        confirmation retries on the next pass while the bar is absent.
+        (S3) but does not drop the deferral. The moment the instrument is
+        tradable again the deferred tick runs exactly once, on the **latest
+        closed bar** (B4): a complete candle that started **before** the
+        deferred boundary. A bar without trades has no candle, so the tick
+        must not wait for a candle inside the deferred bar's own range — the
+        S2 max-wait timeout does not apply (the tick was deferred, not lost).
+
+        B4 bound: if the instrument is tradable, no such candle exists yet and
+        a newer bar boundary has already passed, the deferral is concluded
+        with one transient failure and normal boundary processing resumes — a
+        deferred bot is never stuck while trading is open.
         """
         boundary = ticker.pending_boundary
         assert boundary is not None
@@ -395,13 +409,25 @@ class LiveCycleScheduler:
         if verdict is not _StatusVerdict.AVAILABLE:
             return  # UNAVAILABLE: deferral persists; FAILED: counted (S3)
         snapshot = await self._snapshot_provider(ticker.figi, config)
-        if not self._closed_bar_confirmed(snapshot, boundary, config.timeframe):
-            return  # bar data not there yet: retry confirmation next pass
-        ticker.deferred = False
-        success = await self._run_cycle(ticker, snapshot)
-        if success:
-            ticker.failures = 0
-        self._conclude_boundary(ticker, boundary)
+        if self._latest_closed_bar_before(snapshot, boundary):
+            ticker.deferred = False
+            success = await self._run_cycle(ticker, snapshot)
+            if success:
+                ticker.failures = 0
+            self._conclude_boundary(ticker, boundary)
+            return
+        tf = config.timeframe
+        newer_boundary = self._bar_start(
+            now - timedelta(seconds=self._settings.bar_close_delay_seconds), tf
+        )
+        if newer_boundary > boundary:
+            await self._count_transient(
+                ticker,
+                f"deferred tick not confirmed (no closed bar before "
+                f"{boundary.isoformat()}); newer boundary "
+                f"{newer_boundary.isoformat()} passed",
+            )
+            self._conclude_boundary(ticker, boundary)
 
     async def _confirm_boundary(
         self, ticker: _BotTicker, config: StrategyConfig, tf: Timeframe,
@@ -468,6 +494,21 @@ class LiveCycleScheduler:
                 candle.is_complete is True
                 and range_start <= candle.timestamp < boundary
             ):
+                return True
+        return False
+
+    def _latest_closed_bar_before(
+        self, snapshot: MarketSnapshot, boundary: datetime
+    ) -> bool:
+        """B4: a complete candle that started before ``boundary`` exists.
+
+        The S6 deferred tick runs on the **latest closed bar**: any complete
+        candle started before the deferred boundary confirms it. The deferred
+        bar's own range is deliberately not required — a bar without trades
+        has no candle, and waiting for one would stall the bot silently.
+        """
+        for candle in snapshot.candles:
+            if candle.is_complete is True and candle.timestamp < boundary:
                 return True
         return False
 

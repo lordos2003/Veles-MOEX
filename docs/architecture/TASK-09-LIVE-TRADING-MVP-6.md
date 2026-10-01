@@ -1583,6 +1583,33 @@ deal) stay authoritative.
 - A newer boundary supersedes an older still-pending (non-deferred) one
   without a failure count: only the latest pending boundary is kept (no
   catch-up of missed bars).
+- Round-2 correction **B4** (see below): the deferred tick runs on the
+  **latest closed bar** (a complete candle that started before the deferred
+  boundary), not on a candle inside the deferred bar's own range, and the
+  deferral is bounded so a bot is never stuck while trading is open.
+
+### B4. Deferred tick runs on the latest closed bar, with a bound (round-2 correction)
+
+- Motivation (review B4): a bar without trades has **no candle** (T-Invest has
+  no empty candles). The round-1 rule confirmed the deferred tick only by a
+  candle inside the deferred bar's own range, so a no-trade last bar before a
+  session close left the deferred tick unconfirmed forever — the bot stalled
+  silently in `deferred` (reproduced on the MVP-6.13 harness: executions=0
+  with `TRADING_AVAILABLE` at +14 h/15 h/16 h/20 h/48 h).
+- Fix 1: once the instrument is tradable, the deferred tick is confirmed by
+  the **latest closed bar** — the raw snapshot contains at least one candle
+  with `is_complete is True` and `timestamp < deferred boundary` (`_latest_closed_bar_before`).
+  The cycle then runs exactly once on that data and the boundary is concluded.
+- Fix 2 (bound): while the instrument is tradable, if no such candle exists
+  yet and a **newer** bar boundary has already passed (the bar containing
+  `now − delay` starts after the deferred boundary), the deferral is concluded
+  with **one transient failure** (S4 counted) and normal boundary processing
+  resumes on the next pass. A deferred bot is never stuck while trading is
+  open; the transient count is part of the same per-bot S4 counter.
+- B4 does not change the non-deferred S2 path: an unconfirmed non-deferred bar
+  still retries up to `max_wait` and then counts one transient failure.
+- S6 tests from round 1 stay green: they already carry a complete candle
+  before the deferred boundary, which the B4 rule accepts as well.
 
 ### B2. Shared live-session serialization (round-1 correction)
 

@@ -683,6 +683,82 @@ async def test_s6_several_closed_session_boundaries_produce_one_deferred_cycle()
     assert rt.fail_reasons == []
 
 
+async def test_s6_deferred_tick_runs_on_latest_closed_bar_when_deferred_bar_has_no_candle() -> None:
+    # B4 (review round 2, reproduction): the deferred bar itself has no candle
+    # (a bar without trades has none), but a complete candle that started
+    # BEFORE the deferred boundary exists. The deferred tick must run exactly
+    # once on that latest closed bar at the first tradable moment — not wait
+    # forever for a candle inside the deferred bar's own range.
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = ProgrammedTradingStatusBroker(
+        TradingStatus.TRADING_UNAVAILABLE,  # boundary tick: deferral
+        TradingStatus.TRADING_AVAILABLE,    # tradable at +14h -> run
+    )
+    # The last closed bar is [T0-10m, T0-5m); the deferred bar [T0-5m, T0) has
+    # no candle (the reviewer's reproduction shape).
+    snaps = FakeSnapshotProvider(
+        _single_candle_snapshot(T0 - timedelta(minutes=10))
+    )
+    sched = _make_scheduler(clock, rt, broker=broker, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert snaps.requests == []
+    assert rt.fail_reasons == []
+
+    clock.set(T0 + timedelta(hours=14))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+    assert len(snaps.requests) == 1
+    assert rt.fail_reasons == []
+    assert sched.last_error_for(1) is None
+
+
+async def test_s6_deferred_tick_is_bounded_when_no_candle_and_newer_boundary_passes() -> None:
+    # B4 (review round 2, item 2): tradable + no closed bar before the
+    # deferred boundary + a newer bar boundary has passed -> the deferral is
+    # concluded with ONE transient failure and normal boundary processing
+    # resumes. The bound counts exactly one: two further transient failures on
+    # the following boundaries trigger the S4 ERROR at 3.
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = ProgrammedTradingStatusBroker(
+        TradingStatus.TRADING_UNAVAILABLE,  # boundary tick: deferral
+        TradingStatus.TRADING_AVAILABLE,    # +15m: bound -> 1 transient, conclude
+        "SOME_FUTURE_STATUS",               # +15m+10s: 2nd transient (normal path)
+        "SOME_FUTURE_STATUS",               # +20m+5s: 3rd transient -> ERROR
+    )
+    snaps = FakeSnapshotProvider(_single_candle_snapshot(None))  # no candles at all
+    sched = _make_scheduler(clock, rt, broker=broker, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []
+
+    clock.set(T0 + timedelta(minutes=15, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []  # the bound itself never runs a cycle
+    assert rt.fail_reasons == []  # 1 transient < 3
+
+    clock.set(T0 + timedelta(minutes=15, seconds=10))
+    await sched.advance()
+    await sched.settle()
+    assert rt.fail_reasons == []
+
+    clock.set(T0 + timedelta(minutes=20, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.fail_reasons) == 1
+    assert "consecutive transient cycle failures" in rt.fail_reasons[0]
+    assert rt.state is BotState.ERROR
+    assert rt.executions == []
+
+
 async def test_b1_closed_bar_confirmed_by_range_not_exact_equality() -> None:
     # B1: the closed bar is confirmed by a timestamp *range*, not exact
     # equality. A day candle stamped at a non-midnight start (03:00 UTC) still
