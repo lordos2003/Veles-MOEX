@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN REVIEW — round 3 REJECTED (B5); correction round 3 assigned to Кодер**
+**IN REVIEW — round 4 REJECTED (B6); correction round 4 assigned to Кодер**
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.13` (create from current `master` @ `eb08fbf`)
@@ -125,6 +125,20 @@ Review: `.agent/REVIEW-MVP-6.13.md` → "Round 2" — **REJECTED**, one blocking
 ## Correction round 3 (review 2026-10-01)
 
 Review: `.agent/REVIEW-MVP-6.13.md` → "Round 3" — **REJECTED**, one blocking finding (B5). In the deferred path an empty snapshot right after the session reopens (the wall-clock lookback window is inside the night gap) is counted as a transient failure on every 1-s pass, so the bot goes to ERROR within ~3 s. Treat it as "not confirmed yet" and count only via the B4 bound. Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.13-REV3.md`.
+
+## Correction round 4 (review 2026-10-01)
+
+Review: `.agent/REVIEW-MVP-6.13.md` → "Round 4" — **REJECTED**, one blocking finding (B6):
+- failures are counted per retry attempt instead of per tick (since round 1);
+- the B4 bound fires immediately at reopen because boundaries passed during the closed session;
+- the deferred status is polled every 1 s.
+
+Clarification of S2/S4/S6 (reviewer, binding):
+- one tick counts at most **one** transient failure;
+- the B4 bound counts only boundaries that pass **after** the instrument became tradable;
+- the deferred status is re-checked every `bar_close_retry_seconds`.
+
+Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.13-REV4.md`.
 
 ## Publication (mandatory, see `AGENTS.md` §6 and `.agent/CODER-WORKFLOW.md` → "Mandatory push rule")
 

@@ -180,3 +180,49 @@ In practice every intraday bot whose last tick fell at the session close would b
 The owner's commit `docs: mirror AGENTS.md to control; enable handoff pickup from .ai/context.md` adds a "Контекстная передача (handoff)" section to `AGENTS.md` on `agent/control`. It is a workflow addition by the owner, with no conflict with the review process. Mirror it to `master` with the MVP-6.13 publication.
 
 **No publication to master.**
+
+---
+
+## Round 4 — Verdict
+
+**REJECTED — one correction required (B6).** The B5 code change is correct in isolation, but the reopen scenario still ends in ERROR through two other paths. One of them (B6.1) has existed since round 1 and was missed by the reviewer in earlier rounds.
+
+Reviewed: `b46c5e2` (`agent/review/mvp-6.13`, pushed, in sync with origin), base `master @ eb08fbf`.
+Report: `.agent/REPORT-MVP-6.13-REV3.md` (`agent/control @ 9e71175`). Reviewer: Claude, 2026-10-01.
+
+### Independent re-run
+
+`pytest` **482 passed, 1 skipped**; `ruff` clean; alembic head `0005_deal_continuation`.
+
+### Probes on `b46c5e2`
+
+1. **Reopen** (the round-3 scenario, extended to 5 minutes of open session with no data yet):
+   `fail_reasons = ['bot 1: 3 consecutive transient cycle failures (last: no candle history (night gap))']` — still ERROR within seconds.
+2. **Normal path, single boundary**, session open, `MarketDataUnavailable` until trades appear, 25 s:
+   `snapshot_calls = 3, fail_reasons = ['bot 1: 3 consecutive transient cycle failures …']`. **One tick produced three failures.**
+
+### Blocking finding
+
+#### B6. Failure counting is per retry attempt, and the B4 bound fires immediately at reopen
+
+- **B6.1 (since round 1).** In `_confirm_boundary()` the snapshot provider is called without handling. A `MarketDataUnavailable` or broker transport error on a retry attempt goes to `_handle_exception()` and is counted **on every retry slot (5 s)**. S2/S4 say an unconfirmed tick is retried until `max_wait` and then counts **one** transient failure. "3 consecutive transient failures" means three **ticks**, not three retries of one tick. Today one quiet bar (no trades yet, e.g. right after the open or on a thin instrument) puts the bot into ERROR in ~15 s.
+- **B6.2 (B4 bound).** `_process_deferred()` concludes the deferral as soon as `newer_boundary > boundary` while tradable. After a night or weekend, many boundaries have **already** passed during the closed session, so the bound fires on the first tradable pass. It counts one failure and hands over to the normal path, where B6.1 adds the rest.
+- **B6.3 (reviewer's S6 wording).** In deferred mode the trading status is re-checked on **every 1-s scheduler pass** for the whole night or weekend. With many bots this is a GetTradingStatus storm against the T-Invest rate limits. A rate-limit error is transient and counted per pass, so it can again lead to ERROR.
+
+**Required correction**
+
+1. **At most one transient failure per tick** (`AT_BAR_CLOSE`): a `MarketDataUnavailable`, transport error or unconfirmed bar during the retry window is "not confirmed yet". Count exactly **one** transient failure when `max_wait` expires without a successful cycle. Non-transient errors still go to ERROR immediately. Do the same per minute for `PER_MINUTE` (one failure per minute tick at most).
+2. **B4 bound relative to the reopen:** record when the deferred tick first sees the instrument tradable. The bound may conclude the deferral only after a bar boundary has passed **after** that moment, plus the normal `max_wait` (i.e. trading has been open for a full bar and data still has not confirmed).
+3. **Deferred status polling** at `bar_close_retry_seconds` (5 s), not every 1-s pass. A failed or rate-limited status during deferral counts at most once per bar boundary.
+4. Tests:
+   - the two probes above, with the bot staying RUNNING;
+   - reopen with no data for the first bar, then data appears → normal cycles run, at most one failure counted;
+   - three consecutive **ticks** that each time out → ERROR (the S4 threshold still works);
+   - deferred status polling cadence = 5 s.
+5. REPORT → `.agent/REPORT-MVP-6.13-REV4.md`, pushed, citing the pushed SHA.
+
+### Still open for the owner (from round 2)
+
+Bars without trades on thin instruments: after B6.1 such a bar costs one transient failure per tick, so three quiet bars in a row → ERROR. Whether a no-trade bar should be an uncounted skip remains an owner decision for a follow-up.
+
+**No publication to master.**

@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-6.13 — Live Cycle Scheduler
-**Status: IN REVIEW — round 3 REJECTED (B5: at session reopen a deferred intraday bot goes to ERROR within ~3 s, because the wall-clock snapshot window is empty and each 1-s pass counts a transient failure). B1–B4 closed. Correction round 3 submitted (2026-10-01); awaiting round-4 review.**
+**Status: IN REVIEW — round 4 REJECTED (B6: transient failures are counted per retry attempt instead of per tick; the B4 bound fires immediately at reopen; deferred status polled every second). B1–B5 closed. Correction round 4 assigned to Кодер.**
 
 - Review: `.agent/REVIEW-MVP-6.13.md`
 
