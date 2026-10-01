@@ -1754,3 +1754,96 @@ deal) stay authoritative.
 - `./.venv/Scripts/python.exe -m pytest -q` — full backend suite.
 - `ruff check app tests scripts` (from `backend/`), `alembic heads` (single
   head), `npm run build` (frontend unchanged, stays green).
+
+## 32. No-trade bars are skipped, not failures — MVP-6.14
+
+This section records MVP-6.14 (owner-approved contract N1–N3, 2026-10-01,
+GitHub Issue #11): on MOEX/T-Invest a bar interval without trades has **no
+candle** — the MVP-6.13 scheduler therefore treated an ordinary quiet period
+as "not confirmed" and, after `max_wait`, cost one transient failure per bar
+(3 consecutive bars → bot ERROR). The owner decision: a **proven** no-trade
+bar is a **skipped tick** — no strategy cycle, no failure count, the
+consecutive-failure counter is not reset — and the reason is observable via a
+read-only `last_skip_reason` in `GET /api/bots/{id}`. Proof is only ever from
+broker facts; an unproven no-trade case keeps the MVP-6.13 behaviour unchanged
+(a lagging data feed must still be detected).
+
+### N1. A proven no-trade bar is a skipped tick
+
+- A target bar `[bar_start, boundary)` (the same B1 confirmation range,
+  `bar_start = _bar_start(boundary - 1 s, tf)`) counts as **proven no-trade**
+  when the snapshot request succeeded **and**:
+
+  - (a) the snapshot has **no candle** in `[bar_start, boundary)` (a candle
+    present, even incomplete, disproves it), **and**
+  - (b) either a candle with `start ≥ boundary` exists (the broker's data is
+    already past the target bar — the forming candle of the next bar counts),
+    **or** the broker's last-trade time is known and `< bar_start` (no trade
+    since before the bar began).
+
+- Proven → the tick is **skipped** at once: no strategy cycle, no failure
+  count, the consecutive-failure counter is **not reset** (a skip is neither a
+  success nor a failure), no `max_wait` wait, and the boundary is concluded
+  (the bar is never retried). The reason is stored per bot in memory and
+  exposed read-only as `last_skip_reason` in `GET /api/bots/{id}`
+  (`LiveCycleScheduler.last_skip_reason_for`).
+- **Empty window**: an empty candle window (`NoTradesInWindow`, see N2) counts
+  as proven no-trade when the last-trade time is known and earlier than the
+  window start. If the last-trade time is unknown (`None`), nothing is proven.
+- Not proven (no newer candle, last trade unknown or inside/after the bar) →
+  the existing MVP-6.13 behaviour applies: wait until `max_wait`, then one
+  transient failure. A lagging feed is still detected.
+
+### N2. Broker facts (no inference)
+
+- `MarketSnapshot` gains `last_trade_at: datetime | None` — the broker's
+  last-trade timestamp, `None` when the broker gave none. It is a separate
+  field: the existing `timestamp` field keeps its MVP-6.10 meaning and
+  fallback (`last.timestamp or newest candle timestamp`). The value comes from
+  `LastPrice.timestamp`, which `TInvestAdapter._to_last_price` fills from the
+  T-Invest `GetLastPrices.lastPrices[].time` field (the official last-trade
+  time, decoded by `_timestamp_to_datetime` into timezone-aware UTC).
+- `MarketDataService.get_snapshot()` keeps raising `MarketDataUnavailable` for
+  an empty window, but raises a **subclass** `NoTradesInWindow(
+  MarketDataUnavailable)` carrying `last_trade_at` and `window_start` when the
+  last price is usable and the window has no candles. All existing
+  `MarketDataUnavailable` handling keeps working unchanged (it is a subclass;
+  the message text is unchanged).
+- No change to the snapshot trimming (C7), the lookback contract or the
+  wall-clock retrieval window.
+
+### N3. Where it applies
+
+- `AT_BAR_CLOSE`, normal path: N1 is checked on each confirmation attempt
+  (`_confirm_boundary`); a proven no-trade bar concludes the tick as a skip at
+  once. An unproven no-trade case keeps the retry/`max_wait` behaviour (and
+  the B6.1 one-transient-per-tick semantics).
+- `AT_BAR_CLOSE`, deferred path (S6): **unchanged** — a no-trade bar (or
+  `NoTradesInWindow`) while deferred is "not confirmed yet"; the S6/B4/B5/B6
+  rules decide. No skip is recorded on the deferred path.
+- `PER_MINUTE`: a `NoTradesInWindow` whose `last_trade_at < window_start` is a
+  skip, not counted — the forming bar without any candle is not a failure. An
+  unproven one is counted as before (S4 classification, 3 per-minute
+  transients → ERROR).
+- Nothing else changes: S1–S6, the B1–B6 rules, the failure threshold, and
+  the Deal / Risk / strategy semantics are untouched.
+
+### Tests (validation commands)
+
+- `./.venv/Scripts/python.exe -m pytest tests/test_mvp614_no_trade_bar.py -q`
+  — N1/N2/N3 coverage: skip with a newer candle (incl. the forming incomplete
+  candle), skip with a last trade before the bar start, unproven no-candle →
+  one transient at `max_wait`, lagging feed (last trade inside the bar) not
+  proven, 10 proven skips neither increment nor reset the counter (2 failures
+  + skips + 1 failure → ERROR), proven-quiet empty window skipped at
+  `AT_BAR_CLOSE` and `PER_MINUTE`, unproven empty window keeps the
+  `MarketDataUnavailable` behaviour (bar close: one transient at `max_wait`;
+  per minute: 3 transients → ERROR), deferred path unchanged
+  (`NoTradesInWindow` = "not confirmed yet", then the B4 cycle runs on
+  recovery), `get_snapshot` raises `NoTradesInWindow` with the fields and
+  fills `last_trade_at` from `LastPrice.timestamp`.
+- The MVP-6.13 scheduler tests (`tests/test_mvp613_scheduler.py`) stay green
+  unchanged: S6/B4/B5/B6 semantics are preserved.
+- `./.venv/Scripts/python.exe -m pytest -q` — full backend suite.
+- `ruff check app tests scripts` (from `backend/`), `alembic heads` (single
+  head, no new migration), `npm run build` (frontend unchanged, stays green).

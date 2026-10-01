@@ -79,6 +79,15 @@ the normal ``max_wait``, so a session reopen (e.g. after a night/weekend gap)
 gives the data a chance before the deferral is dropped. While deferred, the
 trading status is polled at the retry cadence (5 s), not on every 1-s pass, and
 a failed/rate-limited status counts at most once per bar boundary.
+
+MVP-6.14 (N1/N3, approved contract): a bar **proven** to contain no trades
+(no candle in the target bar and either a newer candle or a last trade before
+the bar start) is a **skipped tick** — no cycle, no failure count, the
+consecutive-failure counter is not reset — and the reason is observable via
+:meth:`LiveCycleScheduler.last_skip_reason_for` (``GET /api/bots/{id}``). The
+proof uses only broker facts (|NoTradesInWindow| / ``MarketSnapshot.last_trade_at``
+per N2); unproven cases keep the MVP-6.13 behaviour unchanged. The deferred S6
+path is unchanged: a no-trade bar while deferred stays "not confirmed yet".
 """
 
 from __future__ import annotations
@@ -95,6 +104,7 @@ from app.domain.instrument import TradingStatus
 from app.domain.marketdata import (
     MarketDataUnavailable,
     MarketSnapshot,
+    NoTradesInWindow,
     Timeframe,
 )
 from app.models.enums import BotState
@@ -218,6 +228,11 @@ class _BotTicker:
     last_minute: datetime | None = None
     # B3: the last state observed by advance(); a change resets the state above.
     last_seen_state: BotState | None = None
+    # MVP-6.14 (N1): the last skipped no-trade tick's reason (None until the
+    # first proven no-trade tick). Read-only observability via
+    # :meth:`LiveCycleScheduler.last_skip_reason_for`; reset with the rest of
+    # the ticker state on a bot state change (B3).
+    last_skip_reason: str | None = None
 
 
 class _StatusVerdict(Enum):
@@ -269,6 +284,11 @@ class LiveCycleScheduler:
     def last_error_for(self, bot_id: int) -> str | None:
         """The last scheduler failure reason for the bot (S4 observability)."""
         return self._last_errors.get(bot_id)
+
+    def last_skip_reason_for(self, bot_id: int) -> str | None:
+        """The last proven no-trade skip reason (MVP-6.14 N1 observability)."""
+        ticker = self._tickers.get(bot_id)
+        return ticker.last_skip_reason if ticker is not None else None
 
     async def run_forever(self) -> None:
         """Serve the scheduler until :meth:`shutdown` (production loop).
@@ -519,6 +539,14 @@ class LiveCycleScheduler:
         pending and exactly one transient is counted when ``max_wait`` expires.
         A non-transient data failure is a real error and fails the bot
         immediately (S4).
+
+        MVP-6.14 (N1): a bar **proven** to contain no trades (no candle in the
+        target range and a newer candle or a last trade before the bar start —
+        see :meth:`_proven_no_trade_bar`) concludes the tick as a **skip** at
+        once: no cycle, no failure count, no max-wait wait. The same applies to
+        an empty window proven quiet (|NoTradesInWindow| with a last trade
+        before the window started). An unproven no-trade case keeps the
+        behaviour above (a lagging feed must still be detected).
         """
         if now > boundary + timedelta(seconds=self._settings.bar_close_max_wait_seconds):
             await self._count_transient(
@@ -530,16 +558,110 @@ class LiveCycleScheduler:
         try:
             snapshot = await self._snapshot_provider(ticker.figi, config)
         except Exception as exc:  # noqa: BLE001 - classified by S4 policy
+            if isinstance(exc, NoTradesInWindow) and self._proven_no_trade_window(exc):
+                # MVP-6.14 (N1): an empty window proven quiet (last trade before
+                # the window started) concludes the tick as a skip at once.
+                self._skip_no_trade_bar(
+                    ticker, boundary, self._empty_window_skip_reason(exc)
+                )
+                return
             if not isinstance(exc, self._transient_error_types):
                 await self._fail_bot(ticker, f"live cycle failed: {exc}")
                 return
             return  # B6.1: transient -> "not confirmed yet", retry slot re-checks
+        if self._proven_no_trade_bar(snapshot, boundary, tf):
+            # MVP-6.14 (N1): a proven no-trade bar is a skipped tick — no cycle,
+            # no failure count, the counter is not reset.
+            self._skip_no_trade_bar(
+                ticker, boundary, self._bar_skip_reason(snapshot, boundary, tf)
+            )
+            return
         if self._closed_bar_confirmed(snapshot, boundary, tf):
             success = await self._run_cycle(ticker, snapshot)
             if success:
                 ticker.failures = 0
             self._conclude_boundary(ticker, boundary)
         # else: not confirmed yet -> the next retry slot re-checks (S2).
+
+    def _proven_no_trade_bar(
+        self, snapshot: MarketSnapshot, boundary: datetime, tf: Timeframe
+    ) -> bool:
+        """MVP-6.14 (N1): the target bar is proven to contain no trades.
+
+        The target bar is ``[bar_start(boundary - 1 s), boundary)`` — the same
+        range B1 confirms from. Proven only from broker facts: **no candle**
+        lies in the range (a candle present, even incomplete, disproves it)
+        **and** either a candle starting at/after ``boundary`` exists (the
+        broker's data is already past the target bar) or the broker's last
+        trade time is known and earlier than the bar start. A lagging feed (no
+        newer candle, unknown or in-bar last trade) is not proven and keeps
+        the MVP-6.13 max-wait behaviour.
+        """
+        range_start = self._bar_start(boundary - timedelta(seconds=1), tf)
+        for candle in snapshot.candles:
+            if range_start <= candle.timestamp < boundary:
+                return False
+        if any(candle.timestamp >= boundary for candle in snapshot.candles):
+            return True
+        return (
+            snapshot.last_trade_at is not None
+            and snapshot.last_trade_at < range_start
+        )
+
+    def _proven_no_trade_window(self, exc: NoTradesInWindow) -> bool:
+        """MVP-6.14 (N1): an empty window is proven quiet only from facts.
+
+        The broker's last trade time is known and earlier than the window
+        start. An unknown last-trade time proves nothing — the empty window
+        keeps the existing |MarketDataUnavailable| handling.
+        """
+        return exc.last_trade_at is not None and exc.last_trade_at < exc.window_start
+
+    def _bar_skip_reason(
+        self, snapshot: MarketSnapshot, boundary: datetime, tf: Timeframe
+    ) -> str:
+        """Human-readable reason for a proven no-trade bar (N1 observability)."""
+        range_start = self._bar_start(boundary - timedelta(seconds=1), tf)
+        if snapshot.last_trade_at is not None and snapshot.last_trade_at < range_start:
+            return (
+                f"no-trade bar skipped: no candle in "
+                f"[{range_start.isoformat()}, {boundary.isoformat()}) and last "
+                f"trade at {snapshot.last_trade_at.isoformat()} is before the "
+                f"bar start"
+            )
+        return (
+            f"no-trade bar skipped: no candle in "
+            f"[{range_start.isoformat()}, {boundary.isoformat()}) and a newer "
+            f"candle exists"
+        )
+
+    def _empty_window_skip_reason(self, exc: NoTradesInWindow) -> str:
+        """Human-readable reason for a proven-quiet empty window (N1)."""
+        return (
+            f"no-trade bar skipped: empty candle window since "
+            f"{exc.window_start.isoformat()} and last trade at "
+            f"{exc.last_trade_at.isoformat()} is before the window start"
+        )
+
+    def _record_skip(self, ticker: _BotTicker, reason: str) -> None:
+        """MVP-6.14 (N1): record a skipped no-trade tick.
+
+        No failure count, no counter reset (a skip is neither a success nor a
+        failure); the reason stays observable via
+        :meth:`last_skip_reason_for`.
+        """
+        ticker.last_skip_reason = reason
+
+    def _skip_no_trade_bar(
+        self, ticker: _BotTicker, boundary: datetime, reason: str
+    ) -> None:
+        """MVP-6.14 (N1): a proven no-trade AT_BAR_CLOSE tick is concluded.
+
+        The boundary is concluded (the bar is never retried) and the skip is
+        recorded. No cycle ran.
+        """
+        self._record_skip(ticker, reason)
+        self._conclude_boundary(ticker, boundary)
 
     def _supersede_pending(self, ticker: _BotTicker) -> None:
         """S6/S2: a newer boundary supersedes an older pending one (no catch-up).
@@ -622,6 +744,7 @@ class LiveCycleScheduler:
         ticker.deferred = False
         ticker.last_attempt_index = -1
         ticker.last_minute = None
+        ticker.last_skip_reason = None
         # B6 (review round 4): deferred-mode bookkeeping is per-deferral.
         ticker.deferred_status_check_at = None
         ticker.deferred_failed_bar = None
@@ -642,7 +765,15 @@ class LiveCycleScheduler:
             return  # S3: skip, not counted
         if verdict is _StatusVerdict.FAILED:
             return  # counted in _status_verdict
-        snapshot = await self._snapshot_provider(ticker.figi, config)
+        try:
+            snapshot = await self._snapshot_provider(ticker.figi, config)
+        except Exception as exc:  # noqa: BLE001 - classified by S4 policy
+            if isinstance(exc, NoTradesInWindow) and self._proven_no_trade_window(exc):
+                # MVP-6.14 (N3): a window proven quiet is a skip, not a failure
+                # — the forming bar without any candle is not a failure.
+                self._record_skip(ticker, self._empty_window_skip_reason(exc))
+                return
+            raise  # not proven -> counted as before (S4 classification)
         if await self._run_cycle(ticker, snapshot):
             ticker.failures = 0
 
