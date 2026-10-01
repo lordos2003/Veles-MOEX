@@ -759,6 +759,69 @@ async def test_s6_deferred_tick_is_bounded_when_no_candle_and_newer_boundary_pas
     assert rt.executions == []
 
 
+async def test_b5_deferred_reopen_empty_snapshot_is_not_counted_until_bound() -> None:
+    # B5 (review round 3, reproduction): right after a session reopens the
+    # wall-clock snapshot window (MVP-6.10: (lookback_bars + 1) x timeframe
+    # before 'now') lies inside the night/weekend gap, so the snapshot
+    # provider raises MarketDataUnavailable on every 1-s scheduler pass. In
+    # the deferred path that is "not confirmed yet", not a per-pass failure:
+    # the bot must stay RUNNING through the reopen seconds (before B5 it went
+    # to ERROR within ~3 s). Only the B4 bound (a newer boundary passed)
+    # counts exactly one transient; normal boundary processing then resumes.
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = ProgrammedTradingStatusBroker(
+        TradingStatus.TRADING_UNAVAILABLE,  # boundary tick: deferral
+        TradingStatus.TRADING_AVAILABLE,    # session reopens: window empty
+        TradingStatus.TRADING_AVAILABLE,
+        TradingStatus.TRADING_AVAILABLE,
+        TradingStatus.TRADING_AVAILABLE,
+        TradingStatus.TRADING_AVAILABLE,    # +5m: the B4 bound fires
+        TradingStatus.TRADING_AVAILABLE,    # +10m: normal processing resumes
+    )
+    snaps = FakeSnapshotProvider()
+    snaps.error = MarketDataUnavailable("no candle history (night gap)")
+    sched = _make_scheduler(clock, rt, broker=broker, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert snaps.requests == []  # S6: no snapshot while not tradable
+    assert rt.fail_reasons == []
+
+    # Reopen: every 1-s pass fetches, but the window is still empty.
+    for second in (6, 7, 8, 9):
+        clock.set(T0 + timedelta(seconds=second))
+        await sched.advance()
+        await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []  # B5: an empty snapshot is not a failure
+    assert rt.state is BotState.RUNNING  # before B5: ERROR within ~3 s
+    assert sched.last_error_for(1) is None
+    assert len(snaps.requests) == 4
+
+    # The B4 bound: a newer boundary has passed -> exactly one transient.
+    clock.set(T0 + timedelta(minutes=5, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []  # 1 transient < 3 -> still RUNNING
+    assert rt.state is BotState.RUNNING
+    assert sched.last_error_for(1) is None
+
+    # Normal boundary processing resumes; the next bar confirms, the cycle
+    # runs and the S4 counter resets on success.
+    snaps.error = None
+    snaps.snapshot = _single_candle_snapshot(T0 + timedelta(minutes=5))
+    clock.set(T0 + timedelta(minutes=10, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+    assert rt.fail_reasons == []
+    assert rt.state is BotState.RUNNING
+    assert sched.last_error_for(1) is None
+
+
 async def test_b1_closed_bar_confirmed_by_range_not_exact_equality() -> None:
     # B1: the closed bar is confirmed by a timestamp *range*, not exact
     # equality. A day candle stamped at a non-midnight start (03:00 UTC) still

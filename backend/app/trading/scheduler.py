@@ -61,6 +61,12 @@ candle, so the old rule could stall the bot in ``deferred`` forever. The
 deferral is also bounded: while tradable, if no such candle exists and a newer
 bar boundary has passed, the deferral is concluded with one transient failure
 and normal boundary processing resumes.
+
+Round-3 review correction (B5): while the deferred tick waits for its first
+tradable moment, an unavailable snapshot (|MarketDataUnavailable| — the
+wall-clock lookback window is empty right after a session reopen, lying inside
+the night/weekend gap) counts as **"not confirmed yet"**, not as a per-pass
+failure; only the B4 bound concludes the deferral (one transient failure).
 """
 
 from __future__ import annotations
@@ -402,14 +408,26 @@ class LiveCycleScheduler:
         a newer bar boundary has already passed, the deferral is concluded
         with one transient failure and normal boundary processing resumes — a
         deferred bot is never stuck while trading is open.
+
+        B5 (review round 3): an unavailable snapshot (|MarketDataUnavailable| —
+        the wall-clock lookback window is empty right after a session reopen,
+        lying inside the night/weekend gap) or a snapshot with no closed bar
+        before the boundary is **"not confirmed yet"**, never a per-pass
+        failure. Only the B4 bound may conclude the deferral.
         """
         boundary = ticker.pending_boundary
         assert boundary is not None
         verdict = await self._status_verdict(ticker)
         if verdict is not _StatusVerdict.AVAILABLE:
             return  # UNAVAILABLE: deferral persists; FAILED: counted (S3)
-        snapshot = await self._snapshot_provider(ticker.figi, config)
-        if self._latest_closed_bar_before(snapshot, boundary):
+        try:
+            snapshot = await self._snapshot_provider(ticker.figi, config)
+        except MarketDataUnavailable:
+            # B5: "not confirmed yet" — the provider cannot return a snapshot
+            # at all (empty window after the gap), so this pass is not a
+            # failure; the B4 bound below decides.
+            snapshot = None
+        if snapshot is not None and self._latest_closed_bar_before(snapshot, boundary):
             ticker.deferred = False
             success = await self._run_cycle(ticker, snapshot)
             if success:

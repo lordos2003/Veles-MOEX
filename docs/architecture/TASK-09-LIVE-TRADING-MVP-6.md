@@ -1611,6 +1611,31 @@ deal) stay authoritative.
 - S6 tests from round 1 stay green: they already carry a complete candle
   before the deferred boundary, which the B4 rule accepts as well.
 
+### B5. Empty snapshot in the deferred path is "not confirmed yet" (round-3 correction)
+
+- Motivation (review B5): right after a session reopens the production
+  snapshot provider (`MarketDataService.get_snapshot`, MVP-6.10/C7) requests
+  candles in a **wall-clock window** of `(lookback_bars + 1) × timeframe`
+  before "now". For an intraday bot that window lies inside the night/weekend
+  gap (M5 with `lookback_bars = 50` gives ≈ 4 h 15 m against a 7–10 h night
+  gap), so the provider raises `MarketDataUnavailable("no candle history")`
+  on every 1-s scheduler pass. In the deferred path that was counted as a
+  transient failure per pass → the bot went to ERROR within ~3 s of the
+  session opening (reproduced: `3 consecutive transient cycle failures (last:
+  no candle history (night gap))`).
+- Fix: while tradable, an unavailable/empty snapshot
+  (`MarketDataUnavailable`) or a snapshot with no closed bar before the
+  deferred boundary is **"not confirmed yet"** in the deferred path — never a
+  per-pass failure. Only the B4 bound (a newer boundary has passed) concludes
+  the deferral with **one** transient failure; normal boundary processing then
+  resumes.
+- Consequence of the MVP-6.10 wall-clock window (documented): for intraday
+  bots the pre-close bars are usually **outside** the window at reopen, so the
+  deferred tick is in practice **concluded by the B4 bound** rather than run.
+  `DAY_1` (window ≈ `lookback_bars` days) is unaffected. Fetching the snapshot
+  **by bar count across session gaps** is a separate follow-up — it also
+  affects indicator input right after gaps (out of scope of MVP-6.13).
+
 ### B2. Shared live-session serialization (round-1 correction)
 
 - The production live graph shares ONE long-lived `AsyncSession`
