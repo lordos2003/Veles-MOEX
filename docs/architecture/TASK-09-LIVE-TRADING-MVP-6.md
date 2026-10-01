@@ -1605,7 +1605,9 @@ deal) stay authoritative.
   `now − delay` starts after the deferred boundary), the deferral is concluded
   with **one transient failure** (S4 counted) and normal boundary processing
   resumes on the next pass. A deferred bot is never stuck while trading is
-  open; the transient count is part of the same per-bot S4 counter.
+  open; the transient count is part of the same per-bot S4 counter. Amended by
+  B6.2 (round 4): the bound only applies after a full bar + `max_wait` from
+  the **first tradable moment** (see the B6 section below).
 - B4 does not change the non-deferred S2 path: an unconfirmed non-deferred bar
   still retries up to `max_wait` and then counts one transient failure.
 - S6 tests from round 1 stay green: they already carry a complete candle
@@ -1635,6 +1637,47 @@ deal) stay authoritative.
   `DAY_1` (window ≈ `lookback_bars` days) is unaffected. Fetching the snapshot
   **by bar count across session gaps** is a separate follow-up — it also
   affects indicator input right after gaps (out of scope of MVP-6.13).
+
+### B6. One transient failure per tick; deferred poll cadence and bound-relative-to-reopen (round-4 correction)
+
+- Motivation (review B6, three related defects):
+  1. `_confirm_boundary()` called the snapshot provider without handling — a
+     `MarketDataUnavailable` or broker transport error on a **retry attempt**
+     was counted on **every 5-s retry slot** (S4: "3 consecutive transient
+     failures" must mean three **ticks**, not three retries of one tick). One
+     quiet bar (no trades yet) → ERROR in ~15 s.
+  2. The B4 bound (a newer bar boundary has passed) fires **immediately at the
+     session reopen** — after a night/weekend gap, many boundaries have
+     already passed, so the deferral was concluded on the first tradable pass
+     and the retry-slot counting (defect 1) added the rest.
+  3. The deferred path re-checked `GetTradingStatus` on every **1-s** pass for
+     the whole closed session — a rate-limit storm; a rate-limit error counted
+     as a transient per pass → possible ERROR.
+- Fix 1 (B6.1): a tick is **at most one transient failure**. Inside the retry
+  window of `_confirm_boundary()`, a transient data failure
+  (`MarketDataUnavailable`, transport error, still-unconfirmed bar) is
+  **"not confirmed yet"** — no count; exactly **one** transient is counted when
+  `max_wait` expires without a successful cycle. A **non-transient** error
+  still fails the bot immediately (S4). `PER_MINUTE` was already one failure
+  per minute tick at most (one attempt claimed per minute); the S4 threshold
+  now means three consecutive **quiet bars** → ERROR, not three retry slots
+  of one bar.
+- Fix 2 (B6.2): the deferred tick records the **first tradable moment**; the
+  B4 bound may conclude the deferral only **after a full bar of trading has
+  passed from that moment, plus the normal `max_wait`**
+  (`_bar_start(first_tradable) + timeframe + max_wait`). The reopen therefore
+  gets a full bar (+ max_wait) of data time before the conclusion — the bot is
+  never dropped within seconds of the session opening, and still never stuck
+  while trading is open.
+- Fix 3 (B6.3): while deferred, the trading status is polled at the **retry
+  cadence** (`bar_close_retry_seconds`, 5 s) instead of every 1-s pass, and a
+  failed/rate-limited status counts **at most once per bar boundary** — a
+  persistent status failure over one bar is ONE transient (three consecutive
+  bar boundaries still trip the S4 threshold).
+- Amends the B4 "newer boundary" wording above: the bound is now relative to
+  the first tradable moment (B6.2), and the B5 "one transient" conclusion only
+  applies via that bound.
+
 
 ### B2. Shared live-session serialization (round-1 correction)
 

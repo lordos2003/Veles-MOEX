@@ -718,18 +718,22 @@ async def test_s6_deferred_tick_runs_on_latest_closed_bar_when_deferred_bar_has_
 
 
 async def test_s6_deferred_tick_is_bounded_when_no_candle_and_newer_boundary_passes() -> None:
-    # B4 (review round 2, item 2): tradable + no closed bar before the
-    # deferred boundary + a newer bar boundary has passed -> the deferral is
-    # concluded with ONE transient failure and normal boundary processing
-    # resumes. The bound counts exactly one: two further transient failures on
-    # the following boundaries trigger the S4 ERROR at 3.
+    # B4 (review round 2, item 2) + B6.2 (review round 4): tradable + no
+    # closed bar before the deferred boundary -> the deferral is concluded
+    # with ONE transient failure and normal boundary processing resumes. The
+    # bound is relative to the FIRST tradable moment: a full bar of trading
+    # plus the normal max_wait must pass before the conclusion (a session
+    # reopen is not concluded within seconds). The bound counts exactly one:
+    # two further transient failures on the following boundaries trigger the
+    # S4 ERROR at 3.
     clock = FakeClock(T0 + timedelta(seconds=5))
     rt = _runtime(1)
     broker = ProgrammedTradingStatusBroker(
         TradingStatus.TRADING_UNAVAILABLE,  # boundary tick: deferral
-        TradingStatus.TRADING_AVAILABLE,    # +15m: bound -> 1 transient, conclude
-        "SOME_FUTURE_STATUS",               # +15m+10s: 2nd transient (normal path)
-        "SOME_FUTURE_STATUS",               # +20m+5s: 3rd transient -> ERROR
+        TradingStatus.TRADING_AVAILABLE,    # +15m: first tradable moment
+        TradingStatus.TRADING_AVAILABLE,    # +21m: bound -> 1 transient, conclude
+        "SOME_FUTURE_STATUS",               # +21m+10s: 2nd transient (normal path)
+        "SOME_FUTURE_STATUS",               # +26m+5s: 3rd transient -> ERROR
     )
     snaps = FakeSnapshotProvider(_single_candle_snapshot(None))  # no candles at all
     sched = _make_scheduler(clock, rt, broker=broker, snapshot_provider=snaps)
@@ -739,18 +743,31 @@ async def test_s6_deferred_tick_is_bounded_when_no_candle_and_newer_boundary_pas
     assert rt.executions == []
     assert rt.fail_reasons == []
 
+    # First tradable moment: the deferral persists — the bound needs a full
+    # bar of trading + max_wait from here (B6.2), it does not fire on the
+    # first pass just because night boundaries are behind us.
     clock.set(T0 + timedelta(minutes=15, seconds=5))
     await sched.advance()
     await sched.settle()
-    assert rt.executions == []  # the bound itself never runs a cycle
-    assert rt.fail_reasons == []  # 1 transient < 3
+    assert rt.executions == []
+    assert rt.fail_reasons == []  # 0 counts so far: B6.2
+    assert rt.state is BotState.RUNNING
 
-    clock.set(T0 + timedelta(minutes=15, seconds=10))
+    # A full bar (T0+15m -> T0+20m) plus max_wait has passed -> bound, exactly
+    # one transient, normal processing resumes.
+    clock.set(T0 + timedelta(minutes=21, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []  # 1 transient < 3 -> still RUNNING
+    assert rt.state is BotState.RUNNING
+
+    clock.set(T0 + timedelta(minutes=21, seconds=10))
     await sched.advance()
     await sched.settle()
     assert rt.fail_reasons == []
 
-    clock.set(T0 + timedelta(minutes=20, seconds=5))
+    clock.set(T0 + timedelta(minutes=26, seconds=5))
     await sched.advance()
     await sched.settle()
     assert len(rt.fail_reasons) == 1
@@ -763,11 +780,13 @@ async def test_b5_deferred_reopen_empty_snapshot_is_not_counted_until_bound() ->
     # B5 (review round 3, reproduction): right after a session reopens the
     # wall-clock snapshot window (MVP-6.10: (lookback_bars + 1) x timeframe
     # before 'now') lies inside the night/weekend gap, so the snapshot
-    # provider raises MarketDataUnavailable on every 1-s scheduler pass. In
-    # the deferred path that is "not confirmed yet", not a per-pass failure:
-    # the bot must stay RUNNING through the reopen seconds (before B5 it went
-    # to ERROR within ~3 s). Only the B4 bound (a newer boundary passed)
-    # counts exactly one transient; normal boundary processing then resumes.
+    # provider raises MarketDataUnavailable on the deferred pass. That is
+    # "not confirmed yet", not a per-pass failure: the bot must stay RUNNING
+    # through the reopen (before B5 it went to ERROR within ~3 s). B6.2 (round
+    # 4): the bound is relative to the first tradable moment — a full bar of
+    # trading + max_wait, so the deferral is not concluded within seconds of
+    # the reopen. B6.3: the status (and snapshot) are polled at the 5-s retry
+    # cadence, not on every 1-s pass.
     clock = FakeClock(T0 + timedelta(seconds=5))
     rt = _runtime(1)
     broker = ProgrammedTradingStatusBroker(
@@ -776,7 +795,7 @@ async def test_b5_deferred_reopen_empty_snapshot_is_not_counted_until_bound() ->
         TradingStatus.TRADING_AVAILABLE,
         TradingStatus.TRADING_AVAILABLE,
         TradingStatus.TRADING_AVAILABLE,
-        TradingStatus.TRADING_AVAILABLE,    # +5m: the B4 bound fires
+        TradingStatus.TRADING_AVAILABLE,    # +6m: the B4 bound fires
         TradingStatus.TRADING_AVAILABLE,    # +10m: normal processing resumes
     )
     snaps = FakeSnapshotProvider()
@@ -789,7 +808,7 @@ async def test_b5_deferred_reopen_empty_snapshot_is_not_counted_until_bound() ->
     assert snaps.requests == []  # S6: no snapshot while not tradable
     assert rt.fail_reasons == []
 
-    # Reopen: every 1-s pass fetches, but the window is still empty.
+    # Reopen: the deferred pass polls at the 5-s cadence; the window is empty.
     for second in (6, 7, 8, 9):
         clock.set(T0 + timedelta(seconds=second))
         await sched.advance()
@@ -798,10 +817,11 @@ async def test_b5_deferred_reopen_empty_snapshot_is_not_counted_until_bound() ->
     assert rt.fail_reasons == []  # B5: an empty snapshot is not a failure
     assert rt.state is BotState.RUNNING  # before B5: ERROR within ~3 s
     assert sched.last_error_for(1) is None
-    assert len(snaps.requests) == 4
+    assert len(snaps.requests) == 1  # B6.3: one poll at +6s, not per second
 
-    # The B4 bound: a newer boundary has passed -> exactly one transient.
-    clock.set(T0 + timedelta(minutes=5, seconds=5))
+    # A full bar + max_wait after the first tradable moment (B6.2) -> the B4
+    # bound fires with exactly one transient; the deferral concludes.
+    clock.set(T0 + timedelta(minutes=6, seconds=5))
     await sched.advance()
     await sched.settle()
     assert rt.executions == []
@@ -820,6 +840,200 @@ async def test_b5_deferred_reopen_empty_snapshot_is_not_counted_until_bound() ->
     assert rt.fail_reasons == []
     assert rt.state is BotState.RUNNING
     assert sched.last_error_for(1) is None
+
+
+async def test_b6_reopen_without_data_stays_running_through_full_bar_then_recovers() -> None:
+    # B6 (review round 4, probe 1): 5 minutes of open session after a
+    # night/weekend reopen with NO market data yet must not error the bot.
+    # Before B6: the per-retry-slot counting plus the reopen-instant bound
+    # produced 3 transient failures within seconds. After B6: at most one
+    # transient per tick — the deferred path polls at the 5-s cadence (B6.3),
+    # the bound needs a full bar + max_wait after the first tradable moment
+    # (B6.2), and a quiet bar simply stays pending (B6.1).
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = ProgrammedTradingStatusBroker(
+        TradingStatus.TRADING_UNAVAILABLE,
+        *([TradingStatus.TRADING_AVAILABLE] * 100),
+    )
+    snaps = FakeSnapshotProvider()
+    snaps.error = MarketDataUnavailable("no candle history (night gap)")
+    sched = _make_scheduler(clock, rt, broker=broker, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []
+
+    # The whole first bar after the reopen: a pass every second, no data yet.
+    for second in range(6, 306):
+        clock.set(T0 + timedelta(seconds=second))
+        await sched.advance()
+        await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []  # at most one transient per tick
+    assert rt.state is BotState.RUNNING
+    assert sched.last_error_for(1) is None
+    assert len(snaps.requests) == 60  # 5-s cadence (B6.3), not one per second
+
+    # Data appears at +9m: post-reopen candles start AFTER the deferred
+    # boundary, so the deferred tick is concluded by the bound (one transient)
+    # and normal boundary processing picks up the first closed post-reopen bar.
+    snaps.error = None
+    snaps.snapshot = _single_candle_snapshot(T0 + timedelta(minutes=5))
+    clock.set(T0 + timedelta(minutes=10, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+    assert rt.fail_reasons == []  # bound counted 1 transient < 3
+    assert rt.state is BotState.RUNNING
+    assert sched.last_error_for(1) is None
+
+    await sched.advance()  # same clock: the normal path takes over
+    await sched.settle()
+    assert len(rt.executions) == 1
+    assert rt.fail_reasons == []
+    assert rt.state is BotState.RUNNING
+    assert sched.last_error_for(1) is None
+
+
+async def test_b6_quiet_bar_retries_do_not_count_per_retry_slot() -> None:
+    # B6.1 (review round 4, probe 2): one boundary tick, session open, no
+    # trades yet — the provider raises MarketDataUnavailable on every retry
+    # slot. Before B6.1 every 5-s slot counted a transient (ERROR in ~15 s
+    # for one quiet bar); after: the retry window is "not confirmed yet" and
+    # exactly one transient is counted when max_wait expires.
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    snaps = FakeSnapshotProvider(_single_candle_snapshot(T0))
+    snaps.error = MarketDataUnavailable("bar without trades yet")
+    sched = _make_scheduler(clock, rt, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+
+    # Retry slots at +5s..+30s: six attempts, none counted.
+    for second in (10, 15, 20, 25, 30):
+        clock.set(T0 + timedelta(seconds=second))
+        await sched.advance()
+        await sched.settle()
+    assert rt.fail_reasons == []
+    assert rt.state is BotState.RUNNING
+    assert sched.last_error_for(1) is None
+    assert len(snaps.requests) == 6
+
+    # max_wait expires: exactly ONE transient for the tick (1 < 3).
+    clock.set(T0 + timedelta(seconds=65))
+    await sched.advance()
+    await sched.settle()
+    assert rt.fail_reasons == []
+    assert rt.state is BotState.RUNNING
+    assert sched.last_error_for(1) is None
+
+    # Data appears: the next boundary confirms and the cycle runs.
+    snaps.error = None
+    clock.set(T0 + timedelta(minutes=5, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.executions) == 1
+    assert rt.fail_reasons == []
+    assert rt.state is BotState.RUNNING
+    assert sched.last_error_for(1) is None
+
+
+async def test_b6_three_consecutive_quiet_ticks_still_error() -> None:
+    # B6.1 preserves S4: three consecutive TICKS that each time out count one
+    # transient each -> ERROR at the S4 threshold. Before B6.1, three retry
+    # slots of ONE tick were enough; after, three quiet bars in a row are.
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    snaps = FakeSnapshotProvider(_single_candle_snapshot(None))  # never confirms
+    sched = _make_scheduler(clock, rt, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+
+    # Tick 1: retry slots +5s..+60s count nothing; at +65s (max_wait) -> 1.
+    for second in (30, 60):
+        clock.set(T0 + timedelta(seconds=second))
+        await sched.advance()
+        await sched.settle()
+    assert rt.fail_reasons == []
+    assert rt.state is BotState.RUNNING
+    clock.set(T0 + timedelta(seconds=65))
+    await sched.advance()
+    await sched.settle()
+    assert rt.fail_reasons == []  # 1 transient < 3
+    assert rt.state is BotState.RUNNING
+
+    # Tick 2: the next bar is also quiet -> max_wait -> 2 counts.
+    clock.set(T0 + timedelta(minutes=5, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    clock.set(T0 + timedelta(minutes=6, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert rt.fail_reasons == []  # 2 < 3
+    assert rt.state is BotState.RUNNING
+
+    # Tick 3 -> ERROR (S4).
+    clock.set(T0 + timedelta(minutes=10, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    clock.set(T0 + timedelta(minutes=11, seconds=5))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.fail_reasons) == 1
+    assert "consecutive transient cycle failures" in rt.fail_reasons[0]
+    assert rt.state is BotState.ERROR
+    assert rt.executions == []
+
+
+async def test_b6_deferred_status_polled_at_cadence_and_failure_capped_per_bar() -> None:
+    # B6.3: while deferred, the trading status is polled at the retry cadence
+    # (5 s), not on every 1-s pass — and a failed/rate-limited status counts
+    # at most ONCE per bar boundary, so a persistent rate-limit storm cannot
+    # error the bot within one bar (before B6.3: ~15 s).
+    clock = FakeClock(T0 + timedelta(seconds=5))
+    rt = _runtime(1)
+    broker = ProgrammedTradingStatusBroker(
+        TradingStatus.TRADING_UNAVAILABLE,  # boundary tick: deferral
+        RuntimeError("rate limited"),       # every deferred poll fails
+    )
+    snaps = FakeSnapshotProvider(_single_candle_snapshot(None))
+    sched = _make_scheduler(clock, rt, broker=broker, snapshot_provider=snaps)
+
+    await sched.advance()
+    await sched.settle()
+    assert rt.executions == []
+
+    # A full bar (300 s) of failing status polls: at most ONE transient per
+    # bar boundary, so the bot stays RUNNING (60 polls -> 1 failure).
+    for second in range(6, 306):
+        clock.set(T0 + timedelta(seconds=second))
+        await sched.advance()
+        await sched.settle()
+    assert rt.fail_reasons == []
+    assert rt.state is BotState.RUNNING
+    assert sched.last_error_for(1) is None
+    assert len(broker.calls) == 61  # 1 (deferral) + 60 polls at the 5-s cadence
+
+    # Next bar boundary: one more transient (2 < 3).
+    clock.set(T0 + timedelta(minutes=5, seconds=10))
+    await sched.advance()
+    await sched.settle()
+    assert rt.fail_reasons == []
+    assert rt.state is BotState.RUNNING
+
+    # Third bar boundary: S4 ERROR — proving the cap is once per boundary.
+    clock.set(T0 + timedelta(minutes=10, seconds=20))
+    await sched.advance()
+    await sched.settle()
+    assert len(rt.fail_reasons) == 1
+    assert "consecutive transient cycle failures" in rt.fail_reasons[0]
+    assert rt.state is BotState.ERROR
+    assert rt.executions == []
 
 
 async def test_b1_closed_bar_confirmed_by_range_not_exact_equality() -> None:

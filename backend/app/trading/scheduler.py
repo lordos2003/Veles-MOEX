@@ -67,6 +67,18 @@ tradable moment, an unavailable snapshot (|MarketDataUnavailable| — the
 wall-clock lookback window is empty right after a session reopen, lying inside
 the night/weekend gap) counts as **"not confirmed yet"**, not as a per-pass
 failure; only the B4 bound concludes the deferral (one transient failure).
+
+Round-4 review correction (B6): a tick is **at most one transient failure**, so
+a transient data failure inside a retry window (|MarketDataUnavailable|,
+transport error or a still-unconfirmed bar) never counts per retry slot — the
+tick stays pending and exactly one transient is counted only when ``max_wait``
+expires without a successful cycle (non-transient errors still fail the bot
+immediately). The B4 bound is relative to the **first tradable moment** after
+the deferral: it may conclude only after a full bar of trading has passed plus
+the normal ``max_wait``, so a session reopen (e.g. after a night/weekend gap)
+gives the data a chance before the deferral is dropped. While deferred, the
+trading status is polled at the retry cadence (5 s), not on every 1-s pass, and
+a failed/rate-limited status counts at most once per bar boundary.
 """
 
 from __future__ import annotations
@@ -101,7 +113,8 @@ from app.trading.market_context import (
 _LOOP_STEP_SECONDS = 1.0
 
 # Simple timeframes are aligned on fixed UTC intervals; WEEK_1 / MONTH_1 use
-# calendar boundaries (ISO Monday / the 1st of the month).
+# calendar boundaries (ISO Monday / the 1st of the month). WEEK_1 / MONTH_1
+# durations are nominal (7 / 30 days) — only used for the B6.2 bound timing.
 _TIMEFRAME_SECONDS = {
     Timeframe.MIN_1: 60,
     Timeframe.MIN_5: 300,
@@ -110,6 +123,8 @@ _TIMEFRAME_SECONDS = {
     Timeframe.HOUR_1: 3600,
     Timeframe.HOUR_4: 14400,
     Timeframe.DAY_1: 86400,
+    Timeframe.WEEK_1: 7 * 86400,
+    Timeframe.MONTH_1: 30 * 86400,
 }
 
 # Broker-neutral transient failures (S4). Broker-specific transient errors
@@ -190,6 +205,15 @@ class _BotTicker:
     deferred: bool = False
     last_attempt_index: int = -1
     last_done_boundary: datetime | None = None
+    # B6.3 (review round 4): deferred status polling cadence — the trading
+    # status is re-checked at the retry cadence, not on every 1-s pass, and a
+    # failed/rate-limited status counts at most once per bar boundary.
+    deferred_status_check_at: datetime | None = None
+    deferred_failed_bar: datetime | None = None
+    # B6.2 (review round 4): the first moment the deferred tick observed the
+    # instrument tradable — the B4 bound is relative to it, so a session
+    # reopen gives the data a full bar (+ max_wait) before the conclusion.
+    deferred_first_tradable: datetime | None = None
     # S2 (PER_MINUTE): the last minute boundary claimed for a single attempt.
     last_minute: datetime | None = None
     # B3: the last state observed by advance(); a change resets the state above.
@@ -404,28 +428,54 @@ class LiveCycleScheduler:
         must not wait for a candle inside the deferred bar's own range — the
         S2 max-wait timeout does not apply (the tick was deferred, not lost).
 
-        B4 bound: if the instrument is tradable, no such candle exists yet and
-        a newer bar boundary has already passed, the deferral is concluded
-        with one transient failure and normal boundary processing resumes — a
-        deferred bot is never stuck while trading is open.
+        B4 bound (B6.2, review round 4): the deferral is concluded with one
+        transient failure and normal boundary processing resumes only after a
+        **full bar of trading has passed since the first tradable moment, plus
+        the normal ``max_wait``** — a session reopen (night/weekend gap) gives
+        the data that full bar before the conclusion, so a bot is never stuck
+        while trading is open, but also is never dropped within seconds of the
+        reopen.
 
-        B5 (review round 3): an unavailable snapshot (|MarketDataUnavailable| —
-        the wall-clock lookback window is empty right after a session reopen,
+        B5 (review round 3) + B6.1: an unavailable snapshot (|MarketDataUnavailable|
+        — the wall-clock lookback window is empty right after a session reopen,
         lying inside the night/weekend gap) or a snapshot with no closed bar
         before the boundary is **"not confirmed yet"**, never a per-pass
-        failure. Only the B4 bound may conclude the deferral.
+        failure; the B4 bound above is the only conclusion.
+
+        B6.3 (review round 4): while deferred, the trading status is polled at
+        the retry cadence (5 s) instead of on every 1-s pass (a rate-limit
+        storm on |get_trading_status|), and a failed/rate-limited status counts
+        at most once per bar boundary.
         """
         boundary = ticker.pending_boundary
         assert boundary is not None
-        verdict = await self._status_verdict(ticker)
+        tf = config.timeframe
+        retry = self._settings.bar_close_retry_seconds
+        check_at = ticker.deferred_status_check_at
+        if check_at is not None and now < check_at:
+            return  # B6.3: status poll not due yet (5 s cadence)
+        ticker.deferred_status_check_at = now + timedelta(seconds=retry)
+        # B6.3: a failed/rate-limited status counts at most once per bar boundary.
+        bar = self._bar_start(now, tf)
+        count_status_fail = ticker.deferred_failed_bar != bar
+        verdict = await self._status_verdict(ticker, count_on_fail=count_status_fail)
         if verdict is not _StatusVerdict.AVAILABLE:
-            return  # UNAVAILABLE: deferral persists; FAILED: counted (S3)
+            if verdict is _StatusVerdict.FAILED and count_status_fail:
+                ticker.deferred_failed_bar = bar
+            return  # UNAVAILABLE: deferral persists; FAILED: counted (S3, capped)
+        if ticker.deferred_first_tradable is None:
+            # B6.2: remember the first tradable moment — the bound is relative
+            # to it, so the reopen gets a full bar (+ max_wait) of data time.
+            ticker.deferred_first_tradable = now
         try:
             snapshot = await self._snapshot_provider(ticker.figi, config)
-        except MarketDataUnavailable:
-            # B5: "not confirmed yet" — the provider cannot return a snapshot
-            # at all (empty window after the gap), so this pass is not a
-            # failure; the B4 bound below decides.
+        except Exception as exc:  # noqa: BLE001 - classified by S4 policy
+            if not isinstance(exc, self._transient_error_types):
+                await self._fail_bot(ticker, f"live cycle failed: {exc}")
+                return
+            # B5/B6.1: "not confirmed yet" — the provider cannot return a
+            # snapshot (empty window after the gap) or had a transport hiccup;
+            # the B6.2 bound below decides.
             snapshot = None
         if snapshot is not None and self._latest_closed_bar_before(snapshot, boundary):
             ticker.deferred = False
@@ -434,16 +484,21 @@ class LiveCycleScheduler:
                 ticker.failures = 0
             self._conclude_boundary(ticker, boundary)
             return
-        tf = config.timeframe
-        newer_boundary = self._bar_start(
-            now - timedelta(seconds=self._settings.bar_close_delay_seconds), tf
+        first_tradable = ticker.deferred_first_tradable
+        assert first_tradable is not None  # set above on the AVAILABLE branch
+        bound_at = (
+            self._bar_start(first_tradable, tf)
+            + timedelta(
+                seconds=_TIMEFRAME_SECONDS[tf]
+                + self._settings.bar_close_max_wait_seconds
+            )
         )
-        if newer_boundary > boundary:
+        if now >= bound_at:
             await self._count_transient(
                 ticker,
                 f"deferred tick not confirmed (no closed bar before "
-                f"{boundary.isoformat()}); newer boundary "
-                f"{newer_boundary.isoformat()} passed",
+                f"{boundary.isoformat()}); a full bar of trading passed since "
+                f"{first_tradable.isoformat()}",
             )
             self._conclude_boundary(ticker, boundary)
 
@@ -456,6 +511,14 @@ class LiveCycleScheduler:
         Retry slots keep re-checking until ``max_wait``; past it the tick is
         skipped and counted as one transient failure (S2/S4). While not
         confirmed no failure is counted (the tick is simply pending).
+
+        B6.1 (review round 4): a transient data failure inside the retry
+        window — an unavailable snapshot (empty wall-clock window after a
+        session open), a transport error or a still-unconfirmed bar — is
+        **"not confirmed yet"**, never a per-retry-slot failure: the tick stays
+        pending and exactly one transient is counted when ``max_wait`` expires.
+        A non-transient data failure is a real error and fails the bot
+        immediately (S4).
         """
         if now > boundary + timedelta(seconds=self._settings.bar_close_max_wait_seconds):
             await self._count_transient(
@@ -464,7 +527,13 @@ class LiveCycleScheduler:
             )
             self._conclude_boundary(ticker, boundary)
             return
-        snapshot = await self._snapshot_provider(ticker.figi, config)
+        try:
+            snapshot = await self._snapshot_provider(ticker.figi, config)
+        except Exception as exc:  # noqa: BLE001 - classified by S4 policy
+            if not isinstance(exc, self._transient_error_types):
+                await self._fail_bot(ticker, f"live cycle failed: {exc}")
+                return
+            return  # B6.1: transient -> "not confirmed yet", retry slot re-checks
         if self._closed_bar_confirmed(snapshot, boundary, tf):
             success = await self._run_cycle(ticker, snapshot)
             if success:
@@ -535,6 +604,10 @@ class LiveCycleScheduler:
         ticker.deferred = False
         ticker.last_attempt_index = -1
         ticker.last_done_boundary = boundary
+        # B6 (review round 4): deferred-mode bookkeeping is per-deferral.
+        ticker.deferred_status_check_at = None
+        ticker.deferred_failed_bar = None
+        ticker.deferred_first_tradable = None
 
     def _reset_ticker_state(self, ticker: _BotTicker) -> None:
         """B3 (review round 1): reset the per-bot scheduler state on restart.
@@ -549,6 +622,10 @@ class LiveCycleScheduler:
         ticker.deferred = False
         ticker.last_attempt_index = -1
         ticker.last_minute = None
+        # B6 (review round 4): deferred-mode bookkeeping is per-deferral.
+        ticker.deferred_status_check_at = None
+        ticker.deferred_failed_bar = None
+        ticker.deferred_first_tradable = None
 
     # --- PER_MINUTE (S2) --------------------------------------------------------
 
@@ -571,20 +648,29 @@ class LiveCycleScheduler:
 
     # --- shared building blocks -------------------------------------------------
 
-    async def _status_verdict(self, ticker: _BotTicker) -> _StatusVerdict:
-        """S3: ask the broker whether the instrument is tradable right now."""
+    async def _status_verdict(
+        self, ticker: _BotTicker, *, count_on_fail: bool = True
+    ) -> _StatusVerdict:
+        """S3: ask the broker whether the instrument is tradable right now.
+
+        The verdict itself is side-effect free; the transient count is
+        controlled by ``count_on_fail`` (B6.3): while deferred, a failed or
+        rate-limited status counts at most once per bar boundary.
+        """
         try:
             status = await self._broker.get_trading_status(ticker.figi)
         except Exception as exc:  # noqa: BLE001 - S3: request failure = transient
-            await self._count_transient(
-                ticker, f"trading status request failed: {exc}"
-            )
+            if count_on_fail:
+                await self._count_transient(
+                    ticker, f"trading status request failed: {exc}"
+                )
             return _StatusVerdict.FAILED
         if status is TradingStatus.TRADING_AVAILABLE:
             return _StatusVerdict.AVAILABLE
         if status is TradingStatus.TRADING_UNAVAILABLE:
             return _StatusVerdict.UNAVAILABLE
-        await self._count_transient(ticker, f"unknown trading status: {status!r}")
+        if count_on_fail:
+            await self._count_transient(ticker, f"unknown trading status: {status!r}")
         return _StatusVerdict.FAILED
 
     async def _run_cycle(self, ticker: _BotTicker, snapshot: MarketSnapshot) -> bool:
