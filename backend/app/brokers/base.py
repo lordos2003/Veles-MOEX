@@ -24,6 +24,18 @@ from app.domain.marketdata import Candle, LastPrice, Timeframe
 from app.models.enums import OrderSide, OrderStatus, OrderType
 
 
+class BrokerTransportError(RuntimeError):
+    """Broker-neutral transient transport failure (network, timeout, overload).
+
+    MVP-6.13 (S4): the live cycle scheduler counts transient failures and moves
+    the bot to ERROR only after ``max_consecutive_failures`` of them. This
+    marker keeps that classification broker-neutral: broker-specific transient
+    errors (e.g. the T-Invest connection/rate-limit errors) derive from it, so
+    the scheduler never imports a broker package. A broker implementation raises
+    a subclass of this exception for temporary transport problems.
+    """
+
+
 @dataclass
 class BrokerOrderRequest:
     """Broker-agnostic order request sent by the Order Manager.
@@ -223,6 +235,18 @@ class BrokerAdapter(ABC):
         limit: int | None = None,
     ) -> list[Candle]:
         """Return historical OHLCV candles for an instrument and timeframe."""
+
+    @abstractmethod
+    async def get_trading_status(self, figi: str) -> TradingStatus:
+        """Return whether the instrument is tradable *now* (MVP-6.13 S3).
+
+        ``TRADING_AVAILABLE`` only when a cycle may run right now; any other
+        known state (session closed, break, halt, API trading unavailable) maps
+        to ``TRADING_UNAVAILABLE``. An unknown state or a failed request must
+        raise: the caller treats it as a transient failure, never as a hard
+        "not tradable" (which would silently skip cycles). The mapping stays
+        inside the adapter; no hard-coded exchange schedule here.
+        """
 
     # --- Trading ---
 

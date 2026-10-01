@@ -6,6 +6,8 @@ The error taxonomy maps cleanly onto HTTP status codes (see task section 6).
 
 from __future__ import annotations
 
+from app.brokers.base import BrokerTransportError
+
 
 class TInvestError(Exception):
     """Base class for all T-Invest integration errors."""
@@ -19,14 +21,19 @@ class AuthenticationError(TInvestError):
     http_status = 401
 
 
-class BrokerConnectionError(TInvestError):
-    """Network/connection failure to the T-Invest API."""
+class BrokerConnectionError(TInvestError, BrokerTransportError):
+    """Network/connection failure to the T-Invest API.
+
+    MVP-6.13 (S4): also a broker-neutral |BrokerTransportError| so the live
+    cycle scheduler classifies connection/timeout failures as transient without
+    importing a broker package.
+    """
 
     http_status = 503
 
 
-class RateLimitError(TInvestError):
-    """Too many requests (HTTP 429)."""
+class RateLimitError(TInvestError, BrokerTransportError):
+    """Too many requests (HTTP 429) — transient by nature."""
 
     http_status = 429
 
@@ -57,7 +64,7 @@ class MarketDataError(BrokerConnectionError):
     http_status = 502
 
 
-class BrokerApiError(TInvestError):
-    """Unexpected upstream error (HTTP 5xx)."""
+class BrokerApiError(TInvestError, BrokerTransportError):
+    """Unexpected upstream error (HTTP 5xx) — transient by nature."""
 
     http_status = 502

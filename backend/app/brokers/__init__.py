@@ -10,6 +10,7 @@ from app.brokers.base import (
     BrokerOrder,
     BrokerOrderRequest,
     BrokerPosition,
+    BrokerTransportError,
 )
 from app.brokers.tinvest import TInvestAdapter
 from app.brokers.tinvest_client import TInvestClient
@@ -36,6 +37,7 @@ __all__ = [
     "BrokerOrder",
     "BrokerOrderRequest",
     "BrokerPosition",
+    "BrokerTransportError",
     "TInvestAdapter",
     "TInvestClient",
     "TInvestError",

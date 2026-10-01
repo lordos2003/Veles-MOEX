@@ -356,6 +356,15 @@ class BacktestBroker(BrokerAdapter):
             candles = candles[:limit]
         return candles
 
+    async def get_trading_status(self, figi: str) -> TradingStatus:
+        """Backtest has no live session: historical data is always tradable.
+
+        The live-cycle scheduler is a live-only component; Backtest never asks
+        for a session gate. This satisfies the |BrokerAdapter| contract with
+        the Backtest equivalent of "no session restriction".
+        """
+        return TradingStatus.TRADING_AVAILABLE
+
     async def place_order(self, request: BrokerOrderRequest) -> BrokerOrder:
         qty = Decimal(str(request.quantity))
         price = Decimal(str(request.price)) if request.price is not None else None

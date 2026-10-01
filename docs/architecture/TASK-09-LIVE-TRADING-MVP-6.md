@@ -1452,3 +1452,305 @@ Run from `backend/` with the project venv:
 - `./.venv/Scripts/python.exe -m pytest -q` — full backend suite.
 - `ruff check app tests scripts` (from `backend/`), `alembic heads` (single
   head, `0005`), `npm run build` (frontend unchanged, stays green).
+
+## 31. Live cycle scheduler — MVP-6.13
+
+This section records MVP-6.13 (approved contracts S1–S5, 2026-09-30, GitHub
+Issue #9; S6 and round-1 corrections B1/B2/B3 added 2026-10-01 by the round-1
+review): **when** a RUNNING bot's strategy cycle runs is decided by a new
+broker-neutral `LiveCycleScheduler` (`app/trading/scheduler.py`); it never
+changes *what* runs. The scheduler calls the existing
+`BotRuntime.execute_strategy(MarketContext)` once per tick with a
+broker-neutral context built from the raw market snapshot (MVP-6.10
+`market_snapshot_to_context`), and the MVP-6.11/6.12 gates (risk, deposit,
+deal) stay authoritative.
+
+### S1. Scheduler runtime and correctness guards
+
+- The scheduler is started by the application lifespan **only after a SAFE
+  startup recovery**, next to the stream task, and is stopped on shutdown
+  (`app/main.py`). Per-bot pass tasks use the same long-lived DB session, so
+  the scheduler is cancelled before the stream shutdown closes the session.
+- One strategy cycle per tick per bot; each bot's pass runs in its own
+  asyncio task, so a slow or failing bot never delays another.
+- At most one cycle per bot at a time: a tick that arrives while the
+  previous pass is still in flight is **skipped** (no catch-up of missed
+  ticks). The in-flight marker is a per-bot id set claimed synchronously in
+  `advance()` (the per-bot ticker is created inside the pass task, so it
+  cannot carry the marker itself).
+- Only `RUNNING` bots are ticked (STOPPED / ERROR / EMERGENCY_STOP are
+  skipped).
+- The scheduler never ticks while the safety gate is closed
+  (`safety_gate=service.can_execute`); `LiveExecutionService.run_scheduler_forever()`
+  raises `LiveExecutionBlocked` before a SAFE recovery or when no scheduler
+  is wired.
+
+### S2. Tick timing by calculation method
+
+- `AT_BAR_CLOSE`: one tick per bar of the bot's configured timeframe, due at
+  the UTC bar boundary + `bar_close_delay_seconds` (default 5). The
+  just-closed bar must be present in the raw `MarketSnapshot` with
+  `is_complete is True` — a `None` completeness counts as **not confirmed**
+  (the `market_snapshot_to_context` None→True mapping must not be used for
+  confirmation). Confirmation is a timestamp **range** check, not exact
+  equality (B1): a complete candle whose start lies inside the bar interval
+  (`[bar_start(boundary − 1 s), boundary)`) is accepted, so a broker that
+  stamps day/week/month bars at a non-epoch-aligned start (e.g. a day candle
+  at 03:00 UTC) is still confirmed. Unconfirmed ticks are retried every
+  `bar_close_retry_seconds` (default 5) up to
+  `bar_close_max_wait_seconds` (default 60) after the boundary, then skipped
+  and counted as one transient failure (S4) — but see S6: a boundary whose
+  tick fell while the instrument was not tradable is exempt from the
+  max-wait rule.
+- `PER_MINUTE`: one tick at each UTC minute boundary; the forming bar is
+  used as-is (`FilterEvaluator` semantics unchanged).
+- Ops parameters (settings, non-financial): `scheduler_bar_close_delay_seconds=5`,
+  `scheduler_bar_close_retry_seconds=5`,
+  `scheduler_bar_close_max_wait_seconds=60`,
+  `scheduler_max_consecutive_failures=3`.
+
+### S3. Trading-session gate (no hard-coded schedule)
+
+- Before every tick the scheduler asks the broker via the new abstract
+  `BrokerAdapter.get_trading_status(figi)`.
+- `TRADING_UNAVAILABLE` → the tick is **deferred** (S6): not dropped, not
+  counted as a failure; it runs exactly once at the next tradable moment,
+  on the closed bar of the deferred boundary. While the instrument is not
+  tradable the deferral persists; a failed/unknown status is counted as a
+  transient (S3/S4) but does not drop the deferral.
+- A failed or unknown status → skip + count one transient failure (S4).
+- T-Invest implementation: `MarketDataService/GetTradingStatus`, mapped
+  inside `TInvestAdapter`; only `SECURITY_TRADING_STATUS_NORMAL_TRADING`
+  with `api_trade_available_flag == true` is tradable, every other
+  documented exchange state maps to `TRADING_UNAVAILABLE`, and `UNSPECIFIED`
+  or an unrecognized value raises `BrokerApiError` (unknown must never be
+  silently "not tradable"). No exchange session schedule is hard-coded.
+- The backtest broker returns `TRADING_AVAILABLE` (no session concept).
+
+### S4. Failure policy
+
+- Transient failures — `MarketDataUnavailable`, broker transport errors
+  (the broker-neutral `BrokerTransportError` marker: `BrokerConnectionError`,
+  `RateLimitError`, `BrokerApiError`), network timeouts, a closed bar not
+  confirmed within max wait, an unknown trading status — are counted per bot
+  in memory; after `scheduler_max_consecutive_failures` (default 3)
+  consecutive ones the bot goes to ERROR (production callback:
+  `BotRuntime.fail` + `BotRepository` ERROR; without a callback the
+  scheduler falls back to `BotRuntime.fail`).
+- Non-transient failures (`TimeframeNotConfigured`, `LookbackNotConfigured`,
+  `SizingNotConfigured`/`SizingError`, `DealConfigUnsupported`,
+  `RiskRejected`, `BotStateError`, unexpected exceptions) fail the bot
+  immediately.
+- A successful cycle resets the counter; S3 UNAVAILABLE skips do not count.
+- Observability: a generic read-only `last_error` field was added to
+  `GET /api/bots/{id}` (`BotResponse.last_error`, fed by
+  `LiveCycleScheduler.last_error_for`) — distinct from the deal-specific
+  `deal_error` (B2). It is absent when the live service is not running.
+
+### S5. Correctness ("what runs" is unchanged)
+
+- The scheduler decides only *when* a cycle runs and never touches
+  entry/grid/TP/Deal/Risk semantics; the MVP-6.11/6.12 gates remain
+  authoritative.
+- Clock and sleeps are injectable (`Clock` protocol, `SystemClock`
+  production); tests never sleep real time.
+- Broker neutrality: `app/trading` facing code imports only
+  `app.brokers.base` (and the `BrokerTransportError` marker), never
+  `app.brokers.tinvest*`; T-Invest types stay inside the adapter
+  (`build_live_service` is the documented composition exception).
+
+### S6. AT_BAR_CLOSE deferral (round-1 correction B1)
+
+- Motivation (review B1): a `DAY_1` bar closes at 00:00 UTC = 03:00 MSK —
+  always outside the MOEX session, because the bar close includes the
+  calendar boundary, not a session close. Before the correction the S3 skip
+  concluded the boundary without a tick, so a DAY_1 bot would never run a
+  cycle at all (same for any bot whose boundary falls while the market is
+  closed).
+- Behavior: when the tick falls while `get_trading_status` returns
+  `TRADING_UNAVAILABLE`, the tick is **deferred** — the boundary stays
+  pending, `deferred=True`, no failure is counted, no snapshot is fetched.
+  The scheduler re-checks the status at its 1 s cadence; the moment the
+  instrument is tradable again the deferred tick runs **exactly once** on the
+  closed bar of the deferred boundary. The S2 max-wait timeout does not apply
+  to a deferred tick (it was deferred, not lost); if the bar is not yet
+  confirmed the confirmation retries on the next pass.
+- The deferred boundary is **fixed**: while deferred the scheduler does not
+  recompute the boundary from the clock, because a closed session passes no
+  newer closed bar. When several bar boundaries pass in a row while the
+  session is closed, only one deferred cycle runs for the last bar that
+  actually closed (no catch-up; S1 "no catch-up" preserved).
+- A newer boundary supersedes an older still-pending (non-deferred) one
+  without a failure count: only the latest pending boundary is kept (no
+  catch-up of missed bars).
+- Round-2 correction **B4** (see below): the deferred tick runs on the
+  **latest closed bar** (a complete candle that started before the deferred
+  boundary), not on a candle inside the deferred bar's own range, and the
+  deferral is bounded so a bot is never stuck while trading is open.
+
+### B4. Deferred tick runs on the latest closed bar, with a bound (round-2 correction)
+
+- Motivation (review B4): a bar without trades has **no candle** (T-Invest has
+  no empty candles). The round-1 rule confirmed the deferred tick only by a
+  candle inside the deferred bar's own range, so a no-trade last bar before a
+  session close left the deferred tick unconfirmed forever — the bot stalled
+  silently in `deferred` (reproduced on the MVP-6.13 harness: executions=0
+  with `TRADING_AVAILABLE` at +14 h/15 h/16 h/20 h/48 h).
+- Fix 1: once the instrument is tradable, the deferred tick is confirmed by
+  the **latest closed bar** — the raw snapshot contains at least one candle
+  with `is_complete is True` and `timestamp < deferred boundary` (`_latest_closed_bar_before`).
+  The cycle then runs exactly once on that data and the boundary is concluded.
+- Fix 2 (bound): while the instrument is tradable, if no such candle exists
+  yet and a **newer** bar boundary has already passed (the bar containing
+  `now − delay` starts after the deferred boundary), the deferral is concluded
+  with **one transient failure** (S4 counted) and normal boundary processing
+  resumes on the next pass. A deferred bot is never stuck while trading is
+  open; the transient count is part of the same per-bot S4 counter. Amended by
+  B6.2 (round 4): the bound only applies after a full bar + `max_wait` from
+  the **first tradable moment** (see the B6 section below).
+- B4 does not change the non-deferred S2 path: an unconfirmed non-deferred bar
+  still retries up to `max_wait` and then counts one transient failure.
+- S6 tests from round 1 stay green: they already carry a complete candle
+  before the deferred boundary, which the B4 rule accepts as well.
+
+### B5. Empty snapshot in the deferred path is "not confirmed yet" (round-3 correction)
+
+- Motivation (review B5): right after a session reopens the production
+  snapshot provider (`MarketDataService.get_snapshot`, MVP-6.10/C7) requests
+  candles in a **wall-clock window** of `(lookback_bars + 1) × timeframe`
+  before "now". For an intraday bot that window lies inside the night/weekend
+  gap (M5 with `lookback_bars = 50` gives ≈ 4 h 15 m against a 7–10 h night
+  gap), so the provider raises `MarketDataUnavailable("no candle history")`
+  on every 1-s scheduler pass. In the deferred path that was counted as a
+  transient failure per pass → the bot went to ERROR within ~3 s of the
+  session opening (reproduced: `3 consecutive transient cycle failures (last:
+  no candle history (night gap))`).
+- Fix: while tradable, an unavailable/empty snapshot
+  (`MarketDataUnavailable`) or a snapshot with no closed bar before the
+  deferred boundary is **"not confirmed yet"** in the deferred path — never a
+  per-pass failure. Only the B4 bound (a newer boundary has passed) concludes
+  the deferral with **one** transient failure; normal boundary processing then
+  resumes.
+- Consequence of the MVP-6.10 wall-clock window (documented): for intraday
+  bots the pre-close bars are usually **outside** the window at reopen, so the
+  deferred tick is in practice **concluded by the B4 bound** rather than run.
+  `DAY_1` (window ≈ `lookback_bars` days) is unaffected. Fetching the snapshot
+  **by bar count across session gaps** is a separate follow-up — it also
+  affects indicator input right after gaps (out of scope of MVP-6.13).
+
+### B6. One transient failure per tick; deferred poll cadence and bound-relative-to-reopen (round-4 correction)
+
+- Motivation (review B6, three related defects):
+  1. `_confirm_boundary()` called the snapshot provider without handling — a
+     `MarketDataUnavailable` or broker transport error on a **retry attempt**
+     was counted on **every 5-s retry slot** (S4: "3 consecutive transient
+     failures" must mean three **ticks**, not three retries of one tick). One
+     quiet bar (no trades yet) → ERROR in ~15 s.
+  2. The B4 bound (a newer bar boundary has passed) fires **immediately at the
+     session reopen** — after a night/weekend gap, many boundaries have
+     already passed, so the deferral was concluded on the first tradable pass
+     and the retry-slot counting (defect 1) added the rest.
+  3. The deferred path re-checked `GetTradingStatus` on every **1-s** pass for
+     the whole closed session — a rate-limit storm; a rate-limit error counted
+     as a transient per pass → possible ERROR.
+- Fix 1 (B6.1): a tick is **at most one transient failure**. Inside the retry
+  window of `_confirm_boundary()`, a transient data failure
+  (`MarketDataUnavailable`, transport error, still-unconfirmed bar) is
+  **"not confirmed yet"** — no count; exactly **one** transient is counted when
+  `max_wait` expires without a successful cycle. A **non-transient** error
+  still fails the bot immediately (S4). `PER_MINUTE` was already one failure
+  per minute tick at most (one attempt claimed per minute); the S4 threshold
+  now means three consecutive **quiet bars** → ERROR, not three retry slots
+  of one bar.
+- Fix 2 (B6.2): the deferred tick records the **first tradable moment**; the
+  B4 bound may conclude the deferral only **after a full bar of trading has
+  passed from that moment, plus the normal `max_wait`**
+  (`_bar_start(first_tradable) + timeframe + max_wait`). The reopen therefore
+  gets a full bar (+ max_wait) of data time before the conclusion — the bot is
+  never dropped within seconds of the session opening, and still never stuck
+  while trading is open.
+- Fix 3 (B6.3): while deferred, the trading status is polled at the **retry
+  cadence** (`bar_close_retry_seconds`, 5 s) instead of every 1-s pass, and a
+  failed/rate-limited status counts **at most once per bar boundary** — a
+  persistent status failure over one bar is ONE transient (three consecutive
+  bar boundaries still trip the S4 threshold).
+- Amends the B4 "newer boundary" wording above: the bound is now relative to
+  the first tradable moment (B6.2), and the B5 "one transient" conclusion only
+  applies via that bound.
+
+
+### B2. Shared live-session serialization (round-1 correction)
+
+- The production live graph shares ONE long-lived `AsyncSession`
+  (`build_live_service`) between the stream, the scheduler passes and the API
+  lifecycle paths. An `AsyncSession` is **not safe for concurrent use**
+  (the round-1 reviewer reproduced overlapping operations raising
+  `ResourceClosedError`/`IllegalStateChangeError` on PostgreSQL when several
+  bot passes hit the session at once).
+- Fix: `build_live_service` creates one `asyncio.Lock` (`session_lock`) and
+  passes it to `BotRepository`, `SqlAlchemyDealStore`,
+  `SqlAlchemyLiveStateStore` (optional keyword-only `lock` parameter;
+  default `None` keeps tests and per-request API sessions unchanged).
+  Every repository/store operation — including the multi-await
+  `update_state` commit/refresh and the `save_snapshot` upsert loop — runs
+  inside the lock. Direct `session.get(...)` calls in
+  `build_live_service` (`_session_get`, `_load_strategy`) are wrapped the
+  same way.
+- MVP-6.11 C6/B2 guarantee preserved: `get_deposit` still reads with
+  `populate_existing=True` (fresh deposit, no identity-map copy).
+
+### B3. Scheduler state reset on bot state change (round-1 correction)
+
+- A bot that left RUNNING (ERROR / STOPPED / EMERGENCY_STOP) must not carry
+  its in-memory scheduler state into its next START. `advance()` observes
+  every bot state change and resets the per-bot ticker: failure counter,
+  pending/deferred boundary, retry index and PER_MINUTE claim.
+- `last_done_boundary` is intentionally **kept**: a concluded bar is never
+  ticked twice after a restart.
+- Consequence: after a restart the transient-failure counter starts from 0
+  (3 consecutive failures are needed again, S4 threshold unchanged) and a
+  deferred tick does not leak across the restart.
+
+### Known limitations (documented, not changed)
+
+- `market_snapshot_to_context()` maps `is_complete is None → True`; S2
+  confirmation deliberately reads the raw `MarketSnapshot` instead, so the
+  confirmation rule and the context mapping can disagree on a `None`
+  completeness without a warning.
+- WEEK_1 / MONTH_1 tick boundaries are calendar-aligned (ISO Monday 00:00
+  UTC / the 1st of the month 00:00 UTC) and MIN_1..DAY_1 are fixed UTC
+  intervals from the epoch. This is an **assumption** (see the next bullet);
+  the official T-Invest documentation does not confirm the start-stamp rule
+  for WEEK_1/MONTH_1 and states no start rule at all for 2h/4h.
+- On scheduler start, a bar whose confirmation window has already expired is
+  skipped and counted as one transient: the scheduler cannot know whether
+  that tick ran before the restart (a boundary that expired while the market
+  was closed is deferred instead — S6).
+- S6 scope: the deferral applies to `AT_BAR_CLOSE`; `PER_MINUTE` keeps the S3
+  skip-without-count on a not-tradable minute. Verified from the official
+  T-Invest docs: `Candle.time` is «Время начала интервала свечи по UTC»
+  (marketdata.proto) and the FAQ states that for `CANDLE_INTERVAL_DAY` the
+  `from`/`to` fields are ignored, so day candles are whole calendar days.
+  The exact start timestamps of WEEK_1/MONTH_1 candles (and any start rule
+  for 2h/4h) are **not** stated in the official documentation, so a
+  broker-side non-epoch-aligned stamp for those bars is verified indirectly
+  via the B1 range-confirmation rule — the scheduler never assumes exact
+  equality.
+
+### Tests (validation commands)
+
+- `./.venv/Scripts/python.exe -m pytest tests/test_mvp613_scheduler.py -q`
+  — S1–S6 coverage (tick at boundary+5 / exactly once per bar, retry every
+  5s until confirmed, skip+count at max wait, `is_complete=None` not
+  confirmed, range confirmation of a non-midnight day candle (B1), deferral
+  when not tradable and one cycle at the next tradable moment (S6, incl.
+  DAY_1 and several closed-session boundaries), PER_MINUTE once per minute,
+  unknown/failed status counted, 3 consecutive transients → ERROR, reset on
+  success, non-transient immediate ERROR, B3 reset after ERROR + restart,
+  B2 shared-session overlap detection with/without the live lock, overlap
+  skip / no parallel cycles, slow and failing bot isolation, only RUNNING
+  ticked, gate closed / not SAFE start, T-Invest `GetTradingStatus` mapping,
+  backtest no-session).
+- `./.venv/Scripts/python.exe -m pytest -q` — full backend suite.
+- `ruff check app tests scripts` (from `backend/`), `alembic heads` (single
+  head), `npm run build` (frontend unchanged, stays green).

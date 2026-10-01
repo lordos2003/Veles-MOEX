@@ -60,6 +60,14 @@ class Settings(BaseSettings):
     risk_max_concurrent_bots: int | None = None
     risk_blocked_instruments: list[str] = []
 
+    # --- Live cycle scheduler (MVP-6.13 S2/S4) ---
+    # Owner-approved operational timing/threshold parameters for tick timing
+    # and the transient-failure policy. Ops values only, not financial ones.
+    scheduler_bar_close_delay_seconds: float = 5.0
+    scheduler_bar_close_retry_seconds: float = 5.0
+    scheduler_bar_close_max_wait_seconds: float = 60.0
+    scheduler_max_consecutive_failures: int = 3
+
 
 @lru_cache
 def get_settings() -> Settings:
