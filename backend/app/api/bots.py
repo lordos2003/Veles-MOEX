@@ -43,6 +43,7 @@ def _to_response(
     bot: Bot,
     deal_error: str | None = None,
     last_error: str | None = None,
+    last_skip_reason: str | None = None,
 ) -> BotResponse:
     return BotResponse(
         id=bot.id,
@@ -56,6 +57,7 @@ def _to_response(
         stopped_at=bot.stopped_at,
         deal_error=deal_error,
         last_error=last_error,
+        last_skip_reason=last_skip_reason,
     )
 
 
@@ -157,7 +159,17 @@ async def get_bot(
     last_error = (
         scheduler.last_error_for(bot_id) if scheduler is not None else None
     )
-    return _to_response(bot, deal_error=deal_error, last_error=last_error)
+    # MVP-6.14 N1: the last proven no-trade skip reason (a skip is neither a
+    # failure nor a success, so it is observable separately from last_error).
+    last_skip_reason = (
+        scheduler.last_skip_reason_for(bot_id) if scheduler is not None else None
+    )
+    return _to_response(
+        bot,
+        deal_error=deal_error,
+        last_error=last_error,
+        last_skip_reason=last_skip_reason,
+    )
 
 
 @router.patch("/bots/{bot_id}", response_model=BotResponse)

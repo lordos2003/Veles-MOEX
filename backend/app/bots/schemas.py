@@ -27,6 +27,9 @@ class BotResponse(BaseModel):
     # generic (transient-skip reason or the terminal error that moved the bot
     # to ERROR); distinct from the deal-specific `deal_error` above.
     last_error: str | None = None
+    # MVP-6.14 N1: the last proven no-trade skip reason (the tick was skipped —
+    # not a failure and not a success). Read-only, in-memory scheduler state.
+    last_skip_reason: str | None = None
 
 
 class BotDepositUpdate(BaseModel):

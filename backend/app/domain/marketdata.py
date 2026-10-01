@@ -63,6 +63,10 @@ class MarketSnapshot:
     timestamp: datetime  # timezone-aware UTC
     last_price: Decimal
     candles: tuple[Candle, ...] = ()
+    # MVP-6.14 (N2): the broker's last-trade timestamp (``LastPrice.timestamp``,
+    # T-Invest ``GetLastPrices.time``), ``None`` when the broker gave none. It is
+    # a separate field: ``timestamp`` keeps its MVP-6.10 meaning and fallback.
+    last_trade_at: datetime | None = None
 
 
 class MarketDataUnavailable(RuntimeError):
@@ -72,3 +76,25 @@ class MarketDataUnavailable(RuntimeError):
     empty candle history, blocks the live processing cycle instead of being
     replaced by a synthetic value.
     """
+
+
+class NoTradesInWindow(MarketDataUnavailable):
+    """(MVP-6.14) ``get_snapshot`` found no candles in its retrieval window.
+
+    A subclass of |MarketDataUnavailable|: every existing handler (transient
+    failure / "not confirmed yet") keeps working unchanged. It carries the
+    broker facts a consumer needs to decide whether the empty window is
+    *proven* to contain no trades: the last-trade timestamp (``last_trade_at``,
+    ``None`` when the broker gave none) and the window start (``window_start``).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        last_trade_at: datetime | None,
+        window_start: datetime,
+    ) -> None:
+        super().__init__(message)
+        self.last_trade_at = last_trade_at
+        self.window_start = window_start

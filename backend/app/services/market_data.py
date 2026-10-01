@@ -21,6 +21,7 @@ from app.domain.marketdata import (
     LastPrice,
     MarketDataUnavailable,
     MarketSnapshot,
+    NoTradesInWindow,
     Timeframe,
 )
 
@@ -117,10 +118,18 @@ class MarketDataService:
         now = datetime.now(UTC)
         # One extra bar of width so the currently forming candle is included.
         window = timedelta(seconds=_TIMEFRAME_SECONDS[timeframe] * (lookback_bars + 1))
-        candles = await self.get_candles(figi, timeframe, now - window, now)
+        window_start = now - window
+        candles = await self.get_candles(figi, timeframe, window_start, now)
         if not candles:
-            raise MarketDataUnavailable(
-                f"no candle history for {figi} @ {timeframe.value}"
+            # MVP-6.14 (N2): an empty window is not just "unavailable" — the
+            # broker facts (last-trade time, window start) travel with the
+            # error so the scheduler can decide whether the window is proven
+            # to contain no trades. A subclass keeps every existing
+            # MarketDataUnavailable handler unchanged.
+            raise NoTradesInWindow(
+                f"no candle history for {figi} @ {timeframe.value}",
+                last_trade_at=last.timestamp,
+                window_start=window_start,
             )
         # MVP-6.10 contract / Issue #3 (C7): the snapshot must contain exactly
         # the newest ``lookback_bars`` candles. The request window is wider
@@ -134,6 +143,7 @@ class MarketDataService:
             timestamp=last.timestamp or candles[-1].timestamp,
             last_price=last.price,
             candles=tuple(candles),
+            last_trade_at=last.timestamp,
         )
 
     @staticmethod
