@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-6.14 — No-Trade Bars Are Skipped, Not Failures
-**Status: IN REVIEW — round-1 implementation pushed (`c1558bd`); `.agent/REPORT-MVP-6.14.md` submitted; awaiting round-1 review.**
+**Status: ACCEPTED (round 1, 2026-10-01) — awaiting publication to `master`.** Accepted implementation `c1558bd`; review `.agent/REVIEW-MVP-6.14.md`; validation 499 passed, 1 skipped.
 
 - Control task: `.agent/TASK-MVP-6.14-NO-TRADE-BAR.md`; report: `.agent/REPORT-MVP-6.14.md`
 - Implementation branch: `agent/review/mvp-6.14` (from `master` @ `bb52d36`)

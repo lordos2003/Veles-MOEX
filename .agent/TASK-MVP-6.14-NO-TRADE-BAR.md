@@ -2,7 +2,7 @@
 
 ## Status
 
-**OPEN — assigned to Кодер**
+**ACCEPTED (round 1, 2026-10-01)** — accepted implementation `c1558bd`; awaiting publication to `master`
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.14` (create from current `master` @ `bb52d36`)
