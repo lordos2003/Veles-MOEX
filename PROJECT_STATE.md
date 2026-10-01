@@ -17,17 +17,24 @@
 
 ## Current task
 
-### MVP-6.14 — No-Trade Bars Are Skipped, Not Failures
-**Status: ACCEPTED (round 1, 2026-10-01) — awaiting publication to `master`.** Accepted implementation `c1558bd`; review `.agent/REVIEW-MVP-6.14.md`; validation 499 passed, 1 skipped.
-
-- Control task: `.agent/TASK-MVP-6.14-NO-TRADE-BAR.md`; report: `.agent/REPORT-MVP-6.14.md`
-- Implementation branch: `agent/review/mvp-6.14` (from `master` @ `bb52d36`)
-- Round-1 implementation: `c1558bde659df94a42689a8f658650e7b254acd3` (7 files: `marketdata.py`, `market_data.py`, `scheduler.py`, `api/bots.py`, `bots/schemas.py`, `tests/test_mvp614_no_trade_bar.py`, docs §32)
-- Contract N1–N3 approved by the owner 2026-10-01: a **proven** no-trade bar (no candle in the bar, and either a newer candle exists or the broker's last-trade time is before the bar) is a skipped tick (no cycle, not counted, `last_skip_reason` in the API); unproven → the MVP-6.13 behaviour is unchanged.
-- Round-1 validation: `pytest 499 passed, 1 skipped`; `ruff` clean; alembic single head `0005_deal_continuation`; `npm run build` green.
-- Remaining candidates: snapshot by bar count across session gaps; `HOUR_4`/`WEEK_1`/`MONTH_1` candle times; exit modes; recovery TP churn; `FILLED -> UNKNOWN` cancel error.
+No task is open. Candidates (owner to choose):
+- **Snapshot by bar count across session gaps** (replace the MVP-6.10 wall-clock window; affects indicator input after night/weekend gaps and the S6 deferred tick for intraday bots).
+- Verify `HOUR_4` / `WEEK_1` / `MONTH_1` T-Invest candle start times.
+- Exit modes: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL grid mode.
+- Clean-ups: recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error.
 
 ## Current accepted MVP
+
+### MVP-6.14 — No-Trade Bars Are Skipped, Not Failures
+**Status: ACCEPTED (round 1, 2026-10-01) and published to master.**
+
+- Accepted implementation: `c1558bd`
+- Publication PR: #12
+- Publication merge commit: `d1ac72e68d4163fa56652c20de89558f4da1f5a6`
+- Control task: `.agent/TASK-MVP-6.14-NO-TRADE-BAR.md`; review: `.agent/REVIEW-MVP-6.14.md`; report: `.agent/REPORT-MVP-6.14.md`
+- Contract N1–N3 (owner, 2026-10-01): a proven no-trade bar (no candle in the bar, and a newer candle exists or the last-trade time is before the bar) is an uncounted skip (no cycle; `last_skip_reason` in the API); unproven → MVP-6.13 behaviour (a lagging feed is still detected). `MarketSnapshot.last_trade_at`, `NoTradesInWindow`.
+- Validation (independent, clean env): `pytest 499 passed, 1 skipped`; `ruff` clean.
+
 
 ### MVP-6.13 — Live Cycle Scheduler
 **Status: ACCEPTED (round 5, 2026-10-01) and published to master.**
@@ -40,7 +47,7 @@
 - Live-session DB access serialised behind one `asyncio.Lock` (verified on PostgreSQL 16 + asyncpg).
 - Validation (independent, clean env): `pytest 486 passed, 1 skipped`; `ruff` clean; alembic head `0005_deal_continuation`.
 
-Known boundaries: a no-trade bar costs one transient failure; wall-clock snapshot window (MVP-6.10) after session gaps; `HOUR_4`/`WEEK_1`/`MONTH_1` candle start times unverified; only Simple TP; one bot per instrument.
+Known boundaries: (no-trade bars resolved by MVP-6.14); wall-clock snapshot window (MVP-6.10) after session gaps; `HOUR_4`/`WEEK_1`/`MONTH_1` candle start times unverified; only Simple TP; one bot per instrument.
 
 
 ### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)

@@ -2,7 +2,7 @@
 
 ## Status
 
-**ACCEPTED (round 1, 2026-10-01)** — accepted implementation `c1558bd`; awaiting publication to `master`
+**ACCEPTED (round 1, 2026-10-01) and published** — accepted implementation `c1558bd`; PR #12, merge commit `d1ac72e68d4163fa56652c20de89558f4da1f5a6`
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.14` (create from current `master` @ `bb52d36`)

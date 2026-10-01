@@ -36,3 +36,7 @@ Reviewer: Claude (independent review), 2026-10-01
 1. `PER_MINUTE` with a successful but stale snapshot (old candles, no exception) still runs the cycle on the old data, as before 6.14 (pre-existing semantics; out of scope).
 2. Remaining candidates from `PROJECT_STATE.md`: snapshot by bar count across session gaps; `HOUR_4`/`WEEK_1`/`MONTH_1` candle times; exit modes; recovery TP churn; `FILLED -> UNKNOWN` cancel error.
 3. Publication: PR `agent/review/mvp-6.14` → `master` (merge commit pinned to `c1558bd`); mirror the MVP-6.14 records; close Issue #11.
+
+### Publication record
+
+Published 2026-10-01: PR #12 (`agent/review/mvp-6.14` → `master`, merge commit pinned to the accepted SHA `c1558bd`), merge commit `d1ac72e68d4163fa56652c20de89558f4da1f5a6`.
