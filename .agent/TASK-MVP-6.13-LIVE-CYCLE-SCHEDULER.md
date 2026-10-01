@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN REVIEW — round 2 REJECTED (B4); correction round 2 assigned to Кодер**
+**IN REVIEW — round 3 REJECTED (B5); correction round 3 assigned to Кодер**
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.13` (create from current `master` @ `eb08fbf`)
@@ -121,6 +121,10 @@ Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.13-REV1.
 ## Correction round 2 (review 2026-10-01)
 
 Review: `.agent/REVIEW-MVP-6.13.md` → "Round 2" — **REJECTED**, one blocking finding (B4). The deferred tick requires a candle inside the deferred boundary's own range. A bar without trades has no candle, so the bot can stall in `deferred` forever, silently. Per S6 the deferred tick must run on the **latest closed bar**, and the deferral must be bounded. Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.13-REV2.md`.
+
+## Correction round 3 (review 2026-10-01)
+
+Review: `.agent/REVIEW-MVP-6.13.md` → "Round 3" — **REJECTED**, one blocking finding (B5). In the deferred path an empty snapshot right after the session reopens (the wall-clock lookback window is inside the night gap) is counted as a transient failure on every 1-s pass, so the bot goes to ERROR within ~3 s. Treat it as "not confirmed yet" and count only via the B4 bound. Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.13-REV3.md`.
 
 ## Publication (mandatory, see `AGENTS.md` §6 and `.agent/CODER-WORKFLOW.md` → "Mandatory push rule")
 

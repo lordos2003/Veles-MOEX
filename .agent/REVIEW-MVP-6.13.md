@@ -134,3 +134,49 @@ S6 requires the deferred tick to run "once at the first tradable moment **on the
 The same "no candle for a bar without trades" fact affects the **non-deferred** S2 path. For a bar with no trades the confirmation times out after 60 s and counts a transient failure, so **three consecutive no-trade bars → bot ERROR**. This is fine for liquid instruments, but an M1/M5 bot on a thin instrument would be put into ERROR during quiet periods. This follows the S2 contract as written. Changing it (e.g. treating "no trades in the bar" as a skipped, uncounted tick when the broker otherwise answers normally) is an owner decision for a follow-up.
 
 **No publication to master.**
+
+---
+
+## Round 3 — Verdict
+
+**REJECTED — one correction required (B5).** B4 is closed.
+
+Reviewed: `5b1a300` (`agent/review/mvp-6.13`, pushed, in sync with origin), base `master @ eb08fbf`.
+Report: `.agent/REPORT-MVP-6.13-REV2.md` (`agent/control @ db2d8ac`). Reviewer: Claude, 2026-10-01.
+
+### Independent re-run
+
+`pytest` **481 passed, 1 skipped**; `ruff` clean.
+
+### B4 — CLOSED
+
+`_latest_closed_bar_before()` accepts any complete candle that started before the deferred boundary. The deferral is bounded: while tradable, once a newer boundary passes without a closed bar, the deferral is concluded with **one** transient failure and normal processing resumes. The round-2 stall probe now runs the cycle.
+
+### Blocking finding
+
+#### B5. At session reopen a deferred bot goes to ERROR within ~3 seconds
+
+In the deferred path every scheduler pass (`_LOOP_STEP_SECONDS = 1`) calls the snapshot provider once the status is tradable. The production provider is `MarketDataService.get_snapshot()`. It requests candles in a **wall-clock window** of `(lookback_bars + 1) × timeframe` before *now* (MVP-6.10) and raises `MarketDataUnavailable("no candle history")` when the window is empty.
+
+Right after a session reopens, that window lies inside the night or weekend gap for intraday bots. M5 with `lookback_bars = 50` gives a window of ≈ 4 h 15 m, against a night gap of 7–10 h. The window is empty, so `MarketDataUnavailable` is raised on each pass and counted as a transient failure **every second**. Three consecutive failures → bot ERROR.
+
+Reproduced on `5b1a300` with the MVP-6.13 harness: M5 bot deferred at the close, session reopens, the snapshot provider raises `MarketDataUnavailable`, passes at +0/+1/+2/+3 s:
+
+```
+fail_reasons = ['bot 1: 3 consecutive transient cycle failures (last: no candle history (night gap))']
+```
+
+In practice every intraday bot whose last tick fell at the session close would be put into ERROR at the next open.
+
+**Required correction**
+
+1. In the deferred path, while the instrument is tradable, an unavailable/empty snapshot (`MarketDataUnavailable`) or a snapshot with no closed bar before the boundary is **"not confirmed yet"**, not a per-pass failure. Apply only the B4 bound: count **one** transient failure when a newer boundary has passed, conclude the deferral and resume normal processing.
+2. A regression test: the reproduction above, where the bot stays RUNNING during the reopen seconds; then, after the next boundary, exactly one transient failure is counted and normal ticks resume.
+3. Record in the REPORT the consequence of the MVP-6.10 wall-clock snapshot window. For intraday bots the pre-close bars are usually outside the window at reopen, so the deferred tick is usually concluded by the B4 bound rather than run. `DAY_1` (window ≈ `lookback` days) is unaffected. Fetching the snapshot **by bar count across session gaps** is a separate follow-up (it also affects indicator input right after gaps).
+4. REPORT → `.agent/REPORT-MVP-6.13-REV3.md`, pushed, citing the pushed SHA.
+
+### Note on `agent/control @ 5abd376`
+
+The owner's commit `docs: mirror AGENTS.md to control; enable handoff pickup from .ai/context.md` adds a "Контекстная передача (handoff)" section to `AGENTS.md` on `agent/control`. It is a workflow addition by the owner, with no conflict with the review process. Mirror it to `master` with the MVP-6.13 publication.
+
+**No publication to master.**
