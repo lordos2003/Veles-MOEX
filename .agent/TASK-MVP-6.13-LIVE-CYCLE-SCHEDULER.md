@@ -2,7 +2,7 @@
 
 ## Status
 
-**IN REVIEW — round 1 REJECTED (B1–B3); correction round 1 (+ S6) assigned to Кодер**
+**IN REVIEW — round 2 REJECTED (B4); correction round 2 assigned to Кодер**
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.13` (create from current `master` @ `eb08fbf`)
@@ -117,6 +117,10 @@ Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.13-REV1.
 - Only the **latest** pending boundary is kept. Several boundaries that pass while the session is closed produce **one** deferred cycle, not a catch-up.
 - Deferral is not a failure and is not counted. While deferred, the S3 status is re-checked at the normal scheduler cadence.
 - `PER_MINUTE` keeps the S3 rule: not tradable → skip, not counted.
+
+## Correction round 2 (review 2026-10-01)
+
+Review: `.agent/REVIEW-MVP-6.13.md` → "Round 2" — **REJECTED**, one blocking finding (B4). The deferred tick requires a candle inside the deferred boundary's own range. A bar without trades has no candle, so the bot can stall in `deferred` forever, silently. Per S6 the deferred tick must run on the **latest closed bar**, and the deferral must be bounded. Fix exactly as described in the review. REPORT → `.agent/REPORT-MVP-6.13-REV2.md`.
 
 ## Publication (mandatory, see `AGENTS.md` §6 and `.agent/CODER-WORKFLOW.md` → "Mandatory push rule")
 

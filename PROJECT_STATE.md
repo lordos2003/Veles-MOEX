@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-6.13 — Live Cycle Scheduler
-**Status: IN REVIEW — round-2 decision awaited (round 1 REJECTED: B1 — bars closing outside the session never trade → new owner contract S6, deferred tick; B2 — concurrent passes share one AsyncSession, failing on PostgreSQL; B3 — failure counter survives restart; correction round 1 pushed 2026-10-01).**
+**Status: IN REVIEW — round 2 REJECTED (B4: a deferred bar-close tick can stall the bot forever when the bar before the session close has no candle). B1 range confirmation, B2 (session lock, verified on PostgreSQL), B3 closed. Correction round 2 assigned to Кодер.**
 
 - Review: `.agent/REVIEW-MVP-6.13.md`
 

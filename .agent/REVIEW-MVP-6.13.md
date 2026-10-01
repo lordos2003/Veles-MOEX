@@ -81,3 +81,56 @@ In the scheduler these surface as **unexpected exceptions → immediate bot ERRO
 4. `master` unchanged.
 
 **No publication to master.**
+
+---
+
+## Round 2 — Verdict
+
+**REJECTED — one correction required (B4).** B1 (range confirmation), B2, B3 and observation 1 are closed.
+
+Reviewed: `a945b10` (`agent/review/mvp-6.13`, pushed, in sync with origin), base `master @ eb08fbf`.
+Report: `.agent/REPORT-MVP-6.13-REV1.md` (`agent/control @ 026b276`). Reviewer: Claude, 2026-10-01.
+
+### Independent re-run (clean environment, Python 3.12)
+
+| Check | Result |
+|---|---|
+| `pytest` (full) | **479 passed, 1 skipped** — matches REV1 |
+| `ruff check app tests scripts` | All checks passed |
+| `alembic heads` | single head `0005_deal_continuation` |
+
+### Closed
+
+- **B2 — CLOSED.** One `asyncio.Lock` covers every use of the long-lived live session: `BotRepository` (whole operation, commit and refresh included), `SqlAlchemyDealStore`, `SqlAlchemyLiveStateStore`, the direct `session.get` reads and `load_bot_strategy_by_id`. No locked region calls another locked operation (no deadlock path found). The round-1 probe was re-run on **PostgreSQL 16 + asyncpg**: three bots × 20 rounds of `get_deposit` + `update_state`. Without the lock → `ResourceClosedError` / `IllegalStateChangeError` / `InterfaceError`; with the round-2 lock → **60/60 succeed, no errors**. The MVP-6.11 B2 fresh read (`populate_existing`) is kept. The overlap-detecting session test fails without the lock and passes with it.
+- **B3 — CLOSED.** The per-bot state (failures, pending/deferred boundary, minute claim) is reset on any observed bot state change; `last_done_boundary` is kept so a bar is not evaluated twice. Tested ERROR → START → one failure → still RUNNING.
+- **B1 range confirmation — CLOSED.** The confirmation range is `[bar_start(boundary − 1 s), boundary)`. The REPORT documents the T-Invest candle times with sources: interval start, UTC, `DAY_1` = calendar day. `HOUR_4` / `WEEK_1` / `MONTH_1` are explicitly marked as unverified.
+- **Observation 1 — closed.** `DealError` is no longer double-handled.
+
+### Blocking finding
+
+#### B4. A deferred tick can stall the bot forever, silently
+
+`_process_deferred()` fixes the deferral to the first boundary that fell in the closed session. It runs the cycle only when a complete candle exists **in that boundary's own range**; otherwise it returns and retries on the next pass, with no limit and no failure count. While `ticker.deferred` is set, `_process_at_bar_close()` short-circuits into `_process_deferred()`, so normal boundary processing never resumes.
+
+On MOEX/T-Invest a bar without trades has **no candle** (there are no empty candles). If the last bar before the session close (or before a clearing break) had no trades, which is common for less liquid instruments on M1/M5, the deferred range never gets a candle. **The bot stops trading permanently, with no error.**
+
+Reproduced on `a945b10` with the MVP-6.13 harness. M5 bot, last candle `[T0−10m, T0−5m)`, session closed at `T0` → deferred. Then the status is `TRADING_AVAILABLE` at +14 h, +15 h, +16 h, +20 h and +48 h:
+
+```
+executions=0  fail_reasons=[]  snapshot_requests=5
+```
+
+S6 requires the deferred tick to run "once at the first tradable moment **on the latest closed bar**", not on a candle that must sit inside the deferred boundary's range.
+
+**Required correction**
+
+1. In the deferred path, once the instrument is tradable, confirm **the latest closed bar**: the snapshot contains at least one candle with `is_complete is True` and `start < deferred boundary`. Then run the cycle once and conclude.
+2. Bound the deferral: if the instrument is tradable and a **newer** bar boundary has passed while the deferred tick is still unconfirmed, conclude the deferral (count one transient failure) and resume normal boundary processing. The bot must never be stuck in `deferred` while trading is open.
+3. Tests: the reproduction above (no candle in the deferred range → the cycle runs on the latest closed bar); the bound in item 2; the existing S6 tests still green.
+4. REPORT → `.agent/REPORT-MVP-6.13-REV2.md`, pushed, citing the pushed SHA.
+
+### Observation for the owner (non-blocking, contract S2)
+
+The same "no candle for a bar without trades" fact affects the **non-deferred** S2 path. For a bar with no trades the confirmation times out after 60 s and counts a transient failure, so **three consecutive no-trade bars → bot ERROR**. This is fine for liquid instruments, but an M1/M5 bot on a thin instrument would be put into ERROR during quiet periods. This follows the S2 contract as written. Changing it (e.g. treating "no trades in the bar" as a skipped, uncounted tick when the broker otherwise answers normally) is an owner decision for a follow-up.
+
+**No publication to master.**
