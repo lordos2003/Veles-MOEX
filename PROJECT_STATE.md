@@ -17,12 +17,13 @@
 
 ## Current task
 
-No task is open. Candidates (owner to choose):
-- **Owner decision:** treat a bar without trades (no T-Invest candle) as an uncounted skip instead of a transient failure (thin M1/M5 instruments otherwise go to ERROR after 3 quiet bars).
-- **Snapshot by bar count across session gaps** (replace the MVP-6.10 wall-clock window; affects indicator input after night/weekend gaps and the S6 deferred tick for intraday bots).
-- Verify `HOUR_4` / `WEEK_1` / `MONTH_1` T-Invest candle start times.
-- Exit modes: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL grid mode.
-- Clean-ups: recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error.
+### MVP-6.14 — No-Trade Bars Are Skipped, Not Failures
+**Status: OPEN — assigned to Кодер.**
+
+- Control task: `.agent/TASK-MVP-6.14-NO-TRADE-BAR.md`
+- Implementation branch: `agent/review/mvp-6.14` (from `master` @ `bb52d36`)
+- Contract N1–N3 approved by the owner 2026-10-01: a **proven** no-trade bar (no candle in the bar, and either a newer candle exists or the broker's last-trade time is before the bar) is a skipped tick (no cycle, not counted, `last_skip_reason` in the API); unproven → the MVP-6.13 behaviour is unchanged.
+- Remaining candidates: snapshot by bar count across session gaps; `HOUR_4`/`WEEK_1`/`MONTH_1` candle times; exit modes; recovery TP churn; `FILLED -> UNKNOWN` cancel error.
 
 ## Current accepted MVP
 
