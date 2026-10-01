@@ -2,7 +2,7 @@
 
 ## Status
 
-**ACCEPTED (round 5, 2026-10-01)** — accepted implementation `db09a39`; awaiting publication to `master`
+**ACCEPTED (round 5, 2026-10-01) and published** — accepted implementation `db09a39`; PR #10, merge commit `0279507e06db5403f063b66072298e8c1dd3d2cd`
 
 Control branch: `agent/control`
 Implementation branch: `agent/review/mvp-6.13` (create from current `master` @ `eb08fbf`)

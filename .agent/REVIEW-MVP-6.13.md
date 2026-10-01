@@ -269,3 +269,7 @@ S1–S5, S6 (owner), B1–B6 — all closed. Verified on PostgreSQL 16 + asyncpg
 3. `HOUR_4` / `WEEK_1` / `MONTH_1` T-Invest candle start times are not verified (`DAY_1` is verified).
 4. Earlier follow-ups (MVP-6.12): recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error; Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode.
 5. Publication: PR `agent/review/mvp-6.13` → `master` (merge commit pinned to `db09a39`); mirror the MVP-6.13 records **and** the owner's `AGENTS.md` handoff section (`agent/control @ 5abd376`); close Issue #9.
+
+### Publication record
+
+Published 2026-10-01: PR #10 (`agent/review/mvp-6.13` → `master`, merge commit pinned to the accepted SHA `db09a39`), merge commit `0279507e06db5403f063b66072298e8c1dd3d2cd`. The owner's `AGENTS.md` handoff section is mirrored to `master` with the records.

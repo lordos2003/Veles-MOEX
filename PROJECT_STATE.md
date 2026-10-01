@@ -17,23 +17,28 @@
 
 ## Current task
 
-### MVP-6.13 — Live Cycle Scheduler
-**Status: ACCEPTED (round 5, 2026-10-01) — awaiting publication to `master`.** Accepted implementation `db09a39`; review `.agent/REVIEW-MVP-6.13.md` (rounds 1–5); validation 486 passed, 1 skipped.
-
-- Review: `.agent/REVIEW-MVP-6.13.md`
-
-- Control task: `.agent/TASK-MVP-6.13-LIVE-CYCLE-SCHEDULER.md`
-- Implementation branch: `agent/review/mvp-6.13` (from `master` @ `eb08fbf`)
-- Implementation HEAD: `db09a39` (correction round 4 (B6), pushed, in sync with origin); reports: `.agent/REPORT-MVP-6.13.md`, `.agent/REPORT-MVP-6.13-REV1.md`, `.agent/REPORT-MVP-6.13-REV2.md`, `.agent/REPORT-MVP-6.13-REV3.md`, `.agent/REPORT-MVP-6.13-REV4.md`
-- Contracts S1–S5 approved by the project owner 2026-09-30: one cycle per tick per RUNNING bot via `execute_strategy`, started only after a SAFE recovery; `AT_BAR_CLOSE` at boundary +5 s with closed-bar confirmation (retry 5 s, max 60 s); `PER_MINUTE` every minute; broker trading-status gate (`GetTradingStatus`, no hard-coded MOEX schedule); transient failures skipped, 3 in a row → bot ERROR, non-transient → ERROR immediately.
-- Contract **S6** (owner decision 2026-09-30, round-1 review): an `AT_BAR_CLOSE` tick that falls while the instrument is not tradable is **deferred** — runs once at the next tradable moment on the closed bar of the deferred boundary; only the latest pending boundary is kept; deferral is not a failure.
-- Round-1 corrections (2026-10-01): B1 range confirmation (no exact-equality candle-stamp check), B2 shared live-session serialization behind one `asyncio.Lock` (MVP-6.11 B2 fresh-read kept; verified by the reviewer on PostgreSQL 16), B3 per-bot scheduler-state reset on a bot state change (keeps `last_done_boundary`); review observation 1 implemented (`DealError` not double-handled).
-- Round-2 correction **B4** (2026-10-01, `5b1a300`): the deferred tick is confirmed by the **latest closed bar** (any complete candle with `start < deferred boundary`) instead of a candle inside the deferred bar's own range (a bar without trades has no candle → the bot could stall in `deferred` forever, reproduced); the deferral is bounded — while tradable, an unconfirmed deferral with a newer boundary already passed concludes with **one transient failure** and normal boundary processing resumes. Open owner observation (non-blocking): the non-deferred S2 path still errors a bot after three consecutive no-trade bars — follow-up decision.
-- Round-3 correction **B5** (2026-10-01, `b46c5e2`): at session reopen the wall-clock snapshot window (`(lookback_bars + 1) × timeframe` before now, MVP-6.10) lies in the night/weekend gap → `MarketDataUnavailable` per 1-s pass in the deferred path; now this is **"not confirmed yet"**, never a per-pass failure, and only the B4 bound concludes the deferral (one transient). Consequence documented: for intraday bots the deferred tick is usually concluded by the B4 bound rather than run (pre-close bars are outside the window); `DAY_1` unaffected; snapshot-by-bar-count across gaps = separate follow-up.
-- Round-4 correction **B6** (2026-10-01, `db09a39`): (B6.1) a tick is **at most one transient failure** — inside the retry window a transient data failure (`MarketDataUnavailable`, transport error, unconfirmed bar) is "not confirmed yet" and never counts per retry slot; exactly **one** transient at `max_wait` expiry; non-transient still fails immediately (S4 now means three quiet **bars**, not three retries); (B6.2) the B4 bound is relative to the **first tradable moment** — the deferral concludes only after a full bar of trading + `max_wait` since it, so the session reopen gets a data window (no instant drop); (B6.3) deferred status is polled at the **5-s retry cadence** (not per 1-s pass) and a failed/rate-limited status counts **at most once per bar boundary**. Validation: `pytest 486 passed, 1 skipped` (36 scheduler tests); ruff clean; alembic single head `0005_deal_continuation`; npm build green.
-- Other follow-ups: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL mode; recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error.
+No task is open. Candidates (owner to choose):
+- **Owner decision:** treat a bar without trades (no T-Invest candle) as an uncounted skip instead of a transient failure (thin M1/M5 instruments otherwise go to ERROR after 3 quiet bars).
+- **Snapshot by bar count across session gaps** (replace the MVP-6.10 wall-clock window; affects indicator input after night/weekend gaps and the S6 deferred tick for intraday bots).
+- Verify `HOUR_4` / `WEEK_1` / `MONTH_1` T-Invest candle start times.
+- Exit modes: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL grid mode.
+- Clean-ups: recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error.
 
 ## Current accepted MVP
+
+### MVP-6.13 — Live Cycle Scheduler
+**Status: ACCEPTED (round 5, 2026-10-01) and published to master.**
+
+- Accepted implementation: `db09a39`
+- Publication PR: #10
+- Publication merge commit: `0279507e06db5403f063b66072298e8c1dd3d2cd`
+- Control task: `.agent/TASK-MVP-6.13-LIVE-CYCLE-SCHEDULER.md`; review: `.agent/REVIEW-MVP-6.13.md` (rounds 1–4 REJECTED: B1–B6; round 5 ACCEPT); reports: `REPORT-MVP-6.13.md`, `-REV1` … `-REV4`
+- Contracts S1–S6 (owner-approved 2026-09-30): per-bot ticks by Veles calculation method (`AT_BAR_CLOSE` +5 s with closed-bar confirmation / `PER_MINUTE`), started only after a SAFE recovery; broker trading-status gate (`GetTradingStatus`); one transient failure per tick, 3 consecutive ticks → bot ERROR, non-transient → ERROR immediately; S6 deferred bar-close tick outside the session (bounded, 5-s status polling).
+- Live-session DB access serialised behind one `asyncio.Lock` (verified on PostgreSQL 16 + asyncpg).
+- Validation (independent, clean env): `pytest 486 passed, 1 skipped`; `ruff` clean; alembic head `0005_deal_continuation`.
+
+Known boundaries: a no-trade bar costs one transient failure; wall-clock snapshot window (MVP-6.10) after session gaps; `HOUR_4`/`WEEK_1`/`MONTH_1` candle start times unverified; only Simple TP; one bot per instrument.
+
 
 ### MVP-6.12 — Live Deal Continuation (Simple TP, Simple/Custom grid)
 **Status: ACCEPTED (round 3, 2026-09-30) and published to master.**
