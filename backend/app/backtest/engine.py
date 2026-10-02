@@ -28,7 +28,13 @@ from app.strategies.bars import Bar, BarSeries, Snapshot
 from app.strategies.config import Direction, TradingMode
 from app.strategies.dca_grid import DCAGridEngine, GridState
 from app.strategies.domain import MarketContext
-from app.strategies.exit import ExitDecision, ExitEngine, ExitState
+from app.strategies.exit import (
+    ExitDecision,
+    ExitEngine,
+    ExitState,
+    simple_stop_level,
+    stop_distance_percent,
+)
 from app.strategies.filters import CalculationMethod, FilterEvaluator
 from app.trading.engine import TradingEngine
 
@@ -183,7 +189,7 @@ class BacktestEngine:
             if broker.is_open():
                 pending_market_exit = self._evaluate_market_exit(
                     config, direction, pos_avg, pos_qty, exit_state,
-                    bar_series, candle, context,
+                    bar_series, candle, context, grid_state,
                 )
 
             # (E) Mark to market.
@@ -233,7 +239,8 @@ class BacktestEngine:
             broker.cancel(oid)
 
     def _evaluate_market_exit(
-        self, config, direction, avg, qty, exit_state, bar_series, candle, context
+        self, config, direction, avg, qty, exit_state, bar_series, candle, context,
+        grid_state,
     ) -> ExitDecision | None:
         exit_cfg = config.strategy.exit
         price = Decimal(candle.close)
@@ -249,9 +256,19 @@ class BacktestEngine:
             )
             if decision:
                 decisions.append(decision)
-        if exit_cfg.stop_loss is not None:
-            decision = self._exit_engine.simple_stop_decision(
-                exit_cfg, direction, avg, price, qty, now
+        if exit_cfg.stop_loss is not None and self._simple_stop_armed(grid_state):
+            # MVP-6.16 E5: the simple stop shares the E1 formula with Live —
+            # P0 is the first grid order's actual fill (the grid reference at
+            # entry), the distance is (last level offset - level 0 offset) + SL%.
+            p0 = grid_state.reference_price if grid_state is not None else avg
+            distance = stop_distance_percent(
+                grid_state.levels[0].offset_percent if grid_state is not None else 0.0,
+                grid_state.levels[-1].offset_percent if grid_state is not None else 0.0,
+                exit_cfg.stop_loss.percent,
+            )
+            level = simple_stop_level(p0, direction, distance)
+            decision = self._exit_engine.simple_stop_decision_at_level(
+                exit_cfg, direction, level, price, qty, now
             )
             if decision:
                 decisions.append(decision)
@@ -276,6 +293,17 @@ class BacktestEngine:
 
     def _grid_assembled(self, avg) -> bool:
         return True
+
+    @staticmethod
+    def _simple_stop_armed(grid_state) -> bool:
+        """E1/E5: the simple stop is armed only when all grid levels are filled.
+
+        A grid-less case (SIMPLE ``levels <= 1``, CUSTOM without levels, or
+        SIGNAL mode) is armed at entry: the single order is the entry itself.
+        """
+        if grid_state is None:
+            return True
+        return len(grid_state.unfilled()) == 0
 
     def _execute_market_exit(
         self, broker, config, decision, candle, deals, direction,

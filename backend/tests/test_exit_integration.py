@@ -133,6 +133,35 @@ def test_stop_loss_market_exit():
     assert r.deals[0].exit_price == D("85")
 
 
+def test_stop_loss_grid_level_uses_e1_combined_offset_after_assembly():
+    """MVP-6.16 E5: the grid stop shares the E1 formula and arming with Live.
+
+    Grid: LONG, levels 2, overlap 15% -> levels at 100 (market entry) and 85;
+    P0 = 100, combined distance = (15 - 0) + SL 5% = 20 -> stop level 80.
+    The stop must NOT arm before the DCA level fills (close 100 before the
+    trigger is ignored), and once assembled a close at 79 (<= 80) exits at the
+    next bar's open.
+    """
+    candles = [
+        _candle(0, 100, 100.5, 99.5, 100),
+        _candle(1, 100, 100.5, 99.5, 100),
+        _candle(2, 100, 100.5, 84, 84),
+        _candle(3, 84, 95, 83, 95),
+        _candle(4, 95, 95.5, 79, 79),
+        _candle(5, 79, 79.5, 78.5, 79),
+    ]
+    exit_cfg = ExitConfig(
+        take_profit=FixedPercentageTP(percent=1000.0),
+        stop_loss=StopLossConfig(percent=5.0),
+    )
+    dca = DCAGridConfig(levels=2, overlap_percent=15.0)
+    r = _make_engine().run(_cfg(candles, exit_cfg, quantity="20", dca=dca))
+    assert len(r.deals) == 1
+    deal = r.deals[0]
+    assert deal.reason == "stop_loss"
+    assert deal.exit_price == D("79")
+
+
 def test_signal_tp_market_exit():
     candles = [
         _candle(0, 100, 100.5, 99.5, 100),

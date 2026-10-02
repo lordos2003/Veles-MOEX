@@ -53,10 +53,23 @@ class BotRepository:
             result = await self._session.execute(select(Bot).order_by(Bot.id))
             return list(result.scalars().all())
 
-    async def update_state(self, bot: Bot, state: BotState) -> Bot:
-        """Persist a new bot-state value on the existing ORM entity."""
+    async def update_state(
+        self,
+        bot: Bot,
+        state: BotState,
+        *,
+        stop_reason: str | None = None,
+    ) -> Bot:
+        """Persist a new bot-state value on the existing ORM entity.
+
+        MVP-6.16 E3: ``stop_reason`` is an optional reason recorded when the
+        bot is stopped by a stop-loss (e.g. ``"stop-loss"``); an omitted value
+        leaves the existing reason untouched.
+        """
         async with self._session_guard():
             bot.status = state.value
+            if stop_reason is not None:
+                bot.stop_reason = stop_reason
             await self._session.commit()
             await self._session.refresh(bot)
             return bot

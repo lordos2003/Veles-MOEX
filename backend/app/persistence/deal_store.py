@@ -85,6 +85,16 @@ def _to_domain(row: DealRow, levels: list[DealLevelRow]) -> Deal:
         tp_intent_id=row.tp_intent_id,
         tp_order_id=row.tp_order_id,
         tp_broker_order_id=row.tp_broker_order_id,
+        # MVP-6.16 E1/E2: stop-loss state + close reason.
+        sl_percent=float(row.sl_percent) if row.sl_percent is not None else None,
+        sl_offset=Decimal(row.sl_offset),
+        p0_price=Decimal(row.p0_price) if row.p0_price is not None else None,
+        sl_rev=row.sl_rev,
+        sl_order_id=row.sl_order_id,
+        sl_quantity=Decimal(row.sl_quantity) if row.sl_quantity is not None else None,
+        sl_price=Decimal(row.sl_price) if row.sl_price is not None else None,
+        close_reason=row.close_reason,
+        stop_bot_after=row.stop_bot_after,
         created_at=row.created_at,
         updated_at=row.updated_at,
         closed_at=row.closed_at,
@@ -143,6 +153,17 @@ class SqlAlchemyDealStore:
                 tp_intent_id=deal.tp_intent_id,
                 tp_order_id=deal.tp_order_id,
                 tp_broker_order_id=deal.tp_broker_order_id,
+                sl_percent=(
+                    Decimal(str(deal.sl_percent)) if deal.sl_percent is not None else None
+                ),
+                sl_offset=deal.sl_offset,
+                p0_price=deal.p0_price,
+                sl_rev=deal.sl_rev,
+                sl_order_id=deal.sl_order_id,
+                sl_quantity=deal.sl_quantity,
+                sl_price=deal.sl_price,
+                close_reason=deal.close_reason,
+                stop_bot_after=deal.stop_bot_after,
                 created_at=deal.created_at,
                 updated_at=utcnow(),
                 closed_at=deal.closed_at,
@@ -173,6 +194,17 @@ class SqlAlchemyDealStore:
             row.tp_intent_id = deal.tp_intent_id
             row.tp_order_id = deal.tp_order_id
             row.tp_broker_order_id = deal.tp_broker_order_id
+            row.sl_percent = (
+                Decimal(str(deal.sl_percent)) if deal.sl_percent is not None else None
+            )
+            row.sl_offset = deal.sl_offset
+            row.p0_price = deal.p0_price
+            row.sl_rev = deal.sl_rev
+            row.sl_order_id = deal.sl_order_id
+            row.sl_quantity = deal.sl_quantity
+            row.sl_price = deal.sl_price
+            row.close_reason = deal.close_reason
+            row.stop_bot_after = deal.stop_bot_after
             row.updated_at = utcnow()
             row.closed_at = deal.closed_at
             await self._session.execute(

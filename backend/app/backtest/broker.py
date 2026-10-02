@@ -28,6 +28,8 @@ from app.brokers.base import (
     BrokerOrder,
     BrokerOrderRequest,
     BrokerPosition,
+    BrokerStopOrder,
+    BrokerStopOrderRequest,
 )
 from app.domain.instrument import TradingStatus
 from app.domain.marketdata import Candle, LastPrice, Timeframe
@@ -388,3 +390,22 @@ class BacktestBroker(BrokerAdapter):
 
     async def get_deals(self, account_id: str | None = None) -> list[BrokerDeal]:
         return list(self._deals)
+
+    # --- Stop orders (MVP-6.16) ---
+
+    async def place_stop_order(self, request: BrokerStopOrderRequest) -> BrokerStopOrder:
+        """Backtest exits are modelled directly by the engine (E5).
+
+        The engine evaluates the stop trigger per bar and executes the close
+        itself; there is no broker-side conditional order to model. This stub
+        exists only to satisfy the |BrokerAdapter| contract.
+        """
+        raise NotImplementedError("stop orders are engine-modelled in backtest")
+
+    async def cancel_stop_order(
+        self, order_id: str, account_id: str | None = None
+    ) -> None:
+        raise NotImplementedError("stop orders are engine-modelled in backtest")
+
+    async def get_stop_orders(self, account_id: str | None = None) -> list[BrokerStopOrder]:
+        raise NotImplementedError("stop orders are engine-modelled in backtest")

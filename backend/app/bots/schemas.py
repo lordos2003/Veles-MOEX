@@ -19,6 +19,9 @@ class BotResponse(BaseModel):
     deposit: Decimal | None = None
     started_at: datetime | None = None
     stopped_at: datetime | None = None
+    # MVP-6.16 E3: why the bot was stopped (``"stop-loss"`` after a protective
+    # stop close with ``stop_bot_after=true``; None for manual stops).
+    stop_reason: str | None = None
     # B2 (MVP-6.12 correction round 1): the last Deal-layer failure reason for
     # this bot (None when no deal failure has been recorded). Read-only.
     deal_error: str | None = None

@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from app.domain.instrument import InstrumentType, TradingStatus
 from app.domain.marketdata import Candle, LastPrice, Timeframe
@@ -169,6 +170,64 @@ class BrokerDeal:
     happened_at: datetime | None = None
 
 
+class StopOrderStatus(StrEnum):
+    """Broker-agnostic stop-order status (MVP-6.16).
+
+    ``ACTIVE`` — working at the broker; ``EXECUTED`` — triggered and executed;
+    ``CANCELLED`` — cancelled before execution; ``EXPIRED`` — expired by the
+    exchange; ``UNKNOWN`` — the broker reported a state this adapter cannot map.
+    """
+
+    ACTIVE = "active"
+    EXECUTED = "executed"
+    CANCELLED = "cancelled"
+    EXPIRED = "expired"
+    UNKNOWN = "unknown"
+
+
+@dataclass
+class BrokerStopOrderRequest:
+    """Broker-agnostic stop-order request (MVP-6.16).
+
+    A conditional market order: ``stop_price`` is the trigger level, the
+    resulting execution is a market order. ``quantity`` is in canonical
+    instrument units; the adapter converts to broker lots. ``side`` is the
+    direction of the resulting market order (SELL to close a long, BUY to close
+    a short).
+    """
+
+    instrument_figi: str
+    side: OrderSide
+    quantity: Decimal
+    stop_price: Decimal
+    account_id: str | None = None
+    idempotency_key: str = ""
+
+
+@dataclass
+class BrokerStopOrder:
+    """Broker-agnostic stop-order (read-only, MVP-6.16).
+
+    ``quantity`` is in canonical instrument units. ``stop_price`` is the
+    configured trigger level; ``execution_average_price`` is the average price
+    of the resulting execution when ``status`` is ``EXECUTED``.
+    """
+
+    order_id: str
+    status: StopOrderStatus
+    account_id: str | None = None
+    instrument_figi: str | None = None
+    side: OrderSide | None = None
+    quantity: Decimal = Decimal("0")
+    stop_price: Decimal | None = None
+    executed_quantity: Decimal = Decimal("0")
+    execution_average_price: Decimal | None = None
+    exchange_order_id: str | None = None
+    currency: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
 class BrokerAdapter(ABC):
     """Interface implemented by concrete broker adapters.
 
@@ -266,4 +325,33 @@ class BrokerAdapter(ABC):
         """Fetch a single order by broker order id.
 
         ``account_id`` is required by brokers that scope orders per account.
+        """
+
+    # --- Stop orders (MVP-6.16) ---
+
+    @abstractmethod
+    async def place_stop_order(self, request: BrokerStopOrderRequest) -> BrokerStopOrder:
+        """Place a conditional (stop) order and return it.
+
+        The execution after the trigger is a market order; ``quantity`` must not
+        exceed the open position. Must never raise for the *request* to be
+        accepted twice: adapters derive the idempotency key from
+        ``request.idempotency_key`` so a retry returns the existing order.
+        """
+
+    @abstractmethod
+    async def cancel_stop_order(
+        self, order_id: str, account_id: str | None = None
+    ) -> None:
+        """Cancel a stop order by broker order id.
+
+        ``account_id`` is required by brokers that scope orders per account.
+        """
+
+    @abstractmethod
+    async def get_stop_orders(self, account_id: str | None = None) -> list[BrokerStopOrder]:
+        """Return the currently known stop orders (optionally for an account).
+
+        Used for correlation/recovery: the caller reconciles broker state with
+        the expected working stop.
         """

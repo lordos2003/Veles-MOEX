@@ -23,6 +23,9 @@ from app.brokers.base import (
     BrokerOrder,
     BrokerOrderRequest,
     BrokerPosition,
+    BrokerStopOrder,
+    BrokerStopOrderRequest,
+    StopOrderStatus,
 )
 from app.brokers.tinvest_client import TInvestClient
 from app.brokers.tinvest_errors import (
@@ -43,6 +46,7 @@ logger = logging.getLogger(__name__)
 _USERS = "tinkoff.public.invest.api.contract.v1.UsersService"
 _OPERATIONS = "tinkoff.public.invest.api.contract.v1.OperationsService"
 _ORDERS = "tinkoff.public.invest.api.contract.v1.OrdersService"
+_STOP_ORDERS = "tinkoff.public.invest.api.contract.v1.StopOrdersService"
 _INSTRUMENTS = "tinkoff.public.invest.api.contract.v1.InstrumentsService"
 _MARKET = "tinkoff.public.invest.api.contract.v1.MarketDataService"
 
@@ -111,6 +115,21 @@ _ORDER_SIDE_MAP = {
 _ORDER_SIDE_TO_TINVEST = {
     OrderSide.BUY: "ORDER_DIRECTION_BUY",
     OrderSide.SELL: "ORDER_DIRECTION_SELL",
+}
+
+# T-Invest StopOrderStatus -> our StopOrderStatus. UNSPECIFIED is intentionally
+# NOT mapped: an unspecified/unknown status surfaces as UNKNOWN, never guessed.
+_STOP_ORDER_STATUS_MAP = {
+    "STOP_ORDER_STATUS_ACTIVE": StopOrderStatus.ACTIVE,
+    "STOP_ORDER_STATUS_EXECUTED": StopOrderStatus.EXECUTED,
+    "STOP_ORDER_STATUS_CANCELED": StopOrderStatus.CANCELLED,
+    "STOP_ORDER_STATUS_EXPIRED": StopOrderStatus.EXPIRED,
+}
+
+# T-Invest StopOrderType -> our supported stop order kind (stop-loss only for MVP-6.16);
+# an unknown type surfaces as None, never silently downgraded.
+_STOP_ORDER_TYPE_MAP = {
+    "STOP_ORDER_TYPE_STOP_LOSS": "stop_loss",
 }
 
 # T-Invest OperationType names that represent security trades.
@@ -227,6 +246,14 @@ def _map_security_trading_status(raw_status: object, api_available: object) -> T
 
 def _map_order_status(value: str | None) -> OrderStatus:
     return _ORDER_STATUS_MAP.get(value or "", OrderStatus.UNKNOWN)
+
+
+def _map_stop_order_status(value: str | None) -> StopOrderStatus:
+    return _STOP_ORDER_STATUS_MAP.get(value or "", StopOrderStatus.UNKNOWN)
+
+
+def _map_stop_order_type(value: str | None) -> str | None:
+    return _STOP_ORDER_TYPE_MAP.get(value or "")
 
 
 def _map_order_type(value: str | None) -> OrderType | None:
@@ -536,6 +563,79 @@ class TInvestAdapter(BrokerAdapter):
             raise ResourceNotFoundError(f"Order not found: {order_id}") from exc
         return await self._to_order(data, account_id)
 
+    async def place_stop_order(self, request: BrokerStopOrderRequest) -> BrokerStopOrder:
+        """Place a stop-loss conditional market order via PostStopOrder.
+
+        The stop order is STOP_LOSS, GOOD_TILL_CANCEL, with a market execution
+        after the trigger: the stop is the only supported stop-order kind in
+        MVP-6.16 and no other kind is silently substituted. Quantity is converted
+        from canonical units to T-Invest lots via the instrument lot size; the
+        idempotency key (UUID) allows a retry to return the already-placed order.
+        """
+        client = self._require_client()
+        if not request.account_id:
+            raise InvalidRequestError("account_id is required for T-Invest stop-order placement")
+        if request.quantity <= 0:
+            raise InvalidRequestError("stop quantity must be positive")
+        if request.stop_price <= 0:
+            raise InvalidRequestError("stop price must be positive")
+
+        instrument = await self.get_instrument(request.instrument_figi)
+        lot_size = instrument.lot_size
+        if not lot_size or lot_size <= 0:
+            raise InvalidRequestError(
+                f"Unknown lot size for instrument {request.instrument_figi}"
+            )
+        if request.quantity % lot_size != 0:
+            raise InvalidRequestError(
+                f"quantity {request.quantity} is not a multiple of lot size {lot_size}"
+            )
+        lots = int(request.quantity // lot_size)
+
+        body: dict = {
+            "instrumentId": request.instrument_figi,
+            "quantity": lots,
+            "stopPrice": _decimal_to_quotation(request.stop_price),
+            "direction": _ORDER_SIDE_TO_TINVEST[request.side],
+            "accountId": request.account_id,
+            "expirationType": "STOP_ORDER_EXPIRATION_TYPE_GOOD_TILL_CANCEL",
+            "stopOrderType": "STOP_ORDER_TYPE_STOP_LOSS",
+            "orderId": self._resolve_idempotency_key(request.idempotency_key),
+            "exchangeOrderType": "EXCHANGE_ORDER_TYPE_MARKET",
+        }
+        data = await client.call(f"{_STOP_ORDERS}/PostStopOrder", body)
+        stop_order_id = data.get("stopOrderId") or data.get("stop_order_id")
+        # PostStopOrder returns only the stop order id; a successfully accepted
+        # GOOD_TILL_CANCEL stop-loss is reported as ACTIVE (working at the broker).
+        return BrokerStopOrder(
+            order_id=stop_order_id or "",
+            status=StopOrderStatus.ACTIVE,
+            account_id=request.account_id,
+            instrument_figi=request.instrument_figi,
+            side=request.side,
+            quantity=request.quantity,
+            stop_price=request.stop_price,
+        )
+
+    async def cancel_stop_order(
+        self, order_id: str, account_id: str | None = None
+    ) -> None:
+        client = self._require_client()
+        if not account_id:
+            raise InvalidRequestError("account_id is required to cancel a T-Invest stop order")
+        await client.call(
+            f"{_STOP_ORDERS}/CancelStopOrder",
+            {"accountId": account_id, "stopOrderId": order_id},
+        )
+
+    async def get_stop_orders(self, account_id: str | None = None) -> list[BrokerStopOrder]:
+        client = self._require_client()
+        if not account_id:
+            account_id = await self._first_account_id()
+        data = await client.call(f"{_STOP_ORDERS}/GetStopOrders", {"accountId": account_id})
+        raw_orders = data.get("orders", [])
+        return [await self._to_stop_order(item, account_id) for item in raw_orders]
+
     @staticmethod
     def _resolve_idempotency_key(idempotency_key: str) -> str:
         """Return a valid UUID idempotency key, or reject an invalid one.
@@ -686,6 +786,45 @@ class TInvestAdapter(BrokerAdapter):
             return instrument.lot_size
         except Exception:  # noqa: BLE001 - best-effort normalization
             return None
+
+    async def _to_stop_order(self, raw: dict, account_id: str) -> BrokerStopOrder:
+        """Map a T-Invest StopOrder payload to a broker-neutral BrokerStopOrder.
+
+        ``lots_requested`` is converted to canonical units via the instrument
+        lot size; a quantity without a resolvable lot size is refused (never
+        silently treated as units). A status the adapter cannot map surfaces as
+        ``UNKNOWN``, never guessed.
+        """
+        lots = raw.get("lotsRequested") or 0
+        figi = raw.get("figi")
+        if figi:
+            lot_size = await self._lot_size_for(figi)
+            if not lot_size or lot_size <= 0:
+                raise InvalidRequestError(
+                    f"cannot resolve lot size for instrument {figi}; "
+                    "refusing to map T-Invest lots as canonical units"
+                )
+            factor = Decimal(lot_size)
+            quantity = Decimal(str(lots)) * factor
+        else:
+            if lots:
+                raise InvalidRequestError(
+                    "stop order has quantity but no FIGI; cannot normalize lots to units"
+                )
+            quantity = Decimal("0")
+        return BrokerStopOrder(
+            order_id=raw.get("stopOrderId", ""),
+            status=_map_stop_order_status(raw.get("status")),
+            account_id=account_id,
+            instrument_figi=figi,
+            side=_map_order_side(raw.get("direction")),
+            quantity=quantity,
+            stop_price=_quotation_to_decimal(raw.get("stopPrice")),
+            exchange_order_id=raw.get("exchangeOrderId"),
+            currency=raw.get("currency"),
+            created_at=_timestamp_to_datetime(raw.get("createDate")),
+            updated_at=_timestamp_to_datetime(raw.get("updateDate")),
+        )
 
     @staticmethod
     def _operation_to_deals(item: dict, account_id: str) -> list[BrokerDeal]:

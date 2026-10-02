@@ -42,6 +42,9 @@ class Bot(TimestampMixin, Base):
     deposit: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # MVP-6.16 E3: the reason the bot was stopped (e.g. ``"stop-loss"`` after a
+    # protective stop close with ``stop_bot_after=true``); None for manual stops.
+    stop_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f"<Bot id={self.id} name={self.name!r} status={self.status!r}>"

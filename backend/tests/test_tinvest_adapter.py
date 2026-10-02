@@ -15,7 +15,7 @@ from app.brokers import (
     ResourceNotFoundError,
     TInvestAdapter,
 )
-from app.brokers.base import BrokerOrderRequest
+from app.brokers.base import BrokerOrderRequest, BrokerStopOrderRequest, StopOrderStatus
 from app.brokers.tinvest import _quotation_to_decimal
 from app.domain.marketdata import Timeframe
 from app.models.enums import OrderSide, OrderStatus, OrderType
@@ -28,6 +28,7 @@ _CANDLES = "tinkoff.public.invest.api.contract.v1.MarketDataService/GetCandles"
 _PORTFOLIO = "tinkoff.public.invest.api.contract.v1.OperationsService/GetPortfolio"
 _GET_ORDERS = "tinkoff.public.invest.api.contract.v1.OrdersService/GetOrders"
 _OPERATIONS = "tinkoff.public.invest.api.contract.v1.OperationsService/GetOperationsByCursor"
+_STOP_ORDERS = "tinkoff.public.invest.api.contract.v1.StopOrdersService"
 
 
 def _accounts_response() -> dict:
@@ -477,3 +478,173 @@ async def test_zero_quantity_no_figi_order_returns_zero_units() -> None:
     assert order.requested_quantity == Decimal("0")
     assert order.executed_quantity == Decimal("0")
     assert order.executions == []
+
+
+# --- MVP-6.16: stop orders -------------------------------------------------
+
+
+def _stop_fake(**extra) -> TInvestFakeClient:
+    responses = {
+        _GET_ACCOUNTS: {"accounts": [{"id": "acc-1", "type": "ACCOUNT_TYPE_TINKOFF"}]},
+        _GET_INSTRUMENT: {
+            "instrument": {"figi": "BBG004730N88", "lot": 10, "instrumentType": "share"}
+        },
+    }
+    responses.update(extra)
+    return TInvestFakeClient(responses=responses)
+
+
+@pytest.mark.asyncio
+async def test_place_stop_order_posts_stop_loss_market_body() -> None:
+    import re
+
+    fake = _stop_fake(
+        **{f"{_STOP_ORDERS}/PostStopOrder": {"stopOrderId": "stop-1"}}
+    )
+    adapter = TInvestAdapter(client=fake)
+    stop = await adapter.place_stop_order(
+        BrokerStopOrderRequest(
+            instrument_figi="BBG004730N88",
+            side=OrderSide.SELL,
+            quantity=Decimal("30"),
+            stop_price=Decimal("80"),
+            account_id="acc-1",
+        )
+    )
+    path, body = fake.calls[-1]
+    assert path == f"{_STOP_ORDERS}/PostStopOrder"
+    assert body["instrumentId"] == "BBG004730N88"
+    assert body["quantity"] == 3  # canonical 30 units / lot 10
+    assert body["stopPrice"] == {"units": "80", "nano": 0}
+    assert body["direction"] == "ORDER_DIRECTION_SELL"
+    assert body["accountId"] == "acc-1"
+    assert body["expirationType"] == "STOP_ORDER_EXPIRATION_TYPE_GOOD_TILL_CANCEL"
+    assert body["stopOrderType"] == "STOP_ORDER_TYPE_STOP_LOSS"
+    assert body["exchangeOrderType"] == "EXCHANGE_ORDER_TYPE_MARKET"
+    assert re.fullmatch(r"[0-9a-f-]{36}", body["orderId"]) is not None
+    assert stop.order_id == "stop-1"
+    assert stop.status is StopOrderStatus.ACTIVE
+    assert stop.quantity == Decimal("30")
+    assert stop.stop_price == Decimal("80")
+
+
+@pytest.mark.asyncio
+async def test_place_stop_order_rejects_non_lot_multiple() -> None:
+    fake = _stop_fake()
+    adapter = TInvestAdapter(client=fake)
+    with pytest.raises(InvalidRequestError):
+        await adapter.place_stop_order(
+            BrokerStopOrderRequest(
+                instrument_figi="BBG004730N88",
+                side=OrderSide.SELL,
+                quantity=Decimal("15"),  # not a multiple of lot 10
+                stop_price=Decimal("80"),
+                account_id="acc-1",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_place_stop_order_requires_account_context() -> None:
+    adapter = TInvestAdapter(client=_stop_fake())
+    with pytest.raises(InvalidRequestError):
+        await adapter.place_stop_order(
+            BrokerStopOrderRequest(
+                instrument_figi="BBG004730N88",
+                side=OrderSide.SELL,
+                quantity=Decimal("30"),
+                stop_price=Decimal("80"),
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_cancel_stop_order_posts_account_and_stop_id() -> None:
+    fake = _stop_fake()
+    adapter = TInvestAdapter(client=fake)
+    await adapter.cancel_stop_order("stop-1", account_id="acc-1")
+    path, body = fake.calls[-1]
+    assert path == f"{_STOP_ORDERS}/CancelStopOrder"
+    assert body == {"accountId": "acc-1", "stopOrderId": "stop-1"}
+
+
+@pytest.mark.asyncio
+async def test_cancel_stop_order_requires_account_context() -> None:
+    adapter = TInvestAdapter(client=_stop_fake())
+    with pytest.raises(InvalidRequestError):
+        await adapter.cancel_stop_order("stop-1")
+
+
+@pytest.mark.asyncio
+async def test_get_stop_orders_normalized() -> None:
+    fake = _stop_fake(
+        **{
+            f"{_STOP_ORDERS}/GetStopOrders": {
+                "orders": [
+                    {
+                        "stopOrderId": "stop-1",
+                        "figi": "BBG004730N88",
+                        "lotsRequested": 3,
+                        "status": "STOP_ORDER_STATUS_ACTIVE",
+                        "stopPrice": {"units": "80", "nano": 0},
+                        "direction": "ORDER_DIRECTION_SELL",
+                        "exchangeOrderId": "exch-7",
+                        "currency": "RUB",
+                        "createDate": "2025-01-01T10:00:00Z",
+                        "updateDate": "2025-01-01T10:01:00Z",
+                    }
+                ]
+            }
+        }
+    )
+    adapter = TInvestAdapter(client=fake)
+    stops = await adapter.get_stop_orders(account_id="acc-1")
+    assert len(stops) == 1
+    stop = stops[0]
+    assert stop.order_id == "stop-1"
+    assert stop.status is StopOrderStatus.ACTIVE
+    assert stop.account_id == "acc-1"
+    assert stop.instrument_figi == "BBG004730N88"
+    assert stop.side == OrderSide.SELL
+    assert stop.quantity == Decimal("30")  # 3 lots * lot 10, canonical units
+    assert stop.stop_price == Decimal("80")
+    assert stop.exchange_order_id == "exch-7"
+    assert stop.currency == "RUB"
+    assert stop.created_at is not None
+    assert stop.updated_at is not None
+
+
+@pytest.mark.asyncio
+async def test_get_stop_orders_maps_unknown_status_to_unknown() -> None:
+    fake = _stop_fake(
+        **{
+            f"{_STOP_ORDERS}/GetStopOrders": {
+                "orders": [
+                    {
+                        "stopOrderId": "s1",
+                        "figi": "BBG004730N88",
+                        "lotsRequested": 1,
+                        "status": "STOP_ORDER_STATUS_UNSPECIFIED",
+                    }
+                ]
+            }
+        }
+    )
+    adapter = TInvestAdapter(client=fake)
+    stop = (await adapter.get_stop_orders(account_id="acc-1"))[0]
+    assert stop.status is StopOrderStatus.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_get_stop_orders_without_lot_size_blocks_normalization() -> None:
+    fake = TInvestFakeClient(
+        responses={
+            _GET_ACCOUNTS: {"accounts": [{"id": "acc-1"}]},
+            f"{_STOP_ORDERS}/GetStopOrders": {
+                "orders": [{"stopOrderId": "s1", "figi": "BBG004730N88", "lotsRequested": 1}]
+            },
+        }
+    )
+    adapter = TInvestAdapter(client=fake)
+    with pytest.raises(InvalidRequestError):
+        await adapter.get_stop_orders(account_id="acc-1")

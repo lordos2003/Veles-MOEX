@@ -159,10 +159,17 @@ TPConfig = Annotated[
 
 
 class StopLossConfig(BaseModel):
-    """Simple percentage Stop Loss (market exit)."""
+    """Simple percentage Stop Loss (market exit).
+
+    ``stop_bot_after`` (MVP-6.16 E3): whether the bot must be stopped after the
+    stop-loss closes the deal. No implicit production default: ``None`` forces
+    an explicit choice at live START (HTTP 409), so a live strategy always
+    declares what happens after the stop.
+    """
 
     kind: Literal["percent"] = "percent"
     percent: float = Field(gt=0)
+    stop_bot_after: bool | None = None
 
 
 class SignalStopLossConfig(BaseModel):

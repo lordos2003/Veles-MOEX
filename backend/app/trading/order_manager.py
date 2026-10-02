@@ -90,6 +90,16 @@ class OrderManager:
         self._order_seq = 0
         self._fill_listener = fill_listener
 
+    @property
+    def broker(self) -> BrokerAdapter:
+        """The underlying broker adapter (MVP-6.16 stop orders).
+
+        The DealManager needs the broker for stop-order placement/cancellation;
+        this exposes the same adapter the OrderManager already holds, without
+        changing the OrderManager constructor (kept backward compatible).
+        """
+        return self._broker
+
     # --- intents ------------------------------------------------------------------
 
     def create_intent(self, **fields) -> ExecutionIntent:

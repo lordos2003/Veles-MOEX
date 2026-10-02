@@ -240,6 +240,30 @@ class ExitEngine:
         if not isinstance(sl, StopLossConfig):
             return None
         level = simple_stop_level(reference_price, direction, sl.percent)
+        return self.simple_stop_decision_at_level(
+            config, direction, level, current_price, position_qty, now
+        )
+
+    def simple_stop_decision_at_level(
+        self,
+        config: ExitConfig,
+        direction: Direction,
+        level: Decimal,
+        current_price: Decimal,
+        position_qty: Decimal,
+        now: datetime | None = None,
+    ) -> ExitDecision | None:
+        """E1 (MVP-6.16): evaluate the simple stop against a known stop level.
+
+        The caller computes the level with |simple_stop_level| from the E1
+        reference (P0 = actual average fill price of the first grid order) and
+        the combined offset (``(last_level_offset - level_0_offset) + SL%``);
+        this method only applies the trigger comparison, so Backtest and Live
+        share exactly the same stop semantics.
+        """
+        sl = config.stop_loss
+        if not isinstance(sl, StopLossConfig):
+            return None
         if direction == Direction.LONG and current_price <= level:
             return self._stop_decision(direction, level, current_price, position_qty, now)
         if direction == Direction.SHORT and current_price >= level:
@@ -357,8 +381,30 @@ def pnl_percent(direction: Direction, avg: Decimal, current: Decimal) -> float:
 
 
 def simple_stop_level(reference_price: Decimal, direction: Direction, percent: float) -> Decimal:
+    """The raw (unrounded) E1 simple stop level.
+
+    LONG: ``reference x (1 - percent/100)``; SHORT: ``reference x (1 + percent/100)``.
+    The caller passes the **combined** offset: for a configured grid this is
+    ``(last grid level offset - level 0 offset) + SL%`` (the grid overlap plus
+    the stop percentage); for a single-order (no grid) case it is just SL%.
+    Veles example: overlap 15% + SL 5% -> the stop sits at -20% from the
+    reference (P0 = the actual average fill price of the first order).
+    """
     sign = Decimal("-1") if direction == Direction.LONG else Decimal("1")
     return reference_price * (Decimal("1") + sign * Decimal(str(percent)) / Decimal("100"))
+
+
+def stop_distance_percent(
+    first_level_offset: float, last_level_offset: float, sl_percent: float
+) -> float:
+    """E1 (MVP-6.16): combined stop distance of a grid-backed simple stop.
+
+    The stop trigger sits at the grid's maximum distance from the reference
+    plus the configured stop percentage: ``(last grid level offset - level 0
+    offset) + SL%``. A single-order (no grid) case passes ``0.0`` for both
+    offsets and yields plain SL%.
+    """
+    return (last_level_offset - first_level_offset) + sl_percent
 
 
 def breakeven_level(
