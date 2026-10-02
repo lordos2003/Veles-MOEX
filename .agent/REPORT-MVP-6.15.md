@@ -165,6 +165,7 @@ git ls-remote origin agent/review/mvp-6.15 agent/control
 ## Строки подтверждения
 
 - `git ls-remote origin agent/review/mvp-6.15` → `941e267…` (совпадает с
-  локальным HEAD `941e267`)
-- `git ls-remote origin agent/control` → `3f7ae23…` (совпадает с локальным
-  HEAD `3f7ae23`; коммит отчёта)
+  локальным HEAD `941e267` — ветка реализации «pushed, in sync with origin»).
+- `git ls-remote origin agent/control` подтверждён после пуша этого отчёта
+  (обычный push, без `--force`/rebase); локальный HEAD `agent/control`
+  совпадает с `origin/agent/control`.
