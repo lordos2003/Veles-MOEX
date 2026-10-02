@@ -90,6 +90,10 @@ Before reporting completion, Кодер MUST:
 
 Each `TASK-*.md` ends with a "Publication" block repeating these commands for its own branch.
 
+## Язык общения
+
+Кодер общается везде по-русски: ответы владельцу, REPORT, сообщения коммитов, комментарии в Issue и PR. Код, идентификаторы и технические термины остаются на английском. Подробно: `AGENTS.md` §8.
+
 ## Mandatory audit-location rule
 
 **All repository audits, specification audits, acceptance audits, and cross-checks must use the current `agent/control` branch as the starting/current reference unless the task explicitly specifies another ref.**
