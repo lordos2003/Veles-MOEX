@@ -68,6 +68,15 @@ class Settings(BaseSettings):
     scheduler_bar_close_max_wait_seconds: float = 60.0
     scheduler_max_consecutive_failures: int = 3
 
+    # --- Market snapshot (MVP-6.15 L2) ---
+    # Operational search-depth limits for the backward fill of
+    # ``get_snapshot``: the service searches at least this many calendar days
+    # and at least ``snapshot_search_factor x lookback_bars x bar width``
+    # back from "now" for real existing candles when the current window does
+    # not contain ``lookback_bars`` candles. Ops parameters, not financial.
+    snapshot_min_search_days: int = 14
+    snapshot_search_factor: int = 4
+
 
 @lru_cache
 def get_settings() -> Settings:

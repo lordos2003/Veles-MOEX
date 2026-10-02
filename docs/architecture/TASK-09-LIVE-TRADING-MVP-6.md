@@ -1847,3 +1847,91 @@ broker facts; an unproven no-trade case keeps the MVP-6.13 behaviour unchanged
 - `./.venv/Scripts/python.exe -m pytest -q` — full backend suite.
 - `ruff check app tests scripts` (from `backend/`), `alembic heads` (single
   head, no new migration), `npm run build` (frontend unchanged, stays green).
+
+## 33. Snapshot by bar count with trading breaks — MVP-6.15
+
+This section records MVP-6.15 (owner-approved contract L1–L4, 2026-10-02,
+GitHub Issue #13). Under MVP-6.10 the snapshot asked for candles in a
+**wall-clock window** `(lookback_bars + 1) × timeframe` back from "now".
+MOEX is not a round-the-clock market, so right after a night break, a weekend
+or a holiday the window fell wholly or partially inside the break:
+
+- indicators received **fewer** bars than `StrategyConfig.lookback_bars`
+  (morning signals were computed on incomplete history);
+- the S6 deferred tick (MVP-6.13) of an intraday bot almost never saw the last
+  bar before the close and was usually resolved by the B4 bound instead of
+  running;
+- an empty window after the night produced `NoTradesInWindow` /
+  `MarketDataUnavailable` where the history actually existed.
+
+The owner decision: the snapshot is defined **by the number of bars**, not by
+the clock. The MVP-6.10 contract "a wall-clock window of candles" is **replaced**
+by "the last `lookback_bars` candles that actually exist at the broker".
+
+### L1. The snapshot is the last `lookback_bars` existing candles
+
+`get_snapshot(figi, timeframe, lookback_bars)` returns the `lookback_bars`
+newest candles that actually exist at the broker, regardless of trading
+breaks. The forming candle is included as before; chronological order and the
+C7 trim (exactly `lookback_bars`, newest kept) are preserved. No candles
+"across the break" are invented.
+
+### L2. Backward fill, depth-bounded
+
+- First the existing window `(lookback_bars + 1) × timeframe` is requested, as
+  before. If it already holds `lookback_bars` candles, there are **no**
+  additional requests.
+- Otherwise the search is extended **backwards** (an already requested disjoint
+  range is never re-requested) until `lookback_bars` candles are collected or
+  the maximum search depth is reached.
+- Maximum depth: `max(snapshot_min_search_days × 86400 s,
+  snapshot_search_factor × lookback_bars × timeframe duration)`. For M5 with
+  `lookback 50` that is 14 days; for D1 with `lookback 200` about 800 days.
+  Both numbers are ops parameters in application settings
+  (`Settings.snapshot_min_search_days = 14`,
+  `Settings.snapshot_search_factor = 4`).
+- The expansion step chosen by the coder: disjoint windows of
+  `_TIMEFRAME_CHUNK_SECONDS[timeframe]` (the provider's per-request maximum,
+  so each step is a single broker request). Expected request counts in typical
+  scenarios: **1** when the first window suffices; **2** on a morning after a
+  night break or a Monday after a weekend (M5, `lookback 50` — one 7-day chunk
+  reaches into the previous session); **3** for a new listing whose history is
+  shorter than the depth, or when the whole depth is empty.
+
+### L3. History shorter than `lookback_bars`
+
+If even at the maximum depth there are fewer than `lookback_bars` candles, the
+snapshot returns **what exists**. This is not an error: as from MVP-6.10,
+indicators with insufficient history simply produce no signal.
+
+### L4. Empty result and MVP-6.14
+
+- `NoTradesInWindow` is raised only when there is **no candle at all** over the
+  whole searched depth. `window_start` = the start of the searched depth;
+  `last_trade_at` — as in MVP-6.14 (from `LastPrice.timestamp`).
+- The proven-empty-bar rule (N1) and the deferred tick (S6/B4–B6) are
+  **unchanged**; they simply start seeing the candles before the break.
+
+### Implementation notes
+
+- `MarketDataService` gained an injectable `Clock` (same pattern as the
+  scheduler clock) so snapshot tests are deterministic; production uses
+  `datetime.now(UTC)`.
+- The only changed existing test: `test_correct_snapshot_retrieval_request`
+  (MVP-6.10) now feeds the broker more than `lookback_bars` candles — with the
+  backward fill, fewer candles would no longer be a single-request scenario.
+
+### Tests (validation commands)
+
+- `./.venv/Scripts/python.exe -m pytest tests/test_mvp615_snapshot_bar_count.py
+  -q` — L1–L4 coverage: single request inside a session, morning after a night
+  break (50 candles from previous session, chronological), Monday after a
+  weekend, new listing with short history (no error), empty whole depth →
+  `NoTradesInWindow` with `window_start` = depth start, depth formula for M5/D1
+  and from settings, and the S6 regression scenario (deferred at Friday close;
+  Monday open runs exactly one cycle on the last bar before the close, no
+  B4-bound conclusion).
+- The MVP-6.10/6.13/6.14 suites stay green (only the one test above adjusted).
+- `./.venv/Scripts/python.exe -m pytest -q` — full backend suite;
+  `ruff check app tests scripts`; `alembic heads` (single head, no migration);
+  `npm run build` (frontend unchanged).
