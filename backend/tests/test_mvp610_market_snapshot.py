@@ -356,7 +356,7 @@ async def test_timeframe_propagates_from_bot_runtime() -> None:
 async def test_correct_snapshot_retrieval_request() -> None:
     broker = RecordingBroker(
         last_price=LastPrice(figi=FIGI, price=Decimal("100"), timestamp=T0),
-        candles=_candles(5),
+        candles=_candles(20),  # more than lookback_bars: no backward fill (L1)
     )
     await MarketDataService(broker).get_snapshot(FIGI, TF, lookback_bars=10)
     assert broker.last_price_calls == [FIGI]
