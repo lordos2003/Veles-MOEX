@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-6.15 — Снимок рынка по числу баров с учётом перерывов в торгах
-**Status: OPEN — назначено Кодеру.**
+**Status: ACCEPTED (раунд 1, 2026-10-02) — ждёт публикации в `master`.** Принятая реализация `941e267`; ревью `.agent/REVIEW-MVP-6.15.md`; проверка 508 passed, 1 skipped.
 
 - Задание: `.agent/TASK-MVP-6.15-SNAPSHOT-BY-BAR-COUNT.md`
 - Ветка: `agent/review/mvp-6.15` (от `master` @ `bb17b8a`)
