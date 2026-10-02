@@ -17,11 +17,13 @@
 
 ## Current task
 
-No task is open. Candidates (owner to choose):
-- **Snapshot by bar count across session gaps** (replace the MVP-6.10 wall-clock window; affects indicator input after night/weekend gaps and the S6 deferred tick for intraday bots).
-- Verify `HOUR_4` / `WEEK_1` / `MONTH_1` T-Invest candle start times.
-- Exit modes: Multi-Take / break-even / Signal TP / stop-loss / pull-up / SIGNAL grid mode.
-- Clean-ups: recovery TP churn; misleading `FILLED -> UNKNOWN` cancel error.
+### MVP-6.15 — Снимок рынка по числу баров с учётом перерывов в торгах
+**Status: OPEN — назначено Кодеру.**
+
+- Задание: `.agent/TASK-MVP-6.15-SNAPSHOT-BY-BAR-COUNT.md`
+- Ветка: `agent/review/mvp-6.15` (от `master` @ `bb17b8a`)
+- Контракт L1–L4 (владелец, 2026-10-02): снимок = `lookback_bars` последних существующих свечей; добор назад до глубины `max(14 дней, 4 × lookback × ТФ)`; при нехватке истории — сколько есть; `NoTradesInWindow` только если пусто на всей глубине.
+- Остальные кандидаты: время начала свечей `HOUR_4`/`WEEK_1`/`MONTH_1`; режимы выхода; перевыставление TP при перезапуске; ошибка `FILLED -> UNKNOWN`.
 
 ## Current accepted MVP
 
