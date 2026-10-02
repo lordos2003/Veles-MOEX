@@ -166,5 +166,5 @@ git ls-remote origin agent/review/mvp-6.15 agent/control
 
 - `git ls-remote origin agent/review/mvp-6.15` → `941e267…` (совпадает с
   локальным HEAD `941e267`)
-- `git ls-remote origin agent/control` → `655e9cd…` (совпадает с локальным
-  HEAD `655e9cd`; коммит отчёта)
+- `git ls-remote origin agent/control` → `3f7ae23…` (совпадает с локальным
+  HEAD `3f7ae23`; коммит отчёта)
