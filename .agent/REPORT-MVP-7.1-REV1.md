@@ -49,6 +49,9 @@
   переименования нигде не применялась — если бы 0002 когда-то применилась, на
   PostgreSQL она бы упала сама (`StringDataRightTruncationError`), т.е.
   переименование не переписывает применённую историю.
+- Прогон `alembic upgrade head` на PostgreSQL не выполнялся: локального
+  PostgreSQL в этой среде нет (тест ревизий пропускается без БД — по указанию
+  ревьюера «Если есть возможность»; живой прогон ревьюер повторит сам).
 - Новый тест `backend/tests/test_mvp70_launch.py::test_alembic_revision_ids_fit_version_column`:
   все `revision` ≤ 32 символов и в цепочке ровно одна голова.
 
@@ -180,8 +183,13 @@ git push origin agent/control
 git ls-remote origin agent/review/mvp-7.1 agent/control
 ```
 
-Подтверждение `git ls-remote` (2026-10-05) — заполнено после push:
+Подтверждение `git ls-remote` (2026-10-05, после push):
 
 ```
-<PLACEHOLDER>
+53592c9d30478784cecd52156a4056e6bc23caf5	refs/heads/agent/review/mvp-7.1
+33dbdab1835b20360c2a924ae0c50c7a6ae7858c	refs/heads/agent/control
 ```
+
+- `agent/review/mvp-7.1` = локальный `53592c9` — **in sync with origin**.
+- `agent/control` = локальный `33dbdab` (REPORT-MVP-7.1-REV1 + merge
+  ревьюерского `67380e9`; в отчёт вошёл и `.agent/REVIEW-MVP-7.1.md` с control).
