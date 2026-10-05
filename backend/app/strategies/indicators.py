@@ -8,6 +8,9 @@ function plus a registry entry; the Strategy Engine does not change.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from app.strategies.bars import BarSeries
 
 
@@ -237,44 +240,169 @@ def _wildered(raw: list[float], period: int) -> list[float]:
     return out
 
 
+@dataclass(frozen=True)
+class IndicatorParamDef:
+    """One configurable parameter of an indicator (MVP-7.1 U3).
+
+    ``type`` is ``"int"`` or ``"float"``. ``required`` is engine-level: True
+    only when the calculation has no fallback for a missing parameter (today
+    every parameter has one, so all are False). No default value is carried
+    here — see AGENTS.md §2: a documented Veles default for the form does not
+    exist, so the catalog must not invent one.
+    """
+
+    name: str
+    type: str
+    required: bool
+
+
+@dataclass(frozen=True)
+class IndicatorDef:
+    """Catalog entry describing one indicator the engine can compute (U3).
+
+    ``series`` is the tuple of output series recognizable by the engine (the
+    ``IndicatorSpec.series`` selector); unknown series fall back to the first
+    one. ``uses_*`` report which ``IndicatorSpec`` fields the calculation
+    consumes (``period`` / ``method`` / ``series`` / ``params``).
+    """
+
+    name: str
+    series: tuple[str, ...]
+    params: tuple[IndicatorParamDef, ...]
+    uses_period: bool
+    uses_method: bool
+    uses_series: bool
+    uses_params: bool
+
+
+Compute = Callable[[BarSeries, int | None, str, dict], list[float]]
+
+
+def _macd_compute(
+    series: BarSeries, period: int | None, series_name: str, params: dict
+) -> list[float]:
+    fast = int(params.get("fast", 12))
+    slow = int(params.get("slow", 26))
+    signal = int(params.get("signal", 9))
+    m, s, h = macd(series.closes(), fast, slow, signal)
+    return {"macd": m, "signal": s, "histogram": h}.get(series_name, m)
+
+
+def _bollinger_compute(
+    series: BarSeries, period: int | None, series_name: str, params: dict
+) -> list[float]:
+    mid, up, low = bollinger(series.closes(), period or 20, float(params.get("k", 2.0)))
+    return {"middle": mid, "upper": up, "lower": low}.get(series_name, mid)
+
+
+def _stochastic_compute(
+    series: BarSeries, period: int | None, series_name: str, params: dict
+) -> list[float]:
+    k, d = stochastic(
+        series.highs(),
+        series.lows(),
+        series.closes(),
+        period or 14,
+        int(params.get("k_smooth", 3)),
+        int(params.get("d_smooth", 3)),
+    )
+    return {"k": k, "d": d}.get(series_name, k)
+
+
+def _adx_compute(
+    series: BarSeries, period: int | None, series_name: str, params: dict
+) -> list[float]:
+    adx_line, pdi, mdi = adx(series.highs(), series.lows(), series.closes(), period or 14)
+    return {"adx": adx_line, "plus_di": pdi, "minus_di": mdi}.get(series_name, adx_line)
+
+
+# Single dispatch source for indicator_series. The catalog (INDICATOR_CATALOG)
+# and the calculation cannot diverge: the test asserts both are driven by the
+# same keys (backend/tests/test_mvp71_api.py).
+_COMPUTE: dict[str, Compute] = {
+    "SMA": lambda s, p, sn, prm: sma(s.closes(), p or 20),
+    "EMA": lambda s, p, sn, prm: ema(s.closes(), p or 9),
+    "RSI": lambda s, p, sn, prm: rsi(s.closes(), p or 14),
+    "MACD": _macd_compute,
+    "BOLLINGER": _bollinger_compute,
+    "ATR": lambda s, p, sn, prm: atr(s.highs(), s.lows(), s.closes(), p or 14),
+    "CCI": lambda s, p, sn, prm: cci(s.highs(), s.lows(), s.closes(), p or 20),
+    "WILLIAMS_R": lambda s, p, sn, prm: williams_r(s.highs(), s.lows(), s.closes(), p or 14),
+    "CMO": lambda s, p, sn, prm: cmo(s.closes(), p or 14),
+    "MFI": lambda s, p, sn, prm: mfi(s.highs(), s.lows(), s.closes(), s.volumes(), p or 14),
+    "STOCHASTIC": _stochastic_compute,
+    "ADX": _adx_compute,
+}
+# Parser alias kept for existing saved configs (the indicator_series if-chain
+# historically accepted both spellings).
+_COMPUTE["WILLIAMS%R"] = _COMPUTE["WILLIAMS_R"]
+
+
+INDICATOR_CATALOG: tuple[IndicatorDef, ...] = (
+    IndicatorDef("SMA", ("value",), (), True, False, False, False),
+    IndicatorDef("EMA", ("value",), (), True, False, False, False),
+    IndicatorDef("RSI", ("value",), (), True, False, False, False),
+    IndicatorDef(
+        "MACD",
+        ("macd", "signal", "histogram"),
+        (
+            IndicatorParamDef("fast", "int", False),
+            IndicatorParamDef("slow", "int", False),
+            IndicatorParamDef("signal", "int", False),
+        ),
+        False,
+        False,
+        True,
+        True,
+    ),
+    IndicatorDef(
+        "BOLLINGER",
+        ("middle", "upper", "lower"),
+        (IndicatorParamDef("k", "float", False),),
+        True,
+        False,
+        True,
+        True,
+    ),
+    IndicatorDef("ATR", ("value",), (), True, False, False, False),
+    IndicatorDef("CCI", ("value",), (), True, False, False, False),
+    IndicatorDef("WILLIAMS_R", ("value",), (), True, False, False, False),
+    IndicatorDef("CMO", ("value",), (), True, False, False, False),
+    IndicatorDef("MFI", ("value",), (), True, False, False, False),
+    IndicatorDef(
+        "STOCHASTIC",
+        ("k", "d"),
+        (
+            IndicatorParamDef("k_smooth", "int", False),
+            IndicatorParamDef("d_smooth", "int", False),
+        ),
+        True,
+        False,
+        True,
+        True,
+    ),
+    IndicatorDef(
+        "ADX",
+        ("adx", "plus_di", "minus_di"),
+        (),
+        True,
+        False,
+        True,
+        False,
+    ),
+)
+
+
+def indicator_names() -> tuple[str, ...]:
+    """Canonical indicator names the engine can compute (U3, no parser aliases)."""
+    return tuple(sorted(name for name in _COMPUTE if name != "WILLIAMS%R"))
+
+
 def indicator_series(
     name: str, series: BarSeries, period: int | None, series_name: str, params: dict
 ) -> list[float]:
     """Compute the requested output series for a named indicator."""
-    name_u = name.upper()
-    closes = series.closes()
-    if name_u == "SMA":
-        return sma(closes, period or 20)
-    if name_u == "EMA":
-        return ema(closes, period or 9)
-    if name_u == "RSI":
-        return rsi(closes, period or 14)
-    if name_u == "MACD":
-        fast = int(params.get("fast", 12))
-        slow = int(params.get("slow", 26))
-        signal = int(params.get("signal", 9))
-        m, s, h = macd(closes, fast, slow, signal)
-        return {"macd": m, "signal": s, "histogram": h}.get(series_name, m)
-    if name_u == "BOLLINGER":
-        k = float(params.get("k", 2.0))
-        mid, up, low = bollinger(closes, period or 20, k)
-        return {"middle": mid, "upper": up, "lower": low}.get(series_name, mid)
-    if name_u == "ATR":
-        return atr(series.highs(), series.lows(), closes, period or 14)
-    if name_u == "CCI":
-        return cci(series.highs(), series.lows(), closes, period or 20)
-    if name_u in ("WILLIAMS_R", "WILLIAMS%R"):
-        return williams_r(series.highs(), series.lows(), closes, period or 14)
-    if name_u == "CMO":
-        return cmo(closes, period or 14)
-    if name_u == "MFI":
-        return mfi(series.highs(), series.lows(), closes, series.volumes(), period or 14)
-    if name_u == "STOCHASTIC":
-        ks = int(params.get("k_smooth", 3))
-        ds = int(params.get("d_smooth", 3))
-        k, d = stochastic(series.highs(), series.lows(), closes, period or 14, ks, ds)
-        return {"k": k, "d": d}.get(series_name, k)
-    if name_u == "ADX":
-        adx_line, pdi, mdi = adx(series.highs(), series.lows(), closes, period or 14)
-        return {"adx": adx_line, "plus_di": pdi, "minus_di": mdi}.get(series_name, adx_line)
-    raise ValueError(f"Unknown indicator: {name}")
+    compute = _COMPUTE.get(name.upper())
+    if compute is None:
+        raise ValueError(f"Unknown indicator: {name}")
+    return compute(series, period, series_name, params)

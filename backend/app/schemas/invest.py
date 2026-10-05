@@ -77,6 +77,13 @@ class DealResponse(BaseModel):
 
 
 class InstrumentResponse(BaseModel):
+    """Broker instrument with the local primary key when tracked locally.
+
+    ``id`` is the local PostgreSQL id (``instruments.id``), required by
+    ``POST /api/bots`` and ``POST /api/backtests`` (MVP-7.1 U5/U6).
+    """
+
+    id: int | None = None
     figi: str
     ticker: str | None = None
     name: str | None = None

@@ -70,3 +70,27 @@ class StrategyValidateResponse(BaseModel):
 
     valid: bool = True
     live_deal: LiveDealValidation
+
+
+class IndicatorParamResponse(BaseModel):
+    """One configurable parameter of an indicator from the catalog (U3)."""
+
+    name: str
+    type: str
+    required: bool
+
+
+class IndicatorResponse(BaseModel):
+    """Catalog entry: an indicator the calculation engine can compute (U3).
+
+    ``series`` are the selectable output series (``IndicatorSpec.series``);
+    ``uses_*`` report which ``IndicatorSpec`` fields the calculation consumes.
+    """
+
+    name: str
+    series: list[str]
+    params: list[IndicatorParamResponse]
+    uses_period: bool
+    uses_method: bool
+    uses_series: bool
+    uses_params: bool
