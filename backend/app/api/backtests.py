@@ -8,6 +8,7 @@ The result is returned in the response and is NOT persisted in MVP-7.0.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -32,8 +33,9 @@ from app.backtest.schemas import (
 from app.brokers.base import BrokerDeal, BrokerOrder
 from app.brokers.tinvest_errors import InstrumentNotFoundError, InvalidRequestError
 from app.core.config import Settings
+from app.domain.marketdata import Timeframe
 from app.services.instruments import InstrumentService
-from app.services.market_data import MarketDataService
+from app.services.market_data import MarketDataService, timeframe_seconds
 from app.strategies.config import StrategyConfig
 from app.strategies.dca_grid import DCAGridEngine
 from app.strategies.engine import StrategyEngine
@@ -47,6 +49,20 @@ from app.trading.risk_manager import RiskManager
 from app.trading.sizing import SizingError
 
 router = APIRouter(prefix="/backtests", tags=["backtest"])
+
+
+def _estimate_candle_count(timeframe: Timeframe, start: datetime, end: datetime) -> int | None:
+    """Calendar estimate of the candle count, or ``None`` for mixed tz periods.
+
+    A pure calendar bound (span / duration) is an over-estimate: trading
+    sessions are shorter than calendar time. It exists only to reject clearly
+    oversized ranges before any broker request (B2); the authoritative check
+    stays the actual fetched count.
+    """
+    if (start.tzinfo is None) != (end.tzinfo is None):
+        return None
+    span_seconds = (end - start).total_seconds()
+    return max(1, int(span_seconds // timeframe_seconds(timeframe)) + 1)
 
 
 def _make_backtest_engine() -> BacktestEngine:
@@ -159,6 +175,17 @@ async def run_backtest(
         strategy_config = StrategyConfig.model_validate(version.config)
         strategy_version_id = version.id
 
+    # B3: the run must reproduce the strategy's own timeframe; a mismatch would
+    # silently evaluate its indicators on another interval than in live trading.
+    if strategy_config.timeframe is not None and strategy_config.timeframe != payload.timeframe:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"strategy timeframe {strategy_config.timeframe} does not match the "
+                f"request timeframe {payload.timeframe}"
+            ),
+        )
+
     # Resolve the instrument; the deposit path (R8) requires lot and tick sizes
     # and a currency (no defaults, like live).
     instrument = await instrument_service.get_by_id(payload.instrument_id)
@@ -182,6 +209,18 @@ async def run_backtest(
         )
 
     # Candles: existing broker path, chunked by the MarketDataService.
+    # B2: reject a clearly oversized range BEFORE any broker request; the
+    # fetched-count check below stays as the authoritative guard.
+    estimate = _estimate_candle_count(payload.timeframe, payload.from_, payload.to)
+    if estimate is not None and estimate > settings.backtest_max_candles:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"period from {payload.from_} to {payload.to} estimates {estimate} "
+                f"{payload.timeframe} candles, exceeding backtest_max_candles "
+                f"({settings.backtest_max_candles})"
+            ),
+        )
     try:
         candles = await market_data.get_candles(
             instrument.figi, payload.timeframe, payload.from_, payload.to
@@ -211,6 +250,9 @@ async def run_backtest(
         maker_fee=payload.maker_fee,
         taker_fee=payload.taker_fee,
         slippage=payload.slippage,
+        # B1: the run's capital is the deal deposit — no invented 10 000. The
+        # reply's initial_capital / final_capital / roi are derived from it.
+        initial_capital=payload.deposit,
         account_id="backtest",
     )
     try:

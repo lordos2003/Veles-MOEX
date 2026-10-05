@@ -58,7 +58,9 @@ Sources (verified 2026-10-05):
 
 - Sandbox host: `sandbox-invest-public-api.tinkoff.ru:443`
   (<https://tinkoff.github.io/investAPI/head-sandbox/>);
-- Sandbox methods: <https://tinkoff.github.io/investAPI/sandbox/>.
+- Sandbox methods: <https://tinkoff.github.io/investAPI/sandbox/>;
+- Difference table prod ↔ sandbox:
+  <https://tinkoff.github.io/investAPI/url_difference/>.
 
 For the paths used by Veles-MOEX:
 
@@ -72,6 +74,32 @@ For the paths used by Veles-MOEX:
 | Margin metrics | no | same quote |
 | Withdraw limits | yes (virtual) | `GetSandboxWithdrawLimits` |
 
+**Our own live path on the sandbox host (B4, review round 1).** The difference
+table states: «Используя адрес песочницы Вы можете выполнять практически те же
+запросы, что и по адресу продового контура» — i.e. the *regular* services work
+on the sandbox host with the same method names, which is exactly what our
+adapter calls:
+
+| Adapter call (service) | In sandbox | Basis (url_difference) |
+| --- | --- | --- |
+| `InstrumentsService` (instruments, shares) | yes | «Сервис инструментов — Да» |
+| `UsersService.GetAccounts` | yes | «Сервис аккаунтов — Да» |
+| `MarketDataService` (`GetCandles`, `GetLastPrices`, `GetTradingStatus`) | yes | «Сервис котировок — Да» |
+| `OperationsService` (`GetPositions`, `GetPortfolio`, `GetOperations`, `GetWithdrawLimits`) | yes | «Сервис операций — Да» |
+| `OrdersService` (`PostOrder`, `CancelOrder`, `GetOrderState`, `GetOrders`) | yes | «Сервис торговых поручений — Да» (+ `TradesStream` — Да) |
+| `StopOrdersService` (`PostStopOrder`, `GetStopOrders`, `CancelStopOrder`) | **no** | «Сервис стоп-заявок — Нет» ⇒ START with stop-loss → 409 |
+
+Known documentation gap (stated openly, owner will verify manually):
+**`OrderStateStream`** (the WebSocket stream our live runtime subscribes to) is
+**not in the official proto contracts** — `OrdersStreamService` exposes only
+`TradesStream` (`src/docs/contracts/orders.proto`, investAPI repo), and the
+difference table mentions `TradeStream` only. `OrderStateStream` is a method of
+the newer T-Bank Dev Portal WS API (<https://developer.tbank.ru>), which the
+difference table does not cover, so the official documentation does **not**
+answer whether it works on the sandbox host. It does not block sandbox trading:
+order status/executions are also available through the REST
+`OrdersService.GetOrderState`, and the stream is best-effort in the sandbox.
+
 Consequences implemented in R3:
 
 - All `/api/sandbox/*` endpoints return **HTTP 409** when `TINVEST_SANDBOX=false`.
@@ -82,7 +110,12 @@ Consequences implemented in R3:
 Sandbox-specific trading behavior (documented by T-Invest): market orders fill
 at the last exchange price (no market impact model), unexecuted orders are
 removed after the trading session, accounts persist ~3 months after the last
-use and can be deleted at any time.
+use and can be deleted at any time. Consequences: after a sandbox session ends,
+unfilled DCA grid limits vanish (they are not carried over to the next session
+like on prod) — the sandbox is a daytime test loop, not a multi-day grid
+continuation env; the average buy price is not calculated by the sandbox
+operations API (FAQ 5.3) — Veles-MOEX derives the average from its own
+execution records, so this does not affect it.
 
 ### 1.4 REST API (MVP-7.0 additions; broker-neutral, Decimal, UTC)
 
@@ -205,3 +238,11 @@ only for existing tests, the API always uses the deposit.
   exposes the machine-readable schema and API for it.
 - `position_quantity` / `sl_active` are view projections of persisted Deal
   fields (no extra recomputation against the broker).
+- Deleting a bot (`DELETE /api/bots/{id}`) keeps its history rows (`deals`,
+  levels) — there is no foreign key from `deals` to `bots`, so already closed
+  deals of the deleted bot remain queryable only by id in the DB and are not
+  returned by the bot endpoints (the bot itself is gone). This is intentional:
+  the history stays for audit purposes.
+- `OrderStateStream` availability on the sandbox host is not documented by the
+  official sources (see 1.3) — best-effort in the sandbox; REST
+  `GetOrderState` remains the authoritative order-status source.

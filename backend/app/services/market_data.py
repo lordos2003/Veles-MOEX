@@ -61,6 +61,11 @@ _TIMEFRAME_SECONDS = {
 _SECONDS_PER_DAY = 86400
 
 
+def timeframe_seconds(timeframe: Timeframe) -> int:
+    """Seconds per timeframe, as a calendar duration (used to estimate ranges)."""
+    return _TIMEFRAME_SECONDS[timeframe]
+
+
 class Clock(Protocol):
     """Injectable time source (MVP-6.15): deterministic snapshot tests."""
 

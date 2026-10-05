@@ -192,7 +192,10 @@ class StopLossConfig(BaseModel):
     """
 
     kind: Literal["percent"] = Field(default="percent", description="Stop-loss kind: percent")
-    percent: float = Field(gt=0, description="Stop-loss percent from reference (>0)")
+    percent: float = Field(
+        gt=0,
+        description="Stop-loss percent from P0, above the grid overlap (>0)",
+    )
     stop_bot_after: bool | None = Field(
         default=None,
         description="Explicit choice: stop the bot after the stop-loss closes the deal",

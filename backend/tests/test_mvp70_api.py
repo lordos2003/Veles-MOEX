@@ -675,6 +675,95 @@ async def test_backtest_candle_cap_and_instrument_facts(client) -> None:
         app.dependency_overrides.pop(get_market_data_service, None)
 
 
+async def test_backtest_initial_capital_is_deposit(client) -> None:
+    """B1 (review round 1): the run capital is the request deposit, not an
+    invented 10 000 — initial_capital / final_capital / roi derive from it."""
+    http, _ = client
+    candles = [
+        _candle(0, 100, 100.5, 99.5, 100.0),
+        _candle(1, 100.5, 101, 100, 100.8),
+        _candle(2, 100.8, 111, 100.5, 110.5),  # TP 2% = 102.51 hit
+    ]
+    app.dependency_overrides[get_instrument_service] = lambda: _FakeInstrumentService(_instrument())
+    app.dependency_overrides[get_market_data_service] = lambda: _FakeMarketData(candles)
+    try:
+        deposit = "50000"
+        response = await http.post("/api/backtests", json=_backtest_payload(deposit=deposit))
+        assert response.status_code == 200
+        body = response.json()
+        initial = Decimal(body["initial_capital"])
+        net = Decimal(body["net_pnl"])
+        assert initial == Decimal(deposit)
+        assert Decimal(body["final_capital"]) == initial + net
+        assert Decimal(body["roi"]) == net / initial
+    finally:
+        app.dependency_overrides.pop(get_instrument_service, None)
+        app.dependency_overrides.pop(get_market_data_service, None)
+
+
+async def test_backtest_candle_precheck_before_broker(client) -> None:
+    """B2 (review round 1): an oversized period is rejected BEFORE any broker
+    request (the MarketDataService must not be called)."""
+    http, _ = client
+
+    class _NeverCalledMarketData:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get_candles(self, figi, timeframe, from_, to) -> list[Candle]:
+            self.calls += 1
+            return []
+
+    market = _NeverCalledMarketData()
+    app.dependency_overrides[get_settings_dep] = lambda: Settings(backtest_max_candles=10000)
+    app.dependency_overrides[get_instrument_service] = lambda: _FakeInstrumentService(_instrument())
+    app.dependency_overrides[get_market_data_service] = lambda: market
+    try:
+        # 1m over two calendar years: the estimate is far above the cap.
+        payload = _backtest_payload(
+            **{
+                "timeframe": "1m",
+                "from": (T0 - timedelta(days=730)).isoformat(),
+            }
+        )
+        response = await http.post("/api/backtests", json=payload)
+        assert response.status_code == 422
+        assert "backtest_max_candles" in response.json()["detail"]
+        assert market.calls == 0
+    finally:
+        app.dependency_overrides.pop(get_settings_dep, None)
+        app.dependency_overrides.pop(get_instrument_service, None)
+        app.dependency_overrides.pop(get_market_data_service, None)
+
+
+async def test_backtest_strategy_timeframe_must_match(client) -> None:
+    """B3 (review round 1): the request timeframe must equal the strategy's own
+    (a mismatch would evaluate its indicators on another interval than live)."""
+    http, _ = client
+    candles = [
+        _candle(0, 100, 100.5, 99.5, 100.0),
+        _candle(1, 100.5, 101, 100, 100.8),
+        _candle(2, 100.8, 111, 100.5, 110.5),
+    ]
+    app.dependency_overrides[get_instrument_service] = lambda: _FakeInstrumentService(_instrument())
+    app.dependency_overrides[get_market_data_service] = lambda: _FakeMarketData(candles)
+    try:
+        mismatched = await http.post(
+            "/api/backtests", json=_backtest_payload(config={**STRATEGY_CONFIG, "timeframe": "1h"})
+        )
+        assert mismatched.status_code == 422
+        assert "timeframe" in mismatched.json()["detail"]
+
+        # Same timeframe as the strategy -> the run succeeds.
+        matched = await http.post(
+            "/api/backtests", json=_backtest_payload(config={**STRATEGY_CONFIG, "timeframe": "5m"})
+        )
+        assert matched.status_code == 200
+    finally:
+        app.dependency_overrides.pop(get_instrument_service, None)
+        app.dependency_overrides.pop(get_market_data_service, None)
+
+
 def _expected_grid_quantities(
     config: StrategyConfig, deposit: Decimal, entry_price: Decimal, lot_size: int
 ) -> list[Decimal]:
