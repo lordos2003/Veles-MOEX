@@ -12,6 +12,13 @@ import type {
 } from "../types";
 import { Button, ErrorBanner, Field, Loading, SelectInput, TextInput } from "../components/FormControls";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import {
+  BotSettingsPanel,
+  accountLabel,
+  instrumentLabel,
+  useBotDisplayMeta,
+  versionLabel,
+} from "../components/BotSettingsPanel";
 import { useRuntime } from "../lib/useRuntime";
 import { BOT_STATUS_LABELS, CLOSE_REASON_LABELS, DEAL_STATUS_LABELS, LEVEL_STATUS_LABELS } from "../lib/labels";
 import { getPollIntervalMs } from "../lib/settings";
@@ -102,6 +109,7 @@ export function BotsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [pollMs, setPollMs] = useState(getPollIntervalMs());
   const navigate = useNavigate();
+  const meta = useBotDisplayMeta();
 
   const load = useCallback(async () => {
     setError(null);
@@ -163,8 +171,9 @@ export function BotsPage() {
                   </Link>
                   <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
                     <StatusBadge status={bot.status} />
-                    <span>Счёт: {bot.account_id ?? "—"}</span>
-                    <span>Инструмент: {bot.instrument_id ?? "—"}</span>
+                    <span>Счёт: {accountLabel(meta, bot.account_id) ?? "—"}</span>
+                    <span>Инструмент: {instrumentLabel(meta, bot.instrument_id) ?? "—"}</span>
+                    <span>Стратегия: {versionLabel(meta, bot.strategy_version_id) ?? "—"}</span>
                     <span>Депозит: {bot.deposit ?? "—"}</span>
                     {bot.last_error ? <span className="max-w-md truncate text-red-400" title={bot.last_error}>ошибка: {bot.last_error}</span> : null}
                     {bot.last_skip_reason ? <span title={bot.last_skip_reason}>пропуск: {bot.last_skip_reason}</span> : null}
@@ -176,6 +185,14 @@ export function BotsPage() {
                   </Button>
                   <BotActions bot={bot} onChanged={load} onError={(m) => setError(m)} />
                 </div>
+              </div>
+              <div className="mt-2">
+                <BotSettingsPanel
+                  bot={bot}
+                  meta={meta}
+                  onChanged={load}
+                  onError={(m) => setError(m)}
+                />
               </div>
             </div>
           ))}
@@ -321,6 +338,7 @@ export function BotDetailPage() {
   const [deals, setDeals] = useState<DealResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const meta = useBotDisplayMeta();
 
   const load = useCallback(async () => {
     if (botId === null) return;
@@ -365,9 +383,9 @@ export function BotDetailPage() {
           <h2 className="text-xl font-semibold">{bot.name}</h2>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
             <StatusBadge status={bot.status} />
-            <span>Стратегия: версия {bot.strategy_version_id ?? "—"}</span>
-            <span>Счёт: {bot.account_id ?? "—"}</span>
-            <span>Инструмент: {bot.instrument_id ?? "—"}</span>
+            <span>Стратегия: {versionLabel(meta, bot.strategy_version_id) ?? "—"}</span>
+            <span>Счёт: {accountLabel(meta, bot.account_id) ?? "—"}</span>
+            <span>Инструмент: {instrumentLabel(meta, bot.instrument_id) ?? "—"}</span>
             <span>Депозит: {bot.deposit ?? "—"}</span>
             {bot.started_at ? <span>Запущен: {new Date(bot.started_at).toLocaleString("ru-RU")}</span> : null}
             {bot.stopped_at ? <span>Остановлен: {new Date(bot.stopped_at).toLocaleString("ru-RU")}</span> : null}
@@ -390,6 +408,15 @@ export function BotDetailPage() {
       {bot.deal_error ? (
         <p className="text-xs text-red-400">Ошибка сделки: {bot.deal_error}</p>
       ) : null}
+
+      <BotSettingsPanel
+        bot={bot}
+        meta={meta}
+        onChanged={load}
+        onError={setError}
+        openDeal={openDeal}
+        onDeleted={() => navigate("/bots")}
+      />
 
       <section>
         <h3 className="mb-2 font-medium text-zinc-200">Текущая сделка</h3>

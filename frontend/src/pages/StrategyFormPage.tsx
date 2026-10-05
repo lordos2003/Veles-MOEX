@@ -36,7 +36,7 @@ import {
   SelectInput,
   TextInput,
 } from "../components/FormControls";
-import { FilterGroupEditor } from "../components/FilterGroupEditor";
+import { FilterGroupEditor, collectMissingIndicatorArgs } from "../components/FilterGroupEditor";
 
 type Config = Record<string, unknown>;
 type Defs = Record<string, SchemaNode>;
@@ -159,8 +159,18 @@ export function StrategyFormPage(props: { edit?: boolean }) {
     }
   };
 
+  /** B5: refuse to send a config with missing indicator args (engine fills hidden defaults). */
+  const requireIndicatorArgs = (): boolean => {
+    const missing = collectMissingIndicatorArgs(compact(form), catalog);
+    if (Object.keys(missing).length === 0) return true;
+    setErrors(missing);
+    setSaveError("Заполните обязательные параметры индикаторов (период и параметры).");
+    return false;
+  };
+
   const runValidate = async () => {
     setSaveError(null);
+    if (!requireIndicatorArgs()) return;
     try {
       const result = await api.post<StrategyValidateResponse>("/api/strategies/validate", {
         config: compact(form),
@@ -179,6 +189,7 @@ export function StrategyFormPage(props: { edit?: boolean }) {
   };
 
   const save = async () => {
+    if (!requireIndicatorArgs()) return;
     setSaving(true);
     setSaveError(null);
     try {
@@ -655,7 +666,7 @@ function TakeProfitEditor(props: {
       {kind === "fixed_percentage" ? (
         <Field
           label="Процент прибыли"
-          hint="Один процент от текущей цены (E1)"
+          hint={hintFor("exit.take_profit.percent")}
           error={pathError(props.errors, "exit.take_profit.percent")}
           required
         >

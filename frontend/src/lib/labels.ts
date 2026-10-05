@@ -146,6 +146,9 @@ export function labelFor(path: string): string {
 
 /** Hint (tooltip) text for a config path. */
 export function hintFor(path: string): string | null {
+  if (path === "exit.take_profit.percent") {
+    return "Процент прибыли от средневзвешенной цены позиции (D4).";
+  }
   if (path === "exit.stop_loss.percent") {
     return "Процент сверх перекрытия сетки от цены первого ордера (E1).";
   }

@@ -9,9 +9,10 @@
  * (entry/dca_grid/exit/risk + unions via oneOf + nullable anyOf).
  */
 import { describe, expect, it } from "vitest";
-import { compact, formFromConfig, formToConfig, initialValue } from "./schema";
+import { compact, formFromConfig, formToConfig, initialValue, propertyMetas } from "./schema";
+import { collectMissingIndicatorArgs } from "../components/FilterGroupEditor";
 import { fieldErrors, verbatimMessage } from "../api";
-import type { SchemaNode } from "../types";
+import type { IndicatorResponse, SchemaNode } from "../types";
 
 const defs: Record<string, SchemaNode> = {
   EntryConfig: {
@@ -185,5 +186,140 @@ describe("U8.4 stop_bot_after не выбран по умолчанию; пус�
     expect(compact({ stop_bot_after: null })).toEqual({ stop_bot_after: null });
     expect(compact({ stop_bot_after: false })).toEqual({ stop_bot_after: false });
     expect(compact({ stop_bot_after: undefined })).toEqual({});
+  });
+});
+
+describe("REV1 B4: default рядом с $ref (реальная форма схемы pydantic)", () => {
+  // Pydantic v2 эмитит `{"$ref": "#/$defs/X", "default": ...}` — default —
+  // сосед $ref, а не часть резолвленного узла. Ранее он терялся, и поле,
+  // выбранное по default, выглядело как «не выбрано».
+  const defs2: Record<string, SchemaNode> = {
+    Direction: { type: "string", enum: ["LONG", "SHORT"] },
+    CalculationMethod: { type: "string", enum: ["at_bar_close", "per_minute"] },
+  };
+
+  it("default из пары ($ref + default) доходит до начального значения", () => {
+    const root: SchemaNode = {
+      type: "object",
+      properties: {
+        direction: { $ref: "#/$defs/Direction", default: "LONG" },
+        method: { $ref: "#/$defs/CalculationMethod", default: "at_bar_close" },
+      },
+    };
+    const form = initialValue(root, defs2) as Record<string, unknown>;
+    expect(form.direction).toBe("LONG");
+    expect(form.method).toBe("at_bar_close");
+  });
+
+  it("propertyMetas сообщает defaultValue для узла с $ref", () => {
+    const root: SchemaNode = {
+      type: "object",
+      properties: { direction: { $ref: "#/$defs/Direction", default: "LONG" } },
+    };
+    const metas = propertyMetas(root, defs2);
+    expect(metas[0].hasDefault).toBe(true);
+    expect(metas[0].defaultValue).toBe("LONG");
+  });
+});
+
+describe("REV1 B5: обязательные параметры индикаторов (движок подставляет скрытые дефолты)", () => {
+  const catalog = new Map<string, IndicatorResponse>([
+    [
+      "SMA",
+      {
+        name: "SMA",
+        series: ["value"],
+        params: [],
+        uses_period: true,
+        uses_method: false,
+        uses_series: false,
+        uses_params: false,
+      },
+    ],
+    [
+      "MACD",
+      {
+        name: "MACD",
+        series: ["macd", "signal", "histogram"],
+        params: [
+          { name: "fast", type: "int", required: false },
+          { name: "slow", type: "int", required: false },
+          { name: "signal", type: "int", required: false },
+        ],
+        uses_period: false,
+        uses_method: false,
+        uses_series: true,
+        uses_params: true,
+      },
+    ],
+  ]);
+
+  it("находит пустой период и пустые параметры каталога по нужным путям", () => {
+    const config = {
+      entry: {
+        groups: [
+          {
+            conditions: [
+              {
+                arg1: { kind: "indicator", name: "SMA", timeframe: "5m", period: null },
+                operator: ">",
+                arg2: { kind: "constant", value: 100 },
+              },
+            ],
+          },
+        ],
+      },
+      dca_grid: {
+        signal_groups: [
+          {
+            conditions: [
+              {
+                arg1: { kind: "constant", value: 1 },
+                operator: ">",
+                arg2: {
+                  kind: "indicator",
+                  name: "MACD",
+                  timeframe: "5m",
+                  series: "macd",
+                  params: { fast: 12 },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const errors = collectMissingIndicatorArgs(config, catalog);
+    expect(errors).toEqual({
+      "entry.groups.0.conditions.0.arg1.period": expect.any(String),
+      "dca_grid.signal_groups.0.conditions.0.arg2.params.slow": expect.any(String),
+      "dca_grid.signal_groups.0.conditions.0.arg2.params.signal": expect.any(String),
+    });
+  });
+
+  it("заполненные индикаторы и другие kind не порождают ошибок", () => {
+    const config = {
+      exit: {
+        take_profit: {
+          groups: [
+            {
+              conditions: [
+                {
+                  arg1: { kind: "indicator", name: "SMA", timeframe: "5m", period: 20 },
+                  operator: "<",
+                  arg2: { kind: "candle", series: "close", timeframe: "5m" },
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    expect(collectMissingIndicatorArgs(config, catalog)).toEqual({});
+  });
+
+  it("без каталога валидация не блокирует (каталог недоступен — редактор покажет ошибку)", () => {
+    const config = { entry: { groups: [] } };
+    expect(collectMissingIndicatorArgs(config, null)).toEqual({});
   });
 });

@@ -192,8 +192,13 @@ export function unionPropertyName(node: SchemaNode | undefined, defs: Record<str
 
 /** Scheme-rule initial value: `default` from schema, otherwise empty/undefined. */
 export function initialValue(node: SchemaNode | undefined, defs: Record<string, SchemaNode>): unknown {
+  // B4: pydantic emits `{"$ref": "#/$defs/X", "default": ...}` — the default
+  // is a SIBLING of `$ref`, so it must be read before resolving the reference
+  // (resolving would lose it and show the field as "not selected").
+  if (node !== undefined && hasDefault(node)) return deepClone(node.default);
   const resolved = resolveRef(node, defs);
   if (!resolved) return undefined;
+  // Legacy: a `default` inside the resolved $defs node (no sibling default).
   if (hasDefault(resolved)) return deepClone(resolved.default);
   const meta = metaOf(resolved, defs);
   switch (meta.kind) {

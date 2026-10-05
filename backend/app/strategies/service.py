@@ -46,6 +46,7 @@ class StrategyService:
         )
         await self._session.flush()
         strategy.config = config.model_dump(mode="json")
+        await self._session.commit()
         return strategy
 
     async def get(self, strategy_id: int) -> Strategy | None:
@@ -113,4 +114,5 @@ class StrategyService:
             )
             strategy.config = config.model_dump(mode="json")
         await self._session.flush()
+        await self._session.commit()
         return strategy

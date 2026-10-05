@@ -1,5 +1,5 @@
 import type { IndicatorResponse, SchemaNode } from "../types";
-import { initialValueForVariant } from "../lib/schema";
+import { initialValueForVariant, isPlainObject } from "../lib/schema";
 import {
   ARG_KIND_OPTIONS,
   OPERATOR_OPTIONS,
@@ -307,7 +307,11 @@ function IndicatorArgs(props: {
         />
       </Field>
       {entry?.uses_period ? (
-        <Field label={labelFor("indicator.period")}>
+        <Field
+          label={labelFor("indicator.period")}
+          error={getPathError(errors, `${pathPrefix}.period`)}
+          required
+        >
           <NumberInput
             value={value.period as number | null}
             disabled={disabled}
@@ -345,7 +349,12 @@ function IndicatorArgs(props: {
         <div className="space-y-2 rounded border border-zinc-800 p-2">
           <p className="text-xs text-zinc-400">Параметры индикатора</p>
           {entry.params.map((param) => (
-            <Field key={param.name} label={param.name} required={param.required === true}>
+            <Field
+              key={param.name}
+              label={param.name}
+              error={getPathError(errors, `${pathPrefix}.params.${param.name}`)}
+              required
+            >
               <NumberInput
                 value={((value.params as Record<string, unknown>) ?? {})[param.name] as
                   | number
@@ -381,3 +390,48 @@ const ARG_KIND_VARIANTS: Record<string, { kind: string; node: SchemaNode }> = {
   indicator: { kind: "indicator", node: { type: "object", properties: { kind: { const: "indicator", default: "indicator" }, name: { type: "string" }, timeframe: { type: "string" }, period: { type: "integer", default: null }, method: { type: "string", default: null }, shift: { type: "integer", default: 0 }, series: { type: "string", default: "value" }, params: { type: "object" } } } },
   candle: { kind: "candle", node: { type: "object", properties: { kind: { const: "candle", default: "candle" }, series: { type: "string", default: "close" }, timeframe: { type: "string" }, shift: { type: "integer", default: 0 } } } },
 } as const;
+
+/**
+ * B5: the calculation engine falls back to hidden defaults (SMA 20, RSI 14,
+ * MACD 12/26/9, ...) when an indicator argument is empty, so the form must not
+ * submit a strategy with missing period/catalog params.
+ *
+ * Recursively walks the config, finds every `{ kind: "indicator", name }` node
+ * and returns errors keyed by the same dotted paths Field components use.
+ */
+export function collectMissingIndicatorArgs(
+  value: unknown,
+  catalog: Catalog,
+  path = "",
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!catalog || value === null || value === undefined) return errors;
+
+  const visit = (node: unknown, nodePath: string): void => {
+    if (Array.isArray(node)) {
+      node.forEach((item, i) => visit(item, `${nodePath}.${i}`));
+      return;
+    }
+    if (!isPlainObject(node)) return;
+    if (node.kind === "indicator" && typeof node.name === "string") {
+      const entry = catalog.get(node.name);
+      if (entry) {
+        if (entry.uses_period && node.period == null) {
+          errors[`${nodePath}.period`] = "Укажите период индикатора.";
+        }
+        const params = isPlainObject(node.params) ? node.params : {};
+        for (const param of entry.params) {
+          if (params[param.name] == null) {
+            errors[`${nodePath}.params.${param.name}`] = `Укажите параметр «${param.name}».`;
+          }
+        }
+      }
+    }
+    for (const [key, child] of Object.entries(node)) {
+      visit(child, nodePath === "" ? key : `${nodePath}.${key}`);
+    }
+  };
+
+  visit(value, path);
+  return errors;
+}

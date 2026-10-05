@@ -13,11 +13,6 @@ import CandleChart, { ChartMarker } from "../components/CandleChart";
 
 const TF_CHOICES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1mo"];
 
-function toLocalInput(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
 export function BacktestPage() {
   const [strategies, setStrategies] = useState<StrategyResponse[]>([]);
   const [versions, setVersions] = useState<StrategyVersionResponse[]>([]);
@@ -30,16 +25,13 @@ export function BacktestPage() {
   const [inlineError, setInlineError] = useState<string | null>(null);
 
   const [instrumentId, setInstrumentId] = useState("");
-  const [from, setFrom] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 30);
-    return toLocalInput(d);
-  });
-  const [to, setTo] = useState(() => toLocalInput(new Date()));
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [deposit, setDeposit] = useState("");
   const [makerFee, setMakerFee] = useState("");
   const [takerFee, setTakerFee] = useState("");
   const [slippage, setSlippage] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,6 +89,7 @@ export function BacktestPage() {
     setError(null);
     setResult(null);
     setChart(null);
+    setFieldErrors({});
 
     if (useVersion && !versionId) {
       setError("Выберите версию стратегии.");
@@ -112,12 +105,19 @@ export function BacktestPage() {
         return;
       }
     }
-    if (!instrumentId) {
-      setError("Выберите инструмент.");
-      return;
-    }
-    if (!deposit.trim()) {
-      setError("Укажите депозит сделки.");
+    // B3: nothing is filled in for the user — empty required fields are
+    // reported at the field and the request is not sent.
+    const errors: Record<string, string> = {};
+    if (!instrumentId) errors.instrument = "Выберите инструмент.";
+    if (!configTimeframe && !timeframe.trim()) errors.timeframe = "Выберите таймфрейм.";
+    if (!from.trim()) errors.from = "Укажите начало периода.";
+    if (!to.trim()) errors.to = "Укажите конец периода.";
+    if (!deposit.trim()) errors.deposit = "Укажите депозит сделки.";
+    if (!makerFee.trim()) errors.makerFee = "Укажите комиссию.";
+    if (!takerFee.trim()) errors.takerFee = "Укажите комиссию.";
+    if (!slippage.trim()) errors.slippage = "Укажите проскальзывание.";
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
 
@@ -127,9 +127,9 @@ export function BacktestPage() {
       from: new Date(from).toISOString(),
       to: new Date(to).toISOString(),
       deposit: deposit.trim(),
-      maker_fee: makerFee.trim() === "" ? "0" : makerFee.trim(),
-      taker_fee: takerFee.trim() === "" ? "0" : takerFee.trim(),
-      slippage: slippage.trim() === "" ? "0" : slippage.trim(),
+      maker_fee: makerFee.trim(),
+      taker_fee: takerFee.trim(),
+      slippage: slippage.trim(),
     };
     if (useVersion) {
       payload.strategy_version_id = Number(versionId);
@@ -212,7 +212,7 @@ export function BacktestPage() {
           )}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Инструмент" required>
+            <Field label="Инструмент" required error={fieldErrors.instrument}>
               <SelectInput
                 value={instrumentId}
                 onChange={setInstrumentId}
@@ -224,7 +224,7 @@ export function BacktestPage() {
                 }))}
               />
             </Field>
-            <Field label="Таймфрейм (из конфигурации)">
+            <Field label="Таймфрейм (из конфигурации)" error={fieldErrors.timeframe}>
               {configTimeframe ? (
                 <p className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2 font-mono text-sm text-zinc-200">
                   {configTimeframe}
@@ -239,13 +239,13 @@ export function BacktestPage() {
                 />
               )}
             </Field>
-            <Field label="С" required>
-              <TextInput value={from} onChange={setFrom} placeholder="YYYY-MM-DDTHH:mm" />
+            <Field label="С" required error={fieldErrors.from}>
+              <TextInput value={from} onChange={setFrom} placeholder="например, 2026-01-01T10:00" />
             </Field>
-            <Field label="По" required>
-              <TextInput value={to} onChange={setTo} placeholder="YYYY-MM-DDTHH:mm" />
+            <Field label="По" required error={fieldErrors.to}>
+              <TextInput value={to} onChange={setTo} placeholder="например, 2026-02-01T10:00" />
             </Field>
-            <Field label="Депозит сделки" required>
+            <Field label="Депозит сделки" required error={fieldErrors.deposit}>
               <TextInput value={deposit} onChange={setDeposit} placeholder="например, 100000" />
             </Field>
           </div>
@@ -253,14 +253,14 @@ export function BacktestPage() {
 
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Field label="Maker-комиссия" required>
-              <TextInput value={makerFee} onChange={setMakerFee} placeholder="0.0003" />
+            <Field label="Maker-комиссия" required error={fieldErrors.makerFee}>
+              <TextInput value={makerFee} onChange={setMakerFee} placeholder="например, 0.0003" />
             </Field>
-            <Field label="Taker-комиссия" required>
-              <TextInput value={takerFee} onChange={setTakerFee} placeholder="0.0003" />
+            <Field label="Taker-комиссия" required error={fieldErrors.takerFee}>
+              <TextInput value={takerFee} onChange={setTakerFee} placeholder="например, 0.0003" />
             </Field>
-            <Field label="Проскальзывание" required>
-              <TextInput value={slippage} onChange={setSlippage} placeholder="0" />
+            <Field label="Проскальзывание" required error={fieldErrors.slippage}>
+              <TextInput value={slippage} onChange={setSlippage} placeholder="например, 0.001" />
             </Field>
           </div>
           <p className="text-xs text-zinc-500">
