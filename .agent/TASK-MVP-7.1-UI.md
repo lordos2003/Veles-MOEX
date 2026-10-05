@@ -2,7 +2,7 @@
 
 ## Статус
 
-**CHANGES REQUESTED (раунд 1, 2026-10-05)** — проверен `7d662be`; исправить B1–B7 из `.agent/REVIEW-MVP-7.1.md`
+**CHANGES REQUESTED (раунд 2, 2026-10-05)** — проверен `53592c9`; осталось B4 и B6 из `.agent/REVIEW-MVP-7.1.md`
 
 Контрольная ветка: `agent/control`
 Ветка реализации: `agent/review/mvp-7.1` (создать от текущего `master` @ `795f4ed`)
