@@ -187,10 +187,10 @@ git ls-remote origin agent/review/mvp-7.1 agent/control
 
 ```
 53592c9d30478784cecd52156a4056e6bc23caf5	refs/heads/agent/review/mvp-7.1
-2e5848d8ee5d4cb97187432e8b2fc99665897379	refs/heads/agent/control
+ba1e2031e36cef8627227123f14e97a9f73059c3	refs/heads/agent/control
 ```
 
 - `agent/review/mvp-7.1` = локальный `53592c9` — **in sync with origin**.
-- `agent/control` = локальный `2e5848d` — **in sync with origin** (в ветке:
-  ревьюерский `67380e9` с `.agent/REVIEW-MVP-7.1.md`, наш
-  `3145d71`→merge→`REPORT-MVP-7.1-REV1`, подтверждение `2e5848d`).
+- `agent/control` = локальный `ba1e203` — **in sync with origin** (в ветке:
+  ревьюерский `67380e9` с `.agent/REVIEW-MVP-7.1.md`, `3145d71` (REPORT-REV1),
+  merge `33dbdab`; `ba1e203` — коммит этого отчёта).
