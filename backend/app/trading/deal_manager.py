@@ -17,9 +17,10 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from decimal import Decimal
 
-from app.brokers.base import BrokerStopOrderRequest, StopOrderStatus
+from app.brokers.base import BrokerStopOrder, BrokerStopOrderRequest, StopOrderStatus
 from app.models.enums import OrderSide, OrderType
 from app.strategies.config import Direction, StopLossConfig, StrategyConfig
 from app.strategies.dca_grid import DCAGridEngine
@@ -575,6 +576,27 @@ class DealManager:
             ) from exc
         return intent
 
+    async def _broker_stops(self, deal: Deal) -> list[BrokerStopOrder]:
+        """B1: read the broker's stop orders for the Deal's window.
+
+        Without an explicit status filter T-Invest ``GetStopOrders`` returns
+        only ACTIVE orders, so an EXECUTED stop would look "missing". The
+        window — from the Deal's opening (its stop can only be placed after)
+        to now — asks for executed/cancelled/expired history without pulling
+        the whole account history.
+        """
+        return await self._om.broker.get_stop_orders(
+            deal.account_id, from_=deal.created_at, to=utcnow()
+        )
+
+    async def _broker_position_quantity(self, deal: Deal) -> Decimal:
+        """B1: the instrument quantity the broker reports (GetPortfolio)."""
+        positions = await self._om.broker.get_open_positions(deal.account_id)
+        pos = next(
+            (p for p in positions if p.instrument_figi == deal.instrument_figi), None
+        )
+        return pos.quantity if pos is not None else Decimal("0")
+
     async def _confirm_stop_cancelled(self, deal: Deal) -> None:
         """Cancel the working stop order and confirm the outcome (E2).
 
@@ -590,7 +612,7 @@ class DealManager:
             await self._om.broker.cancel_stop_order(deal.sl_order_id, deal.account_id)
         except Exception:  # noqa: BLE001 - the state lookup confirms the outcome
             pass
-        orders = await self._om.broker.get_stop_orders(deal.account_id)
+        orders = await self._broker_stops(deal)
         ours = [o for o in orders if o.order_id == deal.sl_order_id]
         if not ours:
             return  # gone: cancelled (or executed; the caller re-reads)
@@ -625,10 +647,18 @@ class DealManager:
             return
         pos = self._pm.get(deal.instrument_figi)
         if pos is None or pos.quantity == 0:
-            # Nothing to protect in a flat position: the Deal is done (mirrors
-            # the D4 TP re-arm) — no stop is manufactured for a zero position.
-            await self._close_deal(deal)
-            return
+            # D4 race: the exit (TP fill or executed stop) may have already
+            # been resolved and persisted while the re-arm re-read the
+            # position — nothing left to protect.
+            if deal.status in (DealStatus.CLOSED, DealStatus.CLOSING):
+                return
+            # B1: a zero position with an armed deal is not closed silently —
+            # the exit is resolved from explicit facts (TP fill / executed
+            # stop) and never invented here; an unreconciliable state is ERROR.
+            raise DealReconciliationRequired(
+                f"deal {deal.id}: no position to protect; the close reason "
+                "cannot be determined from a zero position (E2)"
+            )
         if not _sign_matches(pos.quantity, deal.direction):
             raise DealPositionContradiction(
                 f"deal {deal.id}: position quantity {pos.quantity} contradicts "
@@ -636,9 +666,13 @@ class DealManager:
             )
         quantity = _round_down_lots(abs(pos.quantity), deal.lot_size)
         if quantity <= 0:
-            # Residual below one whole lot: nothing to protect in whole lots.
-            await self._close_deal(deal)
-            return
+            # B1: a position below one whole lot cannot be covered by a stop
+            # in whole lots — explicit ERROR, no silent close (E2).
+            raise DealReconciliationRequired(
+                f"deal {deal.id}: position {pos.quantity} is below one whole "
+                f"lot {deal.lot_size}; a stop cannot be armed and the close "
+                "reason cannot be determined (E2)"
+            )
         if deal.p0_price is None:
             raise DealReconciliationRequired(
                 f"deal {deal.id}: the P0 fill price is not known; the stop "
@@ -665,8 +699,11 @@ class DealManager:
             # E2 B3-equivalent: re-read the position after the cancel.
             pos = self._pm.get(deal.instrument_figi)
             if pos is None or pos.quantity == 0:
-                await self._close_deal(deal)
-                return
+                raise DealReconciliationRequired(
+                    f"deal {deal.id}: the position is flat after the stop "
+                    f"cancel (stop {deal.sl_order_id}); the close reason "
+                    "cannot be determined (E2)"
+                )
             if not _sign_matches(pos.quantity, deal.direction):
                 raise DealPositionContradiction(
                     f"deal {deal.id}: position quantity {pos.quantity} "
@@ -674,8 +711,11 @@ class DealManager:
                 )
             fresh_quantity = _round_down_lots(abs(pos.quantity), deal.lot_size)
             if fresh_quantity <= 0:
-                await self._close_deal(deal)
-                return
+                raise DealReconciliationRequired(
+                    f"deal {deal.id}: position {pos.quantity} is below one "
+                    f"whole lot {deal.lot_size}; the stop cannot be re-armed "
+                    "after the cancel (E2)"
+                )
             if fresh_quantity != quantity:
                 # E2: the re-read position differs from the pre-cancel one —
                 # gate the actual volume through Risk before placing it.
@@ -703,45 +743,71 @@ class DealManager:
     async def check_stop_orders(self) -> None:
         """E2: reconcile armed stops with broker facts (called at pump() end).
 
-        For every armed open Deal the broker's stop orders are fetched and
-        matched by broker stop order id: an EXECUTED stop closes the Deal (the
-        position is confirmed flat at the broker first; a remaining position is
-        a contradiction -> ERROR), an ACTIVE stop stays, a missing stop is
-        re-armed once, any unknown state blocks the bot (ERROR).
+        For every armed open Deal the broker's stop orders are fetched (one
+        GetStopOrders per account per batch — T-Invest rate limits) and matched
+        by broker stop order id: an EXECUTED stop closes the Deal (the position
+        is confirmed flat at the broker first; a remaining position is a
+        contradiction -> ERROR), an ACTIVE stop stays, a missing or cancelled
+        stop is reconciled against the broker position before any re-arm (B1:
+        a zero position cannot be correlated -> ERROR, a real position re-arms
+        once), any unknown state blocks the bot (ERROR).
         """
-        for deal in list(self._deals.values()):
-            if deal.sl_percent is None or deal.sl_order_id is None:
-                continue
-            if deal.status in (DealStatus.CLOSED, DealStatus.ERROR, DealStatus.CLOSING):
-                continue
+        armed = [
+            deal
+            for deal in self._deals.values()
+            if deal.sl_percent is not None
+            and deal.sl_order_id is not None
+            and deal.status not in (DealStatus.CLOSED, DealStatus.ERROR, DealStatus.CLOSING)
+        ]
+        if not armed:
+            return
+        windows: dict[str, datetime] = {}
+        for deal in armed:
+            oldest = windows.get(deal.account_id)
+            if oldest is None or deal.created_at < oldest:
+                windows[deal.account_id] = deal.created_at
+        now = utcnow()
+        stops_by_account: dict[str, list[BrokerStopOrder]] = {}
+        failed: dict[str, Exception] = {}
+        for account_id, from_ in windows.items():
             try:
-                broker_stops = await self._om.broker.get_stop_orders(deal.account_id)
+                stops_by_account[account_id] = await self._om.broker.get_stop_orders(
+                    account_id, from_=from_, to=now
+                )
             except Exception as exc:  # noqa: BLE001 - tunneled as a Deal failure
-                await self._fail_deal(deal.bot_id, deal, exc)
+                failed[account_id] = exc
+        for deal in armed:
+            if deal.account_id in failed:
+                await self._fail_deal(deal.bot_id, deal, failed[deal.account_id])
                 continue
+            broker_stops = stops_by_account[deal.account_id]
             ours = [o for o in broker_stops if o.order_id == deal.sl_order_id]
             if ours and ours[0].status is StopOrderStatus.ACTIVE:
                 continue
-            if not ours:
-                # The stop is missing at the broker: with an assembled grid it
-                # is re-armed once (the broker/restart may have lost it); an
-                # unknown path stays explicit.
-                if self._grid_assembled(deal):
-                    deal.sl_order_id = None  # the broker no longer knows it
-                    try:
+            if not ours or ours[0].status is StopOrderStatus.CANCELLED:
+                # E2/B1: an absent (or externally cancelled) stop is an unknown
+                # outcome, never a reason to place a new one. The broker's
+                # position is reconciled first: zero -> the close cannot be
+                # correlated to this Deal (ERROR); a real position -> re-arm.
+                try:
+                    if await self._broker_position_quantity(deal) == 0:
+                        raise DealReconciliationRequired(
+                            f"deal {deal.id}: stop {deal.sl_order_id} is "
+                            f"{'missing at' if not ours else 'cancelled at'} the "
+                            "broker and the broker position is flat; the close "
+                            "cannot be correlated to the deal (E2)"
+                        )
+                    if self._grid_assembled(deal):
+                        deal.sl_order_id = None  # the broker no longer knows it
                         await self._rearm_stop(deal)
-                    except Exception as exc:  # noqa: BLE001
-                        await self._fail_deal(deal.bot_id, deal, exc)
-                    continue
-                await self._fail_deal(
-                    deal.bot_id,
-                    deal,
-                    DealReconciliationRequired(
-                        f"deal {deal.id}: armed stop {deal.sl_order_id} is missing "
-                        "at the broker and the grid is not assembled; "
+                        continue
+                    raise DealReconciliationRequired(
+                        f"deal {deal.id}: armed stop {deal.sl_order_id} is "
+                        "missing at the broker and the grid is not assembled; "
                         "reconciliation required (E2)"
-                    ),
-                )
+                    )
+                except Exception as exc:  # noqa: BLE001 - B1: isolate the event
+                    await self._fail_deal(deal.bot_id, deal, exc)
                 continue
             if ours[0].status is StopOrderStatus.EXECUTED:
                 try:
@@ -749,14 +815,6 @@ class DealManager:
                 except Exception as exc:  # noqa: BLE001 - B1: isolate the event
                     await self._fail_deal(deal.bot_id, deal, exc)
                 continue
-            if ours[0].status is StopOrderStatus.CANCELLED:
-                # Cancel we did not request (or a stale confirm): re-arm once.
-                if self._grid_assembled(deal):
-                    try:
-                        await self._rearm_stop(deal)
-                    except Exception as exc:  # noqa: BLE001
-                        await self._fail_deal(deal.bot_id, deal, exc)
-                    continue
             await self._fail_deal(
                 deal.bot_id,
                 deal,
@@ -916,12 +974,13 @@ class DealManager:
         self._deals.pop(deal.bot_id, None)
         self._blocked.discard(deal.bot_id)
         if close_reason == "stop_loss" and self._on_stop_loss is not None:
-            # E3: best-effort notification (the CLOSED state is already
-            # persisted); a failing callback must not break the close.
+            # E3/B2: the CLOSED state is already persisted, but a failing
+            # stop-bot callback must not leave the bot running against
+            # stop_bot_after — surface it through the B2 error path.
             try:
                 await self._on_stop_loss(deal.bot_id, deal.stop_bot_after is True)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001 - B2: error, never a silent swallow
+                await self._fail_deal(deal.bot_id, deal, exc)
 
     # --- recovery (D5) -------------------------------------------------------------
 
@@ -1026,7 +1085,7 @@ class DealManager:
         # explicit unresolved Deal (ERROR).
         if deal.sl_percent is not None and deal.sl_order_id is not None:
             try:
-                broker_stops = await self._om.broker.get_stop_orders(deal.account_id)
+                broker_stops = await self._broker_stops(deal)
             except Exception as exc:  # noqa: BLE001 - unknown broker state
                 raise DealReconciliationRequired(
                     f"deal {deal.id}: stop orders could not be read during "
@@ -1036,7 +1095,23 @@ class DealManager:
             if ours and ours[0].status is StopOrderStatus.EXECUTED:
                 await self._on_stop_executed(deal)
                 return True
-            if not ours or ours[0].status in (
+            if not ours:
+                # B1: missing at the broker is an unknown outcome, not a free
+                # pass to re-arm. A flat broker position is explainable only
+                # by a known TP fill (OrderManager fact); otherwise the close
+                # cannot be correlated with this Deal -> explicit ERROR.
+                tp_order = (
+                    self._om.get_order(deal.tp_order_id) if deal.tp_order_id is not None else None
+                )
+                tp_filled = tp_order is not None and tp_order.status is OrderState.FILLED
+                if not tp_filled and await self._broker_position_quantity(deal) == 0:
+                    raise DealReconciliationRequired(
+                        f"deal {deal.id}: stop {deal.sl_order_id} is missing at "
+                        "the broker and the broker position is flat; the close "
+                        "cannot be correlated to the deal (E2)"
+                    )
+                deal.sl_order_id = None
+            elif ours[0].status in (
                 StopOrderStatus.CANCELLED,
                 StopOrderStatus.EXPIRED,
             ):
@@ -1109,7 +1184,9 @@ class DealManager:
                     return True
                 current = _round_down_lots(abs(pos.quantity), deal.lot_size)
                 if current <= 0:
-                    await self._close_deal(deal)
+                    # B1: a position below one whole lot cannot be covered by
+                    # a stop in whole lots — explicit ERROR, no silent close.
+                    return False
                 else:
                     expected = align_stop_price(
                         deal.sl_price_from_p0(), deal.tick_size, deal.direction

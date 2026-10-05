@@ -605,10 +605,23 @@ class TInvestAdapter(BrokerAdapter):
         }
         data = await client.call(f"{_STOP_ORDERS}/PostStopOrder", body)
         stop_order_id = data.get("stopOrderId") or data.get("stop_order_id")
+        if not stop_order_id:
+            # B3: without the broker-returned identifier the placement cannot
+            # be correlated with the intended stop; report UNKNOWN so the
+            # caller errors instead of arming a stop the broker never knew.
+            return BrokerStopOrder(
+                order_id="",
+                status=StopOrderStatus.UNKNOWN,
+                account_id=request.account_id,
+                instrument_figi=request.instrument_figi,
+                side=request.side,
+                quantity=request.quantity,
+                stop_price=request.stop_price,
+            )
         # PostStopOrder returns only the stop order id; a successfully accepted
         # GOOD_TILL_CANCEL stop-loss is reported as ACTIVE (working at the broker).
         return BrokerStopOrder(
-            order_id=stop_order_id or "",
+            order_id=stop_order_id,
             status=StopOrderStatus.ACTIVE,
             account_id=request.account_id,
             instrument_figi=request.instrument_figi,
@@ -628,11 +641,36 @@ class TInvestAdapter(BrokerAdapter):
             {"accountId": account_id, "stopOrderId": order_id},
         )
 
-    async def get_stop_orders(self, account_id: str | None = None) -> list[BrokerStopOrder]:
+    async def get_stop_orders(
+        self,
+        account_id: str | None = None,
+        *,
+        from_: datetime | None = None,
+        to: datetime | None = None,
+    ) -> list[BrokerStopOrder]:
+        """List stop orders via StopOrdersService/GetStopOrders.
+
+        Official contract: without an explicit ``status`` filter the call
+        returns only **ACTIVE** stop orders; executed, cancelled and expired
+        ones come back only with ``STOP_ORDER_STATUS_ALL`` (or the specific
+        status) together with the ``from``/``to`` bounds. Correlation of an
+        executed stop needs that history (B1), so callers pass both bounds and
+        the adapter requests ``STOP_ORDER_STATUS_ALL`` in that window; without
+        a window the broker default (ACTIVE only) applies.
+        """
         client = self._require_client()
         if not account_id:
             account_id = await self._first_account_id()
-        data = await client.call(f"{_STOP_ORDERS}/GetStopOrders", {"accountId": account_id})
+        body: dict = {"accountId": account_id}
+        if from_ is not None or to is not None:
+            if from_ is None or to is None:
+                raise InvalidRequestError(
+                    "get_stop_orders requires both from/to bounds when a window is used"
+                )
+            body["status"] = "STOP_ORDER_STATUS_ALL"
+            body["from"] = _to_iso_utc(from_)
+            body["to"] = _to_iso_utc(to)
+        data = await client.call(f"{_STOP_ORDERS}/GetStopOrders", body)
         raw_orders = data.get("orders", [])
         return [await self._to_stop_order(item, account_id) for item in raw_orders]
 

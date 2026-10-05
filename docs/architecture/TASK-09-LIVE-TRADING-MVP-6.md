@@ -1988,9 +1988,23 @@ price; a `stop_bot_after` setting controls what the bot does after the stop.
   to be correlated to the deal — via the broker-returned identifier or via a
   position reconciliation together with `GetStopOrders`. If correlation is not
   possible → bot ERROR, no silent continuation.
+- **Reading stops (B1)**: `GetStopOrders` is requested with
+  `status=STOP_ORDER_STATUS_ALL` and `from`/`to` bounds (window from the deal's
+  opening to now) — per the official `StopOrdersService/GetStopOrders` contract
+  an explicit status filter is required to see executed/cancelled/expired
+  orders, without it only ACTIVE orders are returned. A placement the broker
+  did not acknowledge with a stop order id is reported `UNKNOWN` → bot ERROR
+  (B3).
+- **A missing stop order is an unknown state**: before any re-placement the
+  broker position is reconciled (`get_open_positions` / `GetPortfolio`), not
+  only `PositionManager`. Broker position zero → the close cannot be correlated
+  → bot ERROR, no new stop is placed on an empty position (E2). A real broker
+  position and an assembled grid → place once after the successful
+  reconciliation — this applies to both the live path (`check_stop_orders`)
+  and recovery (D5).
 - **Recovery (D5)**: the deal's stop orders are reconciled with the broker.
   ACTIVE stays. EXECUTED → close the deal as above. Missing with the grid
-  assembled → place once after a successful reconciliation. UNKNOWN → ERROR.
+  assembled → position reconciliation first, then place once. UNKNOWN → ERROR.
 
 ### E3. What the bot does after the stop — strategy setting
 
@@ -1998,6 +2012,8 @@ price; a `stop_bot_after` setting controls what the bot does after the stop.
   START (HTTP 409) for live trading — the default is not invented.
 - `true` → after the stop close the bot goes to **STOPPED** via the standard
   MVP-6.5 stop; the reason is visible in the API (`stop_reason="stop-loss"`).
+  A failure of that stop callback is never swallowed: the bot goes to ERROR
+  through the B2 path, the reason stays observable (B2).
 - `false` → the bot keeps running and waits for the next FLAT entry (new
   deposit per C6).
 

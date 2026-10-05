@@ -349,9 +349,17 @@ class BrokerAdapter(ABC):
         """
 
     @abstractmethod
-    async def get_stop_orders(self, account_id: str | None = None) -> list[BrokerStopOrder]:
-        """Return the currently known stop orders (optionally for an account).
+    async def get_stop_orders(
+        self,
+        account_id: str | None = None,
+        *,
+        from_: datetime | None = None,
+        to: datetime | None = None,
+    ) -> list[BrokerStopOrder]:
+        """Return the stop orders for an account, optionally within a window.
 
-        Used for correlation/recovery: the caller reconciles broker state with
-        the expected working stop.
+        ``from_``/``to`` bound the stop-order creation time. Callers that must
+        see EXECUTED/CANCELLED/EXPIRED history pass the window: adapter defaults
+        otherwise apply (T-Invest ``GetStopOrders`` returns only ACTIVE orders
+        without an explicit status filter, B1).
         """

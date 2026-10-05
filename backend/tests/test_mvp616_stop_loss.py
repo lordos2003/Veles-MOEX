@@ -90,6 +90,7 @@ class StopBroker:
         self.cancel_calls: list[str] = []
         self.stop_place_calls = 0
         self.stop_cancel_calls: list[str] = []
+        self.get_stop_calls = 0
         self.stops: dict[str, BrokerStopOrder] = {}
         self.positions: list[BrokerPosition] = []
         self.cancel_stop_error: Exception | None = None
@@ -133,9 +134,21 @@ class StopBroker:
         if stop is not None:
             stop.status = StopOrderStatus.CANCELLED
 
-    async def get_stop_orders(self, account_id: str | None = None) -> list[BrokerStopOrder]:
+    async def get_stop_orders(
+        self,
+        account_id: str | None = None,
+        *,
+        from_: datetime | None = None,
+        to: datetime | None = None,
+    ) -> list[BrokerStopOrder]:
+        self.get_stop_calls += 1
         if self.get_stop_error is not None:
             raise self.get_stop_error
+        if from_ is None or to is None:
+            # B1: like T-Invest GetStopOrders without an explicit status
+            # filter — only ACTIVE stops are returned; executed/cancelled/
+            # expired require the window (STOP_ORDER_STATUS_ALL).
+            return [s for s in self.stops.values() if s.status is StopOrderStatus.ACTIVE]
         return list(self.stops.values())
 
     async def get_open_positions(self, account_id: str | None = None) -> list[BrokerPosition]:
@@ -469,6 +482,22 @@ async def test_e3_stop_bot_after_true_propagates_to_callback() -> None:
     assert deal3.id != deal2.id
 
 
+async def test_e3_stop_callback_failure_errors_bot() -> None:
+    async def on_stop_loss(bot_id: int, stop_bot_after: bool) -> None:
+        raise RuntimeError("stop callback boom")
+
+    dm, om, broker = _pair(on_stop_loss=on_stop_loss)
+    deal, entry, dca = await _assembled(dm, om)
+    broker.stops[deal.sl_order_id].status = StopOrderStatus.EXECUTED
+    await dm.pump()
+    # B2: a failing stop-bot callback is never swallowed — the bot is marked
+    # ERROR (blocked) while the CLOSED close itself stays persisted.
+    assert deal.status is DealStatus.CLOSED
+    assert deal.close_reason == "stop_loss"
+    assert deal.bot_id in dm.blocked_bots
+    assert dm.last_error_for(deal.bot_id) is not None
+
+
 async def test_e2_executed_stop_with_remaining_position_errors() -> None:
     dm, om, broker = _pair()
     deal, entry, dca = await _assembled(dm, om)
@@ -488,6 +517,44 @@ async def test_e2_executed_stop_with_remaining_position_errors() -> None:
     assert deal.status is DealStatus.ERROR
     assert "still reports position" in dm.last_error_for(deal.bot_id)
     assert deal.bot_id in dm.blocked_bots
+
+
+async def test_b1_missing_stop_with_flat_broker_position_errors() -> None:
+    dm, om, broker = _pair()
+    deal, entry, dca = await _assembled(dm, om)
+    # B1: the broker lost the stop (it is not in GetStopOrders within the
+    # window) and its position is flat — the close cannot be correlated with
+    # this Deal: ERROR, and no new stop is ever placed on an empty position.
+    del broker.stops[deal.sl_order_id]
+    await dm.pump()
+    assert deal.status is DealStatus.ERROR
+    assert "cannot be correlated" in dm.last_error_for(deal.bot_id)
+    assert deal.bot_id in dm.blocked_bots
+    assert broker.stop_place_calls == 1  # only the original arm
+    assert broker.active_stops() == []
+
+
+async def test_b1_missing_stop_with_broker_position_rearms_once() -> None:
+    dm, om, broker = _pair()
+    deal, entry, dca = await _assembled(dm, om)
+    # B1: the stop is missing but the broker still holds the position — the
+    # reconciliation succeeds and exactly one stop is placed again.
+    del broker.stops[deal.sl_order_id]
+    broker.positions = [
+        BrokerPosition(
+            account_id=ACC,
+            instrument_figi=FIGI,
+            quantity=Decimal("435"),
+            average_price=Decimal("91.9"),
+            current_price=Decimal("85.0"),
+        )
+    ]
+    await dm.pump()
+    assert deal.status is DealStatus.OPEN
+    assert deal.bot_id not in dm.blocked_bots
+    assert broker.stop_place_calls == 2
+    assert len(broker.active_stops()) == 1
+    assert broker.active_stops()[0].quantity == Decimal("435")
 
 
 # --- E3/E4: configuration scope at START -----------------------------------------
@@ -557,6 +624,17 @@ async def test_d5_recovery_missing_stop_placed_once() -> None:
     dm, om, broker = _pair()
     deal, entry, dca = await _assembled(dm, om)
     del broker.stops[deal.sl_order_id]
+    # B1: before any re-arm the broker's position is the fact — it is real
+    # here, so the assembled grid re-arms the missing stop exactly once.
+    broker.positions = [
+        BrokerPosition(
+            account_id=ACC,
+            instrument_figi=FIGI,
+            quantity=Decimal("435"),
+            average_price=Decimal("91.9"),
+            current_price=Decimal("85.0"),
+        )
+    ]
     dm2 = DealManager(dm._store, om, RiskManager(position_manager=om.positions()))
     assert await dm2.recover(ACC) is True
     # The assembled grid re-arms the missing stop exactly once.
@@ -590,6 +668,33 @@ async def test_d5_recovery_unknown_stop_state_errors() -> None:
     assert await dm2.recover(ACC) is False
     assert deal.status is DealStatus.ERROR
     assert deal.bot_id in dm2.blocked_bots
+
+
+async def test_d5_recovery_executed_stop_closes_with_stop_loss() -> None:
+    dm, om, broker = _pair()
+    deal, entry, dca = await _assembled(dm, om)
+    # B1: an executed stop must be visible in recovery (status=ALL window) and
+    # close the Deal as stop_loss — not as a guessed take_profit.
+    broker.stops[deal.sl_order_id].status = StopOrderStatus.EXECUTED
+    dm2 = DealManager(dm._store, om, RiskManager(position_manager=om.positions()))
+    assert await dm2.recover(ACC) is True
+    assert deal.status is DealStatus.CLOSED
+    assert deal.close_reason == "stop_loss"
+    assert deal.bot_id not in dm2.blocked_bots
+
+
+async def test_d5_recovery_missing_stop_with_flat_broker_position_errors() -> None:
+    dm, om, broker = _pair()
+    deal, entry, dca = await _assembled(dm, om)
+    # B1: the stop is missing and the broker position is flat — the close
+    # cannot be correlated to the Deal: explicit ERROR, no blind re-arm.
+    del broker.stops[deal.sl_order_id]
+    dm2 = DealManager(dm._store, om, RiskManager(position_manager=om.positions()))
+    assert await dm2.recover(ACC) is False
+    assert deal.status is DealStatus.ERROR
+    assert "cannot be correlated" in dm2.last_error_for(deal.bot_id)
+    assert deal.bot_id in dm2.blocked_bots
+    assert broker.stop_place_calls == 1
 
 
 # --- E3: production persistence of the stop reason -------------------------------

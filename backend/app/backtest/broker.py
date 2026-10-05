@@ -407,5 +407,11 @@ class BacktestBroker(BrokerAdapter):
     ) -> None:
         raise NotImplementedError("stop orders are engine-modelled in backtest")
 
-    async def get_stop_orders(self, account_id: str | None = None) -> list[BrokerStopOrder]:
+    async def get_stop_orders(
+        self,
+        account_id: str | None = None,
+        *,
+        from_: datetime | None = None,
+        to: datetime | None = None,
+    ) -> list[BrokerStopOrder]:
         raise NotImplementedError("stop orders are engine-modelled in backtest")

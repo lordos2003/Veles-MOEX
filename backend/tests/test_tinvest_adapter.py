@@ -648,3 +648,51 @@ async def test_get_stop_orders_without_lot_size_blocks_normalization() -> None:
     adapter = TInvestAdapter(client=fake)
     with pytest.raises(InvalidRequestError):
         await adapter.get_stop_orders(account_id="acc-1")
+
+
+@pytest.mark.asyncio
+async def test_get_stop_orders_with_window_requests_all_statuses() -> None:
+    fake = _stop_fake(**{f"{_STOP_ORDERS}/GetStopOrders": {"orders": []}})
+    adapter = TInvestAdapter(client=fake)
+    from_ = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
+    to = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
+    await adapter.get_stop_orders(account_id="acc-1", from_=from_, to=to)
+    path, body = fake.calls[-1]
+    assert path == f"{_STOP_ORDERS}/GetStopOrders"
+    # B1: without an explicit status filter T-Invest returns only ACTIVE
+    # orders, so an executed stop would look missing — the caller window is
+    # requested with STOP_ORDER_STATUS_ALL and the from/to bounds.
+    assert body == {
+        "accountId": "acc-1",
+        "status": "STOP_ORDER_STATUS_ALL",
+        "from": "2026-10-01T08:00:00Z",
+        "to": "2026-10-01T09:00:00Z",
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_stop_orders_requires_both_window_bounds() -> None:
+    adapter = TInvestAdapter(client=_stop_fake())
+    with pytest.raises(InvalidRequestError):
+        await adapter.get_stop_orders(
+            account_id="acc-1", from_=datetime(2026, 10, 1, tzinfo=UTC)
+        )
+
+
+@pytest.mark.asyncio
+async def test_place_stop_order_without_id_returns_unknown() -> None:
+    # B3: a placement the broker did not acknowledge with an id cannot be
+    # correlated — UNKNOWN, never ACTIVE with an empty identity.
+    fake = _stop_fake(**{f"{_STOP_ORDERS}/PostStopOrder": {}})
+    adapter = TInvestAdapter(client=fake)
+    stop = await adapter.place_stop_order(
+        BrokerStopOrderRequest(
+            instrument_figi="BBG004730N88",
+            side=OrderSide.SELL,
+            quantity=Decimal("30"),
+            stop_price=Decimal("80"),
+            account_id="acc-1",
+        )
+    )
+    assert stop.order_id == ""
+    assert stop.status is StopOrderStatus.UNKNOWN
