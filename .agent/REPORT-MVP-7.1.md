@@ -302,4 +302,12 @@ git push origin agent/control
 git ls-remote origin agent/review/mvp-7.1 agent/control
 ```
 
-Подтверждение `git ls-remote` — в конце (обновлённым при финальном push).
+Подтверждение `git ls-remote` (2026-10-05):
+
+```
+8df8f0f9dfe246ae46ed350a33108cd4b4e0eabb	refs/heads/agent/control
+7d662be4f8a40ac8dd9347ba7c6163a3a3507efa	refs/heads/agent/review/mvp-7.1
+```
+
+Оба SHA совпадают с локальными (`agent/review/mvp-7.1` = `7d662be` —
+реализация, `agent/control` = `8df8f0f` — этот отчёт).
