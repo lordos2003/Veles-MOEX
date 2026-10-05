@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class BotResponse(BaseModel):
@@ -35,6 +35,40 @@ class BotResponse(BaseModel):
     last_skip_reason: str | None = None
 
 
+class BotCreate(BaseModel):
+    """Create a bot bound to an existing immutable strategy version (R5).
+
+    ``deposit`` is optional and validated the same way as PATCH (>0, no default
+    invented). The bot is created in state STOPPED; it starts only via
+    ``POST /bots/{id}/start``.
+    """
+
+    name: str = Field(min_length=1, max_length=128)
+    strategy_version_id: int
+    account_id: int
+    instrument_id: int
+    deposit: Decimal | None = Field(default=None, gt=0)
+
+
+class BotUpdate(BaseModel):
+    """Update a bot: deposit and/or strategy version (R5).
+
+    All keys are optional. ``strategy_version_id`` may only change while the
+    bot is STOPPED and has no unclosed deal — otherwise HTTP 409. ``deposit``
+    may be set/cleared any time (same rules as MVP-6.11 C5). An empty PATCH is
+    rejected (422): a PATCH without keys is a client error, not a silent no-op.
+    """
+
+    deposit: Decimal | None = Field(default=None, gt=0)
+    strategy_version_id: int | None = None
+
+    @model_validator(mode="after")
+    def _require_some_key(self) -> BotUpdate:
+        if not self.model_fields_set:
+            raise ValueError("at least one of deposit / strategy_version_id is required")
+        return self
+
+
 class BotDepositUpdate(BaseModel):
     """Write-side contract for the bot deposit (MVP-6.11 C5/C6).
 
@@ -45,3 +79,54 @@ class BotDepositUpdate(BaseModel):
     """
 
     deposit: Decimal | None = Field(gt=0)
+
+
+class DealLevelResponse(BaseModel):
+    """One planned grid order of a deal (R6)."""
+
+    index: int
+    side: str
+    price: Decimal | None = None
+    nominal: Decimal
+    quantity: Decimal
+    offset_percent: float
+    status: str
+    is_market: bool = False
+    filled_quantity: Decimal = Decimal("0")
+    order_id: str | None = None
+    broker_order_id: str | None = None
+
+
+class DealResponse(BaseModel):
+    """The persisted state of one position cycle (R6, read-only projection)."""
+
+    id: int
+    bot_id: int | None = None
+    instrument_figi: str
+    direction: str
+    status: str
+    deposit: Decimal | None = None
+    base_nominal: Decimal = Decimal("0")
+    reference_price: Decimal = Decimal("0")
+    lot_size: int | None = None
+    tick_size: Decimal | None = None
+    tp_percent: float = 0.0
+    average_price: Decimal = Decimal("0")
+    # R6: current position volume = sum of filled level quantities (projection).
+    position_quantity: Decimal = Decimal("0")
+    tp_price: Decimal | None = None
+    tp_quantity: Decimal | None = None
+    sl_percent: float | None = None
+    p0_price: Decimal | None = None
+    sl_quantity: Decimal | None = None
+    sl_price: Decimal | None = None
+    sl_order_id: str | None = None
+    # R6: stop state — None when not configured, True while a stop order is
+    # placed (sl_order_id present), False when configured but disarmed.
+    sl_active: bool | None = None
+    close_reason: str | None = None
+    stop_bot_after: bool | None = None
+    levels: list[DealLevelResponse] = []
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    closed_at: datetime | None = None

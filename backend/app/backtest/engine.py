@@ -24,10 +24,11 @@ from app.backtest.broker import BacktestBroker
 from app.backtest.config import BacktestConfig
 from app.backtest.models import BacktestDeal, BacktestResult
 from app.domain.marketdata import Candle
+from app.models.enums import OrderSide
 from app.strategies.bars import Bar, BarSeries, Snapshot
 from app.strategies.config import Direction, TradingMode
 from app.strategies.dca_grid import DCAGridEngine, GridState
-from app.strategies.domain import MarketContext
+from app.strategies.domain import GridOrder, MarketContext
 from app.strategies.exit import (
     ExitDecision,
     ExitEngine,
@@ -37,6 +38,7 @@ from app.strategies.exit import (
 )
 from app.strategies.filters import CalculationMethod, FilterEvaluator
 from app.trading.engine import TradingEngine
+from app.trading.sizing import deposit_to_base_nominal, round_grid_to_lot
 
 
 class BacktestEngine:
@@ -93,7 +95,13 @@ class BacktestEngine:
         for candle in candles:
             # (A) Execute pending market entry on this bar's open.
             if pending_entry is not None and not broker.is_open():
-                qty = config.quantity
+                sized_grid = None
+                if config.deposit is not None:
+                    qty, sized_grid = self._deposit_entry(
+                        config, direction, Decimal(candle.open)
+                    )
+                else:
+                    qty = config.quantity
                 broker.execute_market(
                     pending_entry.direction, qty, price=Decimal(candle.open),
                     timestamp=candle.timestamp,
@@ -111,7 +119,8 @@ class BacktestEngine:
                     mode=self._exit_engine.resolve_mode(config.strategy.exit), direction=direction
                 )
                 limit_orders, grid_state, dca_order_ids = self._after_entry(
-                    broker, config, direction, pos_avg, pos_qty, candle, limit_orders
+                    broker, config, direction, pos_avg, pos_qty, candle, limit_orders,
+                    sized_grid=sized_grid,
                 )
 
             # (B) Execute a pending market exit on this bar's open.
@@ -200,15 +209,78 @@ class BacktestEngine:
 
     # --- exit integration ---------------------------------------------------------
 
-    def _after_entry(self, broker, config, direction, avg, qty, candle, limit_orders):
+    def _after_entry(
+        self, broker, config, direction, avg, qty, candle, limit_orders, sized_grid=None
+    ):
         exit_state = ExitState(
             mode=self._exit_engine.resolve_mode(config.strategy.exit), direction=direction
         )
         exit_state.average_price = avg
         exit_state.remaining_quantity = qty
         self._place_limit_exits(broker, config, direction, avg, qty, [], limit_orders)
+        if sized_grid is not None:
+            # Deposit path (MVP-7.0 R8): the grid was already built with deposit
+            # nominals and lot-rounded quantities; just mark level 0 filled and
+            # place the DCA ladder. The grid is NOT rebuilt from the position,
+            # otherwise the entry size would silently repeat the legacy path.
+            grid_state = sized_grid
+            grid_state.average_price = avg
+            self._grid_engine.on_fill(grid_state, 0)
+            dca_order_ids: dict[int, str] = {}
+            self._place_dca_orders(broker, grid_state, dca_order_ids, candle)
+            return limit_orders, grid_state, dca_order_ids
         grid_state, dca_order_ids = self._init_grid(broker, config, direction, candle)
         return limit_orders, grid_state, dca_order_ids
+
+    # --- deposit sizing (MVP-7.0 R8) -------------------------------------------
+
+    def _deposit_entry(self, config, direction, entry_price):
+        """Entry quantity + DCA grid derived from the bot deposit (R8).
+
+        Uses the SAME live sizing functions (app/trading/sizing.py):
+        ``deposit_to_base_nominal`` (C2) converts the deposit to the grid base
+        nominal, ``round_grid_to_lot`` (C3) rounds every level quantity down to
+        whole lots and blocks the whole entry if any level becomes 0 lots.
+        Without a DCA ladder (SIMPLE ``levels <= 1``, empty CUSTOM) the deposit
+        sizes the single first order only.
+        """
+        dca = config.strategy.dca_grid
+        base_nominal = deposit_to_base_nominal(config.deposit, dca)
+        has_ladder = (
+            (dca.mode == TradingMode.SIMPLE and dca.levels > 1)
+            or (dca.mode == TradingMode.CUSTOM and bool(dca.custom_levels))
+        )
+        if not has_ladder:
+            trivial = [
+                GridOrder(
+                    side=_grid_side(direction),
+                    quantity=float(base_nominal / entry_price),
+                    price=float(entry_price),
+                    offset_percent=0.0,
+                    nominal=float(base_nominal),
+                )
+            ]
+            rounded = round_grid_to_lot(
+                trivial, lot_size=config.lot_size, currency=config.currency
+            )
+            return Decimal(str(rounded[0].quantity)), None
+        state = self._grid_engine.build(dca, entry_price, direction, base_nominal=base_nominal)
+        plans = [
+            GridOrder(
+                side=level.side,
+                quantity=float(level.quantity),
+                price=None if level.is_market else float(level.price),
+                offset_percent=level.offset_percent,
+                nominal=float(level.nominal),
+            )
+            for level in state.levels
+        ]
+        rounded = round_grid_to_lot(
+            plans, lot_size=config.lot_size, currency=config.currency
+        )
+        for level, plan in zip(state.levels, rounded, strict=False):
+            level.quantity = Decimal(str(plan.quantity))
+        return Decimal(str(rounded[0].quantity)), state
 
     def _place_limit_exits(
         self, broker, config, direction, avg, qty, executed_takes, limit_orders
@@ -469,3 +541,8 @@ def max_drawdown(equity_curve: list[Decimal]) -> Decimal:
             if dd > max_dd:
                 max_dd = dd
     return max_dd
+
+
+def _grid_side(direction: Direction) -> OrderSide:
+    """Grid entry side for the given strategy direction (deposit path helper)."""
+    return OrderSide.BUY if direction == Direction.LONG else OrderSide.SELL

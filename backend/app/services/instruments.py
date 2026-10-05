@@ -25,6 +25,9 @@ class InstrumentService:
         result = await self._session.execute(select(Instrument).where(Instrument.figi == figi))
         return result.scalar_one_or_none()
 
+    async def get_by_id(self, instrument_id: int) -> Instrument | None:
+        return await self._session.get(Instrument, instrument_id)
+
     async def get_by_ticker(self, ticker: str) -> Instrument | None:
         result = await self._session.execute(select(Instrument).where(Instrument.ticker == ticker))
         return result.scalar_one_or_none()

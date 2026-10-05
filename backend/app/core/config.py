@@ -77,6 +77,11 @@ class Settings(BaseSettings):
     snapshot_min_search_days: int = 14
     snapshot_search_factor: int = 4
 
+    # --- Backtest (MVP-7.0 R7) ---
+    # Ops limit for one API backtest run: the maximum number of candles a single
+    # request may fetch. A search cap, not a financial value.
+    backtest_max_candles: int = 10000
+
 
 @lru_cache
 def get_settings() -> Settings:

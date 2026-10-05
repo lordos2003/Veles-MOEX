@@ -49,6 +49,7 @@ _ORDERS = "tinkoff.public.invest.api.contract.v1.OrdersService"
 _STOP_ORDERS = "tinkoff.public.invest.api.contract.v1.StopOrdersService"
 _INSTRUMENTS = "tinkoff.public.invest.api.contract.v1.InstrumentsService"
 _MARKET = "tinkoff.public.invest.api.contract.v1.MarketDataService"
+_SANDBOX = "tinkoff.public.invest.api.contract.v1.SandboxService"
 
 _SANDBOX_BASE = "https://sandbox-invest-public-api.tbank.ru/rest"
 
@@ -324,8 +325,12 @@ class TInvestAdapter(BrokerAdapter):
         token: str | None = None,
         base_url: str | None = None,
         client: TInvestClient | None = None,
+        sandbox: bool | None = None,
     ) -> None:
         self._client = client
+        if sandbox is None:
+            sandbox = get_settings().tinvest_sandbox
+        self._sandbox = sandbox
         if self._client is None:
             settings = get_settings()
             effective_token = token if token is not None else settings.tinvest_token
@@ -336,6 +341,11 @@ class TInvestAdapter(BrokerAdapter):
     @property
     def is_configured(self) -> bool:
         return self._client is not None
+
+    @property
+    def supports_stop_orders(self) -> bool:
+        """StopOrdersService is not exposed by the T-Invest sandbox (B1/MVP-7.0)."""
+        return not self._sandbox
 
     def _require_client(self) -> TInvestClient:
         if self._client is None:
@@ -371,6 +381,37 @@ class TInvestAdapter(BrokerAdapter):
             f"{_OPERATIONS}/GetPortfolio", {"accountId": account_id, "currency": "RUB"}
         )
         return self._to_account_from_portfolio(data, account_id)
+
+    # --- Sandbox (MVP-7.0 R3) ---
+
+    async def open_sandbox_account(self) -> str:
+        """Open a T-Invest sandbox account and return its account id."""
+        client = self._require_client()
+        data = await client.call(f"{_SANDBOX}/OpenSandboxAccount", {})
+        account_id = data.get("account_id")
+        if not account_id:
+            raise BrokerApiError("OpenSandboxAccount returned no account_id")
+        return account_id
+
+    async def sandbox_pay_in(self, account_id: str, amount: Decimal, currency: str) -> Decimal:
+        """Add paper money to a sandbox account; returns the resulting balance."""
+        client = self._require_client()
+        data = await client.call(
+            f"{_SANDBOX}/SandboxPayIn",
+            {
+                "account_id": account_id,
+                "amount": {"currency": currency, **_decimal_to_quotation(amount)},
+            },
+        )
+        balance = _quotation_to_decimal(data.get("balance"))
+        if balance is None:
+            raise BrokerApiError("SandboxPayIn returned no balance")
+        return balance
+
+    async def close_sandbox_account(self, account_id: str) -> None:
+        """Close a sandbox account."""
+        client = self._require_client()
+        await client.call(f"{_SANDBOX}/CloseSandboxAccount", {"account_id": account_id})
 
     async def get_instruments(self, kind: str | None = None) -> list[BrokerInstrument]:
         client = self._require_client()

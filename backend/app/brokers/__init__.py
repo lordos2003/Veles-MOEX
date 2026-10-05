@@ -11,6 +11,7 @@ from app.brokers.base import (
     BrokerOrderRequest,
     BrokerPosition,
     BrokerTransportError,
+    SandboxUnsupportedError,
 )
 from app.brokers.tinvest import TInvestAdapter
 from app.brokers.tinvest_client import TInvestClient
@@ -38,6 +39,7 @@ __all__ = [
     "BrokerOrderRequest",
     "BrokerPosition",
     "BrokerTransportError",
+    "SandboxUnsupportedError",
     "TInvestAdapter",
     "TInvestClient",
     "TInvestError",

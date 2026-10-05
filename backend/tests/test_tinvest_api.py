@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from app.api.deps import get_broker_adapter, get_instrument_service
+from app.api.deps import get_account_service, get_broker_adapter, get_instrument_service
 from app.brokers import (
     AuthenticationError,
     TInvestAdapter,
@@ -26,9 +26,21 @@ def _override_instruments(service: FakeInstrumentService) -> None:
     app.dependency_overrides[get_instrument_service] = lambda: service
 
 
+def _override_account_local_ids(local: dict[str, int] | None = None) -> None:
+    """Stub AccountService: no DB session, fixed external->local mapping."""
+    mapping = local or {}
+
+    class _FakeAccountService:
+        async def local_by_broker_ids(self, external_account_ids, broker: str = "tinvest"):
+            return mapping
+
+    app.dependency_overrides[get_account_service] = lambda: _FakeAccountService()
+
+
 def _clear() -> None:
     app.dependency_overrides.pop(get_broker_adapter, None)
     app.dependency_overrides.pop(get_instrument_service, None)
+    app.dependency_overrides.pop(get_account_service, None)
 
 
 def test_status_not_configured() -> None:
@@ -70,6 +82,7 @@ def test_list_accounts() -> None:
         }
     )
     _override_broker(TInvestAdapter(client=fake))
+    _override_account_local_ids()
     try:
         with TestClient(app) as client:
             response = client.get("/api/accounts")
@@ -77,6 +90,9 @@ def test_list_accounts() -> None:
         body = response.json()
         assert body[0]["account_id"] == "acc-1"
         assert body[0]["status"] == "ACCOUNT_STATUS_OPEN"
+        # R2: untracked broker accounts expose local id/is_saved flag.
+        assert body[0]["id"] is None
+        assert body[0]["is_saved"] is False
     finally:
         _clear()
 

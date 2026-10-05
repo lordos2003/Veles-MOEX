@@ -30,6 +30,9 @@ class PositionResponse(BaseModel):
 
 class AccountInfoResponse(BaseModel):
     account_id: str
+    # Local PostgreSQL id — present when the account is saved in the platform.
+    id: int | None = None
+    is_saved: bool = False
     broker: str = "tinvest"
     currency: str = "RUB"
     available_cash: Decimal = Decimal("0")

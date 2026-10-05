@@ -9,10 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bots.repository import BotRepository
 from app.brokers import BrokerAdapter, TInvestAdapter
+from app.core.config import Settings, get_settings
 from app.core.db import get_session
+from app.persistence.deal_store import SqlAlchemyDealStore
+from app.services.accounts import AccountService
 from app.services.broker_data import BrokerDataService
 from app.services.instruments import InstrumentService
 from app.services.market_data import MarketDataService
+from app.strategies.service import StrategyService
 from app.trading.bot_lifecycle import BotRuntimeManager
 from app.trading.deal_manager import DealManager
 from app.trading.scheduler import LiveCycleScheduler
@@ -25,6 +29,32 @@ def get_broker_adapter() -> BrokerAdapter:
     specifics never leak into the API/domain layer.
     """
     return TInvestAdapter()
+
+
+def get_settings_dep() -> Settings:
+    """Return the cached application settings."""
+    return get_settings()
+
+
+def get_account_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AccountService:
+    """Return an AccountService bound to the request session."""
+    return AccountService(session)
+
+
+def get_strategy_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> StrategyService:
+    """Return a StrategyService bound to the request session."""
+    return StrategyService(session)
+
+
+def get_deal_store(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> SqlAlchemyDealStore:
+    """Return a SqlAlchemyDealStore bound to the request session."""
+    return SqlAlchemyDealStore(session)
 
 
 def get_instrument_service(

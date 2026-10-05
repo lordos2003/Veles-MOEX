@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
+from app.brokers import SandboxUnsupportedError
 from app.brokers.tinvest_errors import TInvestError
 from app.core.config import get_settings
 
@@ -94,6 +95,12 @@ app.include_router(api_router, prefix=settings.api_v1_prefix)
 async def tinvest_error_handler(request: Request, exc: TInvestError) -> JSONResponse:
     """Normalize T-Invest errors to HTTP codes; never expose secrets."""
     return JSONResponse(status_code=exc.http_status, content={"detail": str(exc)})
+
+
+@app.exception_handler(SandboxUnsupportedError)
+async def sandbox_error_handler(request: Request, exc: SandboxUnsupportedError) -> JSONResponse:
+    """Sandbox endpoints are unavailable when the sandbox is disabled (409)."""
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
 
 
 @app.get("/", include_in_schema=False)

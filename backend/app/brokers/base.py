@@ -37,6 +37,14 @@ class BrokerTransportError(RuntimeError):
     """
 
 
+class SandboxUnsupportedError(RuntimeError):
+    """Broker-neutral marker: the broker does not support sandbox operations.
+
+    Raised when a sandbox endpoint is used with a broker (or a broker mode)
+    that does not expose a sandbox. The API layer maps it to HTTP 409.
+    """
+
+
 @dataclass
 class BrokerOrderRequest:
     """Broker-agnostic order request sent by the Order Manager.
@@ -363,3 +371,32 @@ class BrokerAdapter(ABC):
         otherwise apply (T-Invest ``GetStopOrders`` returns only ACTIVE orders
         without an explicit status filter, B1).
         """
+
+    # --- Sandbox (optional broker capability) ---
+
+    @property
+    def supports_stop_orders(self) -> bool:
+        """Whether the broker connection supports stop orders (MVP-7.0).
+
+        Defaults to ``True``; adapters whose environment (e.g. the T-Invest
+        sandbox) does not expose stop orders override this with ``False``. The
+        API layer uses it to reject a stop-loss bot start with HTTP 409 instead
+        of failing mid-run.
+        """
+        return True
+
+    async def open_sandbox_account(self) -> str:
+        """Open a sandbox account and return the broker account id.
+
+        Non-abstract: brokers that do not support sandbox operations raise
+        ``SandboxUnsupportedError`` (API layer maps it to HTTP 409).
+        """
+        raise SandboxUnsupportedError("sandbox account operations are not supported")
+
+    async def sandbox_pay_in(self, account_id: str, amount: Decimal, currency: str) -> Decimal:
+        """Add paper money to a sandbox account; returns the resulting balance."""
+        raise SandboxUnsupportedError("sandbox account operations are not supported")
+
+    async def close_sandbox_account(self, account_id: str) -> None:
+        """Close a sandbox account."""
+        raise SandboxUnsupportedError("sandbox account operations are not supported")

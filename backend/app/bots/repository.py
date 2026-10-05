@@ -82,6 +82,45 @@ class BotRepository:
             await self._session.refresh(bot)
             return bot
 
+    async def create(
+        self,
+        *,
+        name: str,
+        strategy_version_id: int,
+        account_id: int,
+        instrument_id: int,
+        deposit: Decimal | None = None,
+    ) -> Bot:
+        """Create a bot in state STOPPED (MVP-7.0 R5)."""
+        async with self._session_guard():
+            bot = Bot(
+                name=name,
+                strategy_version_id=strategy_version_id,
+                account_id=account_id,
+                instrument_id=instrument_id,
+                status=BotState.STOPPED.value,
+                is_active=True,
+                deposit=deposit,
+            )
+            self._session.add(bot)
+            await self._session.commit()
+            await self._session.refresh(bot)
+            return bot
+
+    async def update_strategy_version(self, bot: Bot, strategy_version_id: int) -> Bot:
+        """Rebind the bot to another strategy version (R5, STOPPED-only)."""
+        async with self._session_guard():
+            bot.strategy_version_id = strategy_version_id
+            await self._session.commit()
+            await self._session.refresh(bot)
+            return bot
+
+    async def delete(self, bot: Bot) -> None:
+        """Delete a bot row (R5, STOPPED-only)."""
+        async with self._session_guard():
+            await self._session.delete(bot)
+            await self._session.commit()
+
     async def get_deposit(self, bot_id: int) -> Decimal | None:
         """Read the current deposit value from the database (MVP-6.11 C6).
 
