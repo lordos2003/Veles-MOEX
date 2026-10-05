@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-7.0 — Удобный локальный запуск, песочница и API для стратегий, ботов и бэктеста
-**Status: CHANGES REQUESTED (раунд 1, 2026-10-05)** — `d06f98a`; см. `.agent/REVIEW-MVP-7.0.md` (B1 капитал бэктеста, B2 предел свечей, B3 таймфрейм, B4 наш путь в песочнице).
+**Status: ACCEPTED (раунд 2, 2026-10-05)** — `76cba1e`, ожидает публикации в `master`; см. `.agent/REVIEW-MVP-7.0.md`.
 
 - Задание: `.agent/TASK-MVP-7.0-LOCAL-RUN-AND-API.md`
 - Ветка: `agent/review/mvp-7.0` (от `master` @ `b01f8a8`)
