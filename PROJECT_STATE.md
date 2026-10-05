@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-6.16 — Простой стоп-лосс в живой торговле
-**Status: в ревью раунд 2 (2026-10-05)** — `a3e59e6`; раунд 1: CHANGES REQUESTED (B1 исполненный стоп не виден через `GetStopOrders`, B2, B3) — см. `.agent/REVIEW-MVP-6.16.md`; исправления: `.agent/REPORT-MVP-6.16-REV1.md`.
+**Status: ACCEPTED (раунд 2, 2026-10-05)** — `a3e59e6`, ожидает публикации в `master`; см. `.agent/REVIEW-MVP-6.16.md`.
 
 - Задание: `.agent/TASK-MVP-6.16-STOP-LOSS.md`
 - Ветка: `agent/review/mvp-6.16` (от `master` @ `82254e3`)
