@@ -61,9 +61,14 @@ class CustomLevel(BaseModel):
 class EntryConfig(BaseModel):
     """Entry conditions (Veles-style filters/signals)."""
 
-    method: CalculationMethod = CalculationMethod.AT_BAR_CLOSE
+    method: CalculationMethod = Field(
+        default=CalculationMethod.AT_BAR_CLOSE,
+        description="Entry evaluation method (market, at-bar-close, next-bar-open)",
+    )
     # Groups are OR-ed; conditions within a group are AND-ed.
-    groups: list[FilterGroup] = Field(default_factory=list)
+    groups: list[FilterGroup] = Field(
+        default_factory=list, description="Filter groups (OR between groups, AND within a group)"
+    )
 
 
 class DCAGridConfig(BaseModel):
@@ -74,22 +79,39 @@ class DCAGridConfig(BaseModel):
     filter for subsequent market averaging orders.
     """
 
-    mode: TradingMode = TradingMode.SIMPLE
-    levels: int = Field(default=1, ge=1)
-    overlap_percent: float = 0.0
-    spacing_percent: float = 0.0
-    martingale_percent: float = 0.0
-    logarithmic_factor: float = 1.0
-    first_order_offset_percent: float = 0.0
-    pull_up_percent: float = 0.0
+    mode: TradingMode = Field(
+        default=TradingMode.SIMPLE, description="Grid mode: simple/custom/signal"
+    )
+    levels: int = Field(default=1, ge=1, description="Number of averaging levels (>=1)")
+    overlap_percent: float = Field(default=0.0, description="Grid overlap percent")
+    spacing_percent: float = Field(default=0.0, description="Distance between grid levels, percent")
+    martingale_percent: float = Field(
+        default=0.0, description="Martingale multiplier percent per level"
+    )
+    logarithmic_factor: float = Field(default=1.0, description="Logarithmic grid factor")
+    first_order_offset_percent: float = Field(
+        default=0.0, description="First order offset from entry, percent"
+    )
+    pull_up_percent: float = Field(default=0.0, description="Pull-up (protraction) percent")
     # Partial grid: max simultaneously active/eligible grid orders.
-    active_limit: int | None = None
+    active_limit: int | None = Field(
+        default=None, description="Max simultaneously active grid orders"
+    )
     # --- CUSTOM mode ---
-    custom_levels: list[CustomLevel] = Field(default_factory=list)
+    custom_levels: list[CustomLevel] = Field(
+        default_factory=list, description="Explicit CUSTOM-mode levels"
+    )
     # --- SIGNAL mode ---
-    signal_groups: list[FilterGroup] = Field(default_factory=list)
-    signal_offset_type: SignalOffsetReference = SignalOffsetReference.REFERENCE
-    signal_min_offset_percent: float = 0.0
+    signal_groups: list[FilterGroup] = Field(
+        default_factory=list, description="Signal filter groups for SIGNAL-mode averaging"
+    )
+    signal_offset_type: SignalOffsetReference = Field(
+        default=SignalOffsetReference.REFERENCE,
+        description="Signal-mode offset reference: previous_order or reference",
+    )
+    signal_min_offset_percent: float = Field(
+        default=0.0, description="Min offset percent for SIGNAL-mode averaging"
+    )
 
 
 class TakeItem(BaseModel):
@@ -109,8 +131,10 @@ class BreakEvenConfig(BaseModel):
 class FixedPercentageTP(BaseModel):
     """Single take-profit expressed as a percentage from average price."""
 
-    kind: Literal["fixed_percentage"] = "fixed_percentage"
-    percent: float = Field(gt=0)
+    kind: Literal["fixed_percentage"] = Field(
+        default="fixed_percentage", description="Take-profit kind: fixed_percentage"
+    )
+    percent: float = Field(gt=0, description="Take-profit percent from average price (>0)")
 
 
 class MultiTakeTP(BaseModel):
@@ -167,9 +191,12 @@ class StopLossConfig(BaseModel):
     declares what happens after the stop.
     """
 
-    kind: Literal["percent"] = "percent"
-    percent: float = Field(gt=0)
-    stop_bot_after: bool | None = None
+    kind: Literal["percent"] = Field(default="percent", description="Stop-loss kind: percent")
+    percent: float = Field(gt=0, description="Stop-loss percent from reference (>0)")
+    stop_bot_after: bool | None = Field(
+        default=None,
+        description="Explicit choice: stop the bot after the stop-loss closes the deal",
+    )
 
 
 class SignalStopLossConfig(BaseModel):
@@ -189,32 +216,49 @@ class ExitConfig(BaseModel):
     evaluated separately (whichever triggers first closes the position).
     """
 
-    take_profit: TPConfig
-    stop_loss: StopLossConfig | None = None
-    signal_stop: SignalStopLossConfig | None = None
+    take_profit: TPConfig = Field(description="Take-profit configuration")
+    stop_loss: StopLossConfig | None = Field(
+        default=None, description="Simple percentage stop-loss (market exit)"
+    )
+    signal_stop: SignalStopLossConfig | None = Field(
+        default=None, description="Signal-based stop-loss (market exit)"
+    )
 
 
 class RiskConfig(BaseModel):
     """Risk block. Risk Manager is authoritative and separate from the strategy."""
 
-    max_position_size: float | None = None
-    max_concurrent_bots: int | None = None
-    daily_loss_limit: float | None = None
-    emergency_stop: bool = False
+    max_position_size: float | None = Field(default=None, description="Max position size limit")
+    max_concurrent_bots: int | None = Field(default=None, description="Max concurrent bots limit")
+    daily_loss_limit: float | None = Field(default=None, description="Daily loss limit")
+    emergency_stop: bool = Field(default=False, description="Emergency stop enabled")
 
 
 class StrategyConfig(BaseModel):
-    """Full strategy configuration (Architecture & Product Specification section 3)."""
+    """Full strategy configuration (Architecture & Product Specification section 3).
 
-    name: str = ""
-    direction: Direction = Direction.LONG
-    instrument_id: int | None = None
+    A strategy is configuration/data, not code. The Veles filter/signal
+    semantics are modeled through ``EntryConfig``/``ExitConfig`` blocks; no
+    indicator parameters are invented beyond what the filters declare.
+    """
+
+    name: str = Field(default="", description="Strategy display name")
+    direction: Direction = Field(
+        default=Direction.LONG,
+        description="Trading direction: LONG or SHORT",
+    )
+    instrument_id: int | None = Field(
+        default=None,
+        description="Internal Instrument id; None blocks live processing explicitly",
+    )
     # The bot's own market-data timeframe for the live strategy path
     # (MVP-6.10). No implicit production default: ``None`` (missing) blocks the
     # live processing cycle explicitly (TimeframeNotConfigured); an invalid
     # value fails strategy configuration validation (StrategyLoadError).
     # Backtest timeframes live on BacktestConfig, not here.
-    timeframe: Timeframe | None = None
+    timeframe: Timeframe | None = Field(
+        default=None, description="Live bot market-data timeframe (1m/5m/.../1mo)"
+    )
     # The explicitly configured number of candle bars the live market
     # snapshot must fetch for this bot's timeframe (MVP-6.10). This is a
     # project-level contract parameter, NOT a Veles indicator/warmup
@@ -223,8 +267,12 @@ class StrategyConfig(BaseModel):
     # from indicator periods/shifts. ``None`` (missing) blocks the live
     # processing cycle explicitly (LookbackNotConfigured); a non-positive
     # value fails strategy configuration validation (StrategyLoadError).
-    lookback_bars: int | None = Field(default=None, ge=1)
-    entry: EntryConfig = Field(default_factory=EntryConfig)
-    dca_grid: DCAGridConfig = Field(default_factory=DCAGridConfig)
-    exit: ExitConfig
-    risk: RiskConfig = Field(default_factory=RiskConfig)
+    lookback_bars: int | None = Field(
+        default=None, ge=1, description="Explicit live snapshot history in bars (>=1)"
+    )
+    entry: EntryConfig = Field(default_factory=EntryConfig, description="Entry conditions")
+    dca_grid: DCAGridConfig = Field(
+        default_factory=DCAGridConfig, description="DCA/Grid averaging configuration"
+    )
+    exit: ExitConfig = Field(description="Exit block (take-profit, stop-loss)")
+    risk: RiskConfig = Field(default_factory=RiskConfig, description="Risk block")

@@ -14,6 +14,7 @@ import pytest
 
 from app.brokers.base import BrokerOrder, BrokerOrderRequest
 from app.models.enums import BotState, OrderSide, OrderStatus, OrderType
+from app.strategies.config import ExitConfig, FixedPercentageTP, StrategyConfig
 from app.trading import (
     BotRuntime,
     BotRuntimeManager,
@@ -317,10 +318,16 @@ async def test_mutating_api_rejects_without_live_runtime() -> None:
     from app.api import bots as bots_api
 
     repo = FakeBotRepo([_persisted_bot(1)])
-    for endpoint in (bots_api.start_bot, bots_api.stop_bot, bots_api.emergency_stop_bot):
+    # Stop/emergency-stop keep the (repo, runtime) signature; start additionally
+    # needs a session/broker (MVP-7.0 R3 stop-order gate) but the 503 rejection
+    # happens before either is used.
+    for endpoint in (bots_api.stop_bot, bots_api.emergency_stop_bot):
         with pytest.raises(HTTPException) as ei:
             await endpoint(1, repo, None)
         assert ei.value.status_code == 503
+    with pytest.raises(HTTPException) as ei:
+        await bots_api.start_bot(1, repo, None, None, None)
+    assert ei.value.status_code == 503
     assert repo.saved == []  # no bot state changed
     assert _persisted_state(repo, 1) == "STOPPED"
 
@@ -430,8 +437,24 @@ async def test_rejected_start_persists_error_and_returns_api_error() -> None:
     manager = _manager(risk, om=om, submit_cb=om.submit)
     bot = _persisted_bot(1)
     repo = FakeBotRepo([bot])
+
+    class _Version:
+        id = 1
+        strategy_id = 1
+        version = 1
+        config = StrategyConfig(
+            exit=ExitConfig(take_profit=FixedPercentageTP(percent=2.0))
+        ).model_dump(mode="json")
+
+    class _FakeSession:
+        async def get(self, model, pk):
+            return _Version()
+
+    class _FakeBroker:
+        supports_stop_orders = True
+
     with pytest.raises(HTTPException) as ei:
-        await bots_api.start_bot(1, repo, manager)
+        await bots_api.start_bot(1, repo, manager, _FakeSession(), _FakeBroker())
     assert ei.value.status_code == 409
     assert repo.saved == [(1, BotState.ERROR.value)]
     assert bot.status == BotState.ERROR.value

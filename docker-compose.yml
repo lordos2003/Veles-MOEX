@@ -1,3 +1,8 @@
+# Veles-MOEX — локальный запуск через Docker Desktop (Windows: docker compose up --build).
+# Все публикуемые порты привязаны к 127.0.0.1 (доступ только с локальной машины).
+# Конфигурация подтягивается из корневого .env (файл опционален: приложение
+# стартует с внутренними значениями по умолчанию). Пример — .env.example.
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -7,7 +12,7 @@ services:
       POSTGRES_PASSWORD: veles
       POSTGRES_DB: veles_moex
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +25,7 @@ services:
     image: redis:7-alpine
     container_name: veles_moex_redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -32,13 +37,19 @@ services:
       context: .
       dockerfile: docker/backend.Dockerfile
     container_name: veles_moex_backend
+    env_file:
+      - path: .env
+        required: false
     environment:
+      # Внутренние адреса: другие сервисы доступны по именам контейнеров.
       DATABASE_URL: postgresql+asyncpg://veles:veles@postgres:5432/veles_moex
       REDIS_URL: redis://redis:6379/0
       ENVIRONMENT: docker
       APP_NAME: Veles-MOEX
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    # Миграции применяются при старте контейнера; при ошибке контейнер не поднимется.
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,7 +62,7 @@ services:
       dockerfile: docker/frontend.Dockerfile
     container_name: veles_moex_frontend
     ports:
-      - "5173:80"
+      - "127.0.0.1:5173:80"
     depends_on:
       - backend
 

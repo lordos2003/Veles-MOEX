@@ -14,6 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import (
+    get_account_service,
     get_broker_adapter,
     get_broker_data_service,
     get_instrument_service,
@@ -44,6 +45,7 @@ from app.schemas.invest import (
     SyncResponse,
     TInvestStatusResponse,
 )
+from app.services.accounts import AccountService
 from app.services.broker_data import BrokerDataService
 from app.services.instruments import InstrumentService
 from app.services.market_data import MarketDataService
@@ -70,16 +72,30 @@ async def tinvest_status(
 @router.get("/accounts", response_model=list[AccountInfoResponse])
 async def list_accounts(
     broker: Annotated[BrokerAdapter, Depends(get_broker_adapter)],
+    account_service: Annotated[AccountService, Depends(get_account_service)],
 ) -> list[AccountInfoResponse]:
-    """List broker accounts."""
+    """List broker accounts with local id / saved flag when tracked locally."""
     accounts = await broker.get_accounts()
-    return [_account_to_schema(acc) for acc in accounts]
+    local_ids = await account_service.local_by_broker_ids([acc.account_id for acc in accounts])
+    return [_account_to_schema(acc, local_id=local_ids.get(acc.account_id)) for acc in accounts]
+
+
+@router.post("/accounts/sync", response_model=SyncResponse)
+async def sync_accounts(
+    broker: Annotated[BrokerAdapter, Depends(get_broker_adapter)],
+    account_service: Annotated[AccountService, Depends(get_account_service)],
+) -> SyncResponse:
+    """Upsert broker accounts into PostgreSQL (no duplicates per broker + external id)."""
+    accounts = await broker.get_accounts()
+    saved = await account_service.sync_from_broker(accounts)
+    return SyncResponse(synced=saved)
 
 
 @router.get("/accounts/{account_id}", response_model=AccountInfoResponse)
 async def account_info(
     account_id: str,
     broker: Annotated[BrokerAdapter, Depends(get_broker_adapter)],
+    account_service: Annotated[AccountService, Depends(get_account_service)],
 ) -> AccountInfoResponse:
     """Return account summary (cash/equity) and its positions."""
     try:
@@ -87,7 +103,10 @@ async def account_info(
     except AccountNotFoundError:
         raise
     positions = await broker.get_open_positions(account_id)
-    return _account_to_schema(account, positions)
+    local = await account_service.get_local(account_id, account.broker)
+    return _account_to_schema(
+        account, positions, local_id=local.id if local is not None else None
+    )
 
 
 # --- Broker data (read-only, via internal BrokerDataService) ---
@@ -195,10 +214,14 @@ async def candles(
 
 
 def _account_to_schema(
-    account: BrokerAccount, positions: list[BrokerPosition] | None = None
+    account: BrokerAccount,
+    positions: list[BrokerPosition] | None = None,
+    local_id: int | None = None,
 ) -> AccountInfoResponse:
     return AccountInfoResponse(
         account_id=account.account_id,
+        id=local_id,
+        is_saved=local_id is not None,
         broker=account.broker,
         currency=account.currency,
         available_cash=account.available_cash,

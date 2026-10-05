@@ -328,8 +328,22 @@ async def test_d1_start_rejection_maps_to_409() -> None:
         )
 
     manager = BotRuntimeManager(RiskManager(), runtime_factory=_factory)
+
+    class _Version:
+        id = 1
+        strategy_id = 1
+        version = 1
+        config = _strategy().model_dump(mode="json")
+
+    class _FakeSession:
+        async def get(self, model, pk):
+            return _Version()
+
+    class _FakeBroker:
+        supports_stop_orders = True
+
     with pytest.raises(HTTPException) as ei:
-        await bots_api.start_bot(1, FakeBotRepo(), manager)
+        await bots_api.start_bot(1, FakeBotRepo(), manager, _FakeSession(), _FakeBroker())
     assert ei.value.status_code == 409
     assert "config not supported for live deal continuation" in ei.value.detail
 

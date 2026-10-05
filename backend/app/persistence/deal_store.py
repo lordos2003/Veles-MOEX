@@ -223,7 +223,10 @@ class SqlAlchemyDealStore:
         row = await self._session.get(DealRow, deal_id)
         if row is None:
             return None
-        levels = (
+        return _to_domain(row, await self._levels_locked(deal_id))
+
+    async def _levels_locked(self, deal_id: int) -> list[DealLevelRow]:
+        return list(
             (
                 await self._session.execute(
                     select(DealLevelRow)
@@ -234,7 +237,37 @@ class SqlAlchemyDealStore:
             .scalars()
             .all()
         )
-        return _to_domain(row, list(levels))
+
+    async def get_open_for_bot(self, bot_id: int) -> Deal | None:
+        """Return the most recent unclosed deal of a bot, or ``None`` (R6)."""
+        async with self._session_guard():
+            row = (
+                await self._session.execute(
+                    select(DealRow)
+                    .where(DealRow.bot_id == bot_id, DealRow.status != "CLOSED")
+                    .order_by(DealRow.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return _to_domain(row, await self._levels_locked(row.id))
+
+    async def list_closed_for_bot(self, bot_id: int, limit: int | None = None) -> list[Deal]:
+        """Return closed deals of a bot, newest first (history, R6)."""
+        async with self._session_guard():
+            statement = (
+                select(DealRow)
+                .where(DealRow.bot_id == bot_id, DealRow.status == "CLOSED")
+                .order_by(DealRow.created_at.desc(), DealRow.id.desc())
+            )
+            if limit is not None:
+                statement = statement.limit(limit)
+            rows = list((await self._session.execute(statement)).scalars().all())
+            deals = []
+            for row in rows:
+                deals.append(_to_domain(row, await self._levels_locked(row.id)))
+            return deals
 
     async def list_unclosed(self) -> list[Deal]:
         async with self._session_guard():
