@@ -567,11 +567,31 @@ async def build_live_service() -> LiveExecutionService:
     # coordinator reconciles non-CLOSED deals on every (re)connect (D5). B2:
     # every deal failure is surfaced to the bot lifecycle via the callback
     # above (bot ERROR, persisted) and stays observable via last_error_for.
+    async def _on_stop_loss(bot_id: int, stop_bot_after: bool) -> None:
+        """MVP-6.16 E3: a stop close with ``stop_bot_after=true`` stops the bot.
+
+        The standard MVP-6.5 stop path transitions the bot to STOPPED (no new
+        intents, active orders cancelled — the Deal is already CLOSED and flat
+        here) and the reason is persisted so the API shows it. ``false`` keeps
+        the bot running to wait for the next FLAT entry (C6).
+        """
+        if not stop_bot_after:
+            return
+        runtime = bot_runtime_manager.get(bot_id)
+        if runtime is not None and not runtime.running:
+            return  # already STOPPED/ERROR; no transition is invented
+        if runtime is not None:
+            await runtime.stop()
+        bot = await bot_repository.get(bot_id)
+        if bot is not None:
+            await bot_repository.update_state(bot, BotState.STOPPED, stop_reason="stop-loss")
+
     deal_manager = DealManager(
         SqlAlchemyDealStore(session, lock=session_lock),
         order_manager,
         risk_manager,
         on_bot_error=_persist_bot_error,
+        on_stop_loss=_on_stop_loss,
     )
 
     await bot_runtime_manager.restore_persisted_states(bot_repository)

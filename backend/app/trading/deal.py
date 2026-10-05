@@ -22,9 +22,11 @@ from app.strategies.config import (
     DCAGridConfig,
     Direction,
     FixedPercentageTP,
+    StopLossConfig,
     StrategyConfig,
     TradingMode,
 )
+from app.strategies.exit import simple_stop_level
 
 
 def utcnow() -> datetime:
@@ -71,6 +73,12 @@ class Deal:
     The take-profit (D4) is Deal-owned: at most one TP order exists at a time
     (``tp_order_id``); it is re-armed on every grid fill from the
     |PositionManager| average price and quantity.
+
+    The simple stop-loss (MVP-6.16 E1/E2) is Deal-owned too: ``p0_price``
+    captures the actual average fill price of the level-0 grid order, ``sl_percent``
+    the configured SL%, ``sl_offset`` the grid-ladder component and ``sl_order_id``
+    the broker stop order id (or None while disarmed). At most one stop order
+    exists at a time.
     """
 
     id: int | None = None
@@ -96,6 +104,16 @@ class Deal:
     tp_intent_id: str | None = None
     tp_order_id: str | None = None
     tp_broker_order_id: str | None = None
+    # MVP-6.16 E1/E2/E3 stop-loss state (see class docstring).
+    sl_percent: float | None = None
+    sl_offset: Decimal = Decimal("0")
+    p0_price: Decimal | None = None
+    sl_rev: int = 0
+    sl_order_id: str | None = None
+    sl_quantity: Decimal | None = None
+    sl_price: Decimal | None = None
+    close_reason: str | None = None
+    stop_bot_after: bool | None = None
     created_at: datetime = field(default_factory=utcnow)
     updated_at: datetime = field(default_factory=utcnow)
     closed_at: datetime | None = None
@@ -122,6 +140,16 @@ class Deal:
             factor = Decimal("1") - Decimal(str(self.tp_percent)) / Decimal("100")
         return average_price * factor
 
+    def sl_price_from_p0(self) -> Decimal:
+        """E1 raw stop level: P0 x (1 -+ combined_offset/100), before tick alignment.
+
+        Delegates to the shared |simple_stop_level| formula (Backtest and Live
+        use exactly the same math); ``combined_offset`` is ``sl_offset +
+        sl_percent``. The caller applies |align_stop_price|.
+        """
+        percent = float(self.sl_offset) + (self.sl_percent or 0.0)
+        return simple_stop_level(self.p0_price, self.direction, percent)
+
 
 # --- D3: tick alignment ------------------------------------------------------------
 #
@@ -137,6 +165,14 @@ class DealError(RuntimeError):
 
 class DealTickSizeInvalid(DealError):
     """D3: a missing/non-positive tick size makes limit alignment impossible."""
+
+
+class DealStopExecuted(DealError):
+    """E2: the Deal's stop executed while its cancel was in flight.
+
+    Not an unknown outcome — the stop is consumed and the Deal must close with
+    ``close_reason="stop_loss"`` (the caller re-reads the position facts).
+    """
 
 
 def _require_tick(tick_size: Decimal | None) -> Decimal:
@@ -172,6 +208,29 @@ def align_tp_price(price: Decimal, tick_size: Decimal, direction: Direction) -> 
     return round_down_to_tick(price, tick_size)
 
 
+def align_stop_price(price: Decimal, tick_size: Decimal, direction: Direction) -> Decimal:
+    """E1 stop alignment: LONG up, SHORT down.
+
+    The stop is a conditional market order, but its trigger must sit on the
+    broker's tick grid; the same direction as |align_tp_price| (an early
+    trigger is the safe side for a protective stop: a LONG stop that rounds up
+    triggers earlier, a SHORT stop that rounds down triggers earlier).
+    """
+    if direction == Direction.LONG:
+        return round_up_to_tick(price, tick_size)
+    return round_down_to_tick(price, tick_size)
+
+
+def deal_stop_intent_id(deal_id: str, rev: int) -> str:
+    """E2: unique intent_id for a stop-loss order attempt.
+
+    Includes the re-arm revision so each placement (and its idempotent retry)
+    is a distinct intent; the retry must reuse the same intent_id for the same
+    ``rev`` (see |_stop_intent|).
+    """
+    return f"deal-{deal_id}-sl-{rev}"
+
+
 # --- D1: strategy-config scope -----------------------------------------------------
 
 
@@ -184,11 +243,13 @@ class DealConfigUnsupported(ValueError):
 
 
 def validate_live_deal_config(config: StrategyConfig) -> None:
-    """Validate that a live strategy is covered by the D1 deal scope.
+    """Validate that a live strategy is covered by the deal scope.
 
-    D1: grid mode SIMPLE or CUSTOM; take-profit kind ``fixed_percentage``; no
-    stop loss; no signal stop; ``pull_up_percent == 0``. Anything else is
-    rejected at bot START with an explicit named error.
+    D1/MVP-6.16 E4: grid mode SIMPLE or CUSTOM; take-profit kind
+    ``fixed_percentage``; stop loss either absent or the simple percentage kind
+    (``kind="percent"``) with an explicit ``stop_bot_after`` choice; no signal
+    stop; ``pull_up_percent == 0``. Anything else is rejected at bot START with
+    an explicit named error.
     """
     dca: DCAGridConfig = config.dca_grid
     if dca.mode not in (TradingMode.SIMPLE, TradingMode.CUSTOM):
@@ -203,9 +264,16 @@ def validate_live_deal_config(config: StrategyConfig) -> None:
             f"live deal support (MVP-6.12 D1) requires take_profit kind "
             f"'fixed_percentage', got {kind!r}"
         )
-    if config.exit.stop_loss is not None:
+    sl = config.exit.stop_loss
+    if sl is not None and not isinstance(sl, StopLossConfig):
         raise DealConfigUnsupported(
-            "live deal support (MVP-6.12 D1) does not cover stop_loss"
+            f"live deal support (MVP-6.16 E4) covers only the simple percentage "
+            f"stop_loss, got kind {getattr(sl, 'kind', type(sl).__name__)!r}"
+        )
+    if sl is not None and sl.stop_bot_after is None:
+        raise DealConfigUnsupported(
+            "live deal support (MVP-6.16 E3) requires an explicit "
+            "stop_loss.stop_bot_after choice (true/false), got None"
         )
     if config.exit.signal_stop is not None:
         raise DealConfigUnsupported(

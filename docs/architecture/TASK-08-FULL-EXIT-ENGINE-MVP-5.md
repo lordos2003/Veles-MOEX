@@ -172,6 +172,18 @@ Veles behavior:
 - its level is calculated relative to the configured grid/reference price according to Veles semantics;
 - the resulting stop level must not be confused with Maximum Drawdown.
 
+Level formula (MVP-6.16, shared by Live and Backtest):
+
+- **Reference `P0`** — the actual average fill price of the first order level
+  (the Deal's level 0; in the Backtest the grid reference set at entry).
+- **Stop distance** = `(offset_percent of the last grid level − offset_percent
+  of level 0) + SL%`. For «Простой» this is the grid overlap + SL.
+- `LONG`: `stop = P0 × (1 − distance/100)`; `SHORT`: `stop = P0 × (1 + distance/100)`.
+  Veles example: overlap 15% + SL 5% → the stop sits at −20% from `P0`.
+- Rounding to the price tick, towards the **earlier** trigger: LONG up, SHORT
+  down. No `tick_size` → explicit error.
+- Armed only after all grid levels are filled; execution is market.
+
 For the current engine, isolate the level calculation in a dedicated component so the Veles formula is explicit and testable.
 
 Do not silently invent an alternative formula.

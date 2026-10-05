@@ -55,6 +55,7 @@ def _to_response(
         deposit=bot.deposit,
         started_at=bot.started_at,
         stopped_at=bot.stopped_at,
+        stop_reason=bot.stop_reason,
         deal_error=deal_error,
         last_error=last_error,
         last_skip_reason=last_skip_reason,

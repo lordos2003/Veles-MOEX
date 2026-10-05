@@ -53,6 +53,22 @@ class Deal(Base):
     tp_intent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tp_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tp_broker_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # MVP-6.16 E1/E2: the simple stop-loss state (one broker stop order per
+    # Deal at a time) plus the close reason of the Deal (``take_profit`` /
+    # ``stop_loss`` / None while open).
+    sl_percent: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    sl_offset: Mapped[Decimal] = mapped_column(
+        Numeric(20, 8), default=Decimal("0"), nullable=False
+    )
+    p0_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    sl_rev: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sl_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sl_quantity: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    sl_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    close_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # MVP-6.16 E3: whether the bot must stop after this Deal's stop close
+    # (None = the config forbade None at START; persisted for recovery).
+    stop_bot_after: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

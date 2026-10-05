@@ -1935,3 +1935,111 @@ indicators with insufficient history simply produce no signal.
 - `./.venv/Scripts/python.exe -m pytest -q` — full backend suite;
   `ruff check app tests scripts`; `alembic heads` (single head, no migration);
   `npm run build` (frontend unchanged).
+
+## 34. Simple stop-loss in live trading — MVP-6.16
+
+### Purpose
+
+After MVP-6.12 a live deal only supports a simple TP; a stop-loss is rejected
+at START (D1), so an averaging grid could run into a very large floating
+drawdown. MVP-6.16 adds the **simple stop-loss** to the live deal as a real
+broker-side stop order (T-Invest `StopOrdersService`).
+
+Veles sources: «Стоп-лосс» help article — the simple stop is a market order
+placed for the configured percent after **all grid orders are filled**; with a
+15% grid overlap and a 5% stop-loss the trigger sits at −20% from the opening
+price; a `stop_bot_after` setting controls what the bot does after the stop.
+
+### E1. Stop level — from the opening price: overlap + SL
+
+- **Opening price `P0`** — the actual average fill price of the deal's first
+  order (level 0 of the Deal).
+- **Stop distance** = `(offset_percent of the last grid level − offset_percent
+  of level 0) + SL%`. For «Простой» this is exactly the overlap + SL; for
+  «Свой» — the offset of the last order from the first one + SL.
+- LONG: `stop = P0 × (1 − distance/100)`; SHORT: `stop = P0 × (1 + distance/100)`.
+  Veles example: overlap 15% + SL 5% → the stop is at −20% from `P0`.
+- Rounding to the price tick (project rule, by analogy with D3): towards the
+  **earlier** trigger — LONG up, SHORT down. No `tick_size` → explicit error.
+- The stop **arms only after all grid levels are filled** (every order of the
+  Deal FILLED). Before that there is no stop order at the broker.
+
+### E2. Execution — broker stop order
+
+- New broker-neutral `BrokerAdapter` methods: `place_stop_order`,
+  `cancel_stop_order`, `get_stop_orders`. `TInvestAdapter` implements them via
+  `StopOrdersService` (`PostStopOrder` / `CancelStopOrder` / `GetStopOrders`):
+  type **STOP_LOSS with market execution**, expiration **until cancelled**
+  (`GOOD_TILL_CANCEL`). Mapping stays inside the adapter. `BacktestBroker`
+  keeps a stub (the backtest does not use these methods).
+- Stop quantity = **the whole current position** from `PositionManager`,
+  rounded **down** to whole lots; never larger than the position.
+- The stop order passes `RiskManager.check_order()`; as a reducing order it
+  enjoys the D7 exemption.
+- **Re-placement**: on any post-activation position change (partial TP) the
+  stop order is replaced with the new position volume. Order as in
+  D4/B1/B3: check the new order with Risk first, then cancel the old order and
+  wait for the confirmation, then re-read the position and place the new order.
+  Two simultaneous stop orders are not allowed. Unknown cancel result → bot
+  ERROR (B2).
+- **TP filled fully** → cancel the stop order → deal CLOSED.
+- **Stop executed** (broker market fill) → cancel the TP → deal CLOSED with
+  `close_reason="stop_loss"` (Deal field + migration `0006`). The execution has
+  to be correlated to the deal — via the broker-returned identifier or via a
+  position reconciliation together with `GetStopOrders`. If correlation is not
+  possible → bot ERROR, no silent continuation.
+- **Reading stops (B1)**: `GetStopOrders` is requested with
+  `status=STOP_ORDER_STATUS_ALL` and `from`/`to` bounds (window from the deal's
+  opening to now) — per the official `StopOrdersService/GetStopOrders` contract
+  an explicit status filter is required to see executed/cancelled/expired
+  orders, without it only ACTIVE orders are returned. A placement the broker
+  did not acknowledge with a stop order id is reported `UNKNOWN` → bot ERROR
+  (B3).
+- **A missing stop order is an unknown state**: before any re-placement the
+  broker position is reconciled (`get_open_positions` / `GetPortfolio`), not
+  only `PositionManager`. Broker position zero → the close cannot be correlated
+  → bot ERROR, no new stop is placed on an empty position (E2). A real broker
+  position and an assembled grid → place once after the successful
+  reconciliation — this applies to both the live path (`check_stop_orders`)
+  and recovery (D5).
+- **Recovery (D5)**: the deal's stop orders are reconciled with the broker.
+  ACTIVE stays. EXECUTED → close the deal as above. Missing with the grid
+  assembled → position reconciliation first, then place once. UNKNOWN → ERROR.
+
+### E3. What the bot does after the stop — strategy setting
+
+- `StopLossConfig.stop_bot_after: bool | None = None`. `None` is rejected at
+  START (HTTP 409) for live trading — the default is not invented.
+- `true` → after the stop close the bot goes to **STOPPED** via the standard
+  MVP-6.5 stop; the reason is visible in the API (`stop_reason="stop-loss"`).
+  A failure of that stop callback is never swallowed: the bot goes to ERROR
+  through the B2 path, the reason stays observable (B2).
+- `false` → the bot keeps running and waits for the next FLAT entry (new
+  deposit per C6).
+
+### E4. What is allowed in live trading
+
+- `validate_live_deal_config()` (D1) now accepts `ExitConfig.stop_loss`
+  (simple, `kind="percent"`) together with a simple TP and a «Простой»/«Свой»
+  grid.
+- `signal_stop`, multi-take, break-even, signal TP, trailing, and the «Сигнал»
+  mode are still rejected at START.
+
+### E5. Backtest — the same semantics
+
+The backtest simple stop is computed with the **same E1 formula** (shared
+function) and arms only after all grid levels are filled; execution is market
+on the next bar (as before).
+
+### Implementation notes
+
+- Live: the `DealManager` stop lifecycle follows the D4 TP re-arm pattern
+  (arm / re-arm / cancel / confirm / execute / recover); `check_stop_orders`
+  is isolated per B1. `close_reason` is persisted via migration `0006` both
+  for `take_profit` (full TP close) and `stop_loss`.
+- The E1 level math lives in one place (`simple_stop_level` +
+  `stop_distance_percent` in the exit engine) and is shared by Live and
+  Backtest.
+- Tests: `backend/tests/test_mvp616_stop_loss.py` (E1–E5, D5) plus
+  `TInvestAdapter` stop-mapping tests in `tests/test_tinvest_adapter.py` and
+  the E5 grid regression in `tests/test_exit_integration.py`.
