@@ -142,7 +142,7 @@ T-Invest: без `from_`/`to` возвращает только ACTIVE, с ок�
 `git ls-remote origin agent/review/mvp-6.16 agent/control` (после пуша
 control):
 
-- `a3e59e6...` `refs/heads/agent/review/mvp-6.16`
-- `<sha control>` `refs/heads/agent/control`
+- `a3e59e68e395e10e364edb538deded3ebf2b88f8` `refs/heads/agent/review/mvp-6.16`
+- `093e53bafd6a345033834264e4d0848753e7e46b` `refs/heads/agent/control`
 
 — совпадает с локальными HEAD; пуш обычный, без `--force` и rebase.
