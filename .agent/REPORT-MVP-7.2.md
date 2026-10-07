@@ -193,4 +193,14 @@ git push origin agent/control
 git ls-remote origin agent/review/mvp-7.2 agent/control
 ```
 
-Подтверждение `git ls-remote` — в финальном коммите этого отчёта.
+Подтверждение `git ls-remote` (2026-10-07, после push):
+
+```
+5d1fd1c01f3f9bdc2dc0f94e9a22e0afb47896a0	refs/heads/agent/control
+59258e1bfe2227056c26a6f5b25128354231a42d	refs/heads/agent/review/mvp-7.2
+```
+
+- `agent/review/mvp-7.2` = локальный `59258e1` — **in sync with origin**.
+- `agent/control` = локальный `5d1fd1c` — **in sync with origin** (в ветке:
+  `98a4d47` TASK-MVP-7.2; `5d1fd1c` — коммит этого отчёта вместе с
+  обновлённым `PROJECT_STATE.md`).
