@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-7.1 — Экраны: стратегии (полная форма), боты, сделка, бэктест, песочница
-**Status: CHANGES REQUESTED → исправления REV3 готовы (2026-10-07), ждём раунд 4** — `366f09c` (`agent/review/mvp-7.1`, pushed); B8 исправлен: `getPollIntervalMs()` — пустой/мусорный ключ → `DEFAULT` 5000, явный `0` → «выкл»; новый общий хук `usePolling`/`usePollInterval` (`frontend/src/lib/usePolling.ts`) — `BotDetailPage` не создаёт интервал при `pollMs <= 0`, список и страница используют единое состояние. Тесты: `settings.test.ts` (5) + `BotsPage.test.tsx` с fake timers (2). Отчёт: `.agent/REPORT-MVP-7.1-REV3.md`. См. `.agent/REVIEW-MVP-7.1.md`.
+**Status: ACCEPTED (раунд 4, 2026-10-07), ждёт публикации в master по «да» владельца** — принятая реализация `366f09c` (`agent/review/mvp-7.1`); B1–B8 закрыты, проверено вживую на чистом PostgreSQL и чистом профиле браузера. См. `.agent/REVIEW-MVP-7.1.md`.
 
 - Задание: `.agent/TASK-MVP-7.1-UI.md`
 - Ветка: `agent/review/mvp-7.1` (от `master` @ `795f4ed`)
