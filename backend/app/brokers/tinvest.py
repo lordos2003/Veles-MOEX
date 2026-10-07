@@ -388,7 +388,7 @@ class TInvestAdapter(BrokerAdapter):
         """Open a T-Invest sandbox account and return its account id."""
         client = self._require_client()
         data = await client.call(f"{_SANDBOX}/OpenSandboxAccount", {})
-        account_id = data.get("account_id")
+        account_id = data.get("accountId")
         if not account_id:
             raise BrokerApiError("OpenSandboxAccount returned no account_id")
         return account_id
@@ -399,7 +399,7 @@ class TInvestAdapter(BrokerAdapter):
         data = await client.call(
             f"{_SANDBOX}/SandboxPayIn",
             {
-                "account_id": account_id,
+                "accountId": account_id,
                 "amount": {"currency": currency, **_decimal_to_quotation(amount)},
             },
         )
@@ -411,7 +411,7 @@ class TInvestAdapter(BrokerAdapter):
     async def close_sandbox_account(self, account_id: str) -> None:
         """Close a sandbox account."""
         client = self._require_client()
-        await client.call(f"{_SANDBOX}/CloseSandboxAccount", {"account_id": account_id})
+        await client.call(f"{_SANDBOX}/CloseSandboxAccount", {"accountId": account_id})
 
     async def get_instruments(self, kind: str | None = None) -> list[BrokerInstrument]:
         client = self._require_client()

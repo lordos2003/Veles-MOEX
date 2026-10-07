@@ -7,9 +7,12 @@ declares typed fields and defaults, and loads them through pydantic-settings.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
+from typing import Annotated, Any
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -33,8 +36,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # --- CORS ---
-    # Comma-separated list in env, or JSON array. Parsed by pydantic-settings.
-    cors_origins: list[str] = ["http://localhost:5173"]
+    # Comma-separated list in env, or JSON array (see _parse_list_fields).
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
 
     # --- T-Invest ---
     # API token. Must come from the environment, never from source. If empty the
@@ -58,7 +61,7 @@ class Settings(BaseSettings):
     risk_max_position_size: float | None = None
     risk_daily_loss_limit: float | None = None
     risk_max_concurrent_bots: int | None = None
-    risk_blocked_instruments: list[str] = []
+    risk_blocked_instruments: Annotated[list[str], NoDecode] = []
 
     # --- Live cycle scheduler (MVP-6.13 S2/S4) ---
     # Owner-approved operational timing/threshold parameters for tick timing
@@ -81,6 +84,32 @@ class Settings(BaseSettings):
     # Ops limit for one API backtest run: the maximum number of candles a single
     # request may fetch. A search cap, not a financial value.
     backtest_max_candles: int = 10000
+
+    @field_validator("cors_origins", "risk_blocked_instruments", mode="before")
+    @classmethod
+    def _parse_list_fields(cls, value: Any) -> Any:
+        """Accept a comma-separated string or a JSON array (P3, MVP-7.3).
+
+        Without ``NoDecode`` pydantic-settings insists that a list-typed env
+        value is valid JSON and raises SettingsError on the .env.example value
+        ``CORS_ORIGINS=http://localhost:5173``. With this validator the raw
+        string is split on commas; JSON arrays and Python lists pass through.
+        An empty/blank string means an empty list (so an unset or blank
+        CORS/risk value never breaks startup).
+        """
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return []
+            if stripped.startswith("["):
+                parsed = json.loads(stripped)
+                if not isinstance(parsed, list):
+                    raise ValueError("expected a JSON array")
+                return parsed
+            return [part.strip() for part in stripped.split(",") if part.strip()]
+        return value
 
 
 @lru_cache

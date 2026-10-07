@@ -23,3 +23,38 @@ def test_environment_override(monkeypatch) -> None:
         assert settings.environment == "test"
     finally:
         get_settings.cache_clear()
+
+
+# --- P3 (MVP-7.3): list fields accept comma-separated string or JSON array ---
+
+
+def test_cors_origins_json_array(monkeypatch) -> None:
+    monkeypatch.setenv("CORS_ORIGINS", '["http://a", "http://b"]')
+    settings = Settings()
+    assert settings.cors_origins == ["http://a", "http://b"]
+
+
+def test_cors_origins_comma_separated(monkeypatch) -> None:
+    # The .env.example value: not JSON — must not crash startup.
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:5173")
+    settings = Settings()
+    assert settings.cors_origins == ["http://localhost:5173"]
+
+
+def test_cors_origins_empty_string(monkeypatch) -> None:
+    monkeypatch.setenv("CORS_ORIGINS", "")
+    settings = Settings()
+    assert settings.cors_origins == []
+
+
+def test_risk_blocked_instruments_json_array(monkeypatch) -> None:
+    monkeypatch.setenv("RISK_BLOCKED_INSTRUMENTS", '["BBG004730N88"]')
+    settings = Settings()
+    assert settings.risk_blocked_instruments == ["BBG004730N88"]
+
+
+def test_risk_blocked_instruments_empty_string(monkeypatch) -> None:
+    # Unset in .env: blank value must not break startup (P3).
+    monkeypatch.setenv("RISK_BLOCKED_INSTRUMENTS", "")
+    settings = Settings()
+    assert settings.risk_blocked_instruments == []

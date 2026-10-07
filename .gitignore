@@ -20,6 +20,13 @@ frontend/node_modules/
 .env.*
 !.env.example
 
+# Local first-run workarounds (MVP-7.3 P7): a root-level certs/ dir and a
+# docker-compose.override.yml are local-only and must never be committed.
+# /certs is anchored to the repo root — docker/certs/ (official Russian
+# Trusted CA certificates for the backend image) stays tracked.
+/certs/
+docker-compose.override.yml
+
 # IDE / OS
 .vscode/
 .idea/

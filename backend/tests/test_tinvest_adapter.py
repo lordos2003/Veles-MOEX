@@ -696,3 +696,56 @@ async def test_place_stop_order_without_id_returns_unknown() -> None:
     )
     assert stop.order_id == ""
     assert stop.status is StopOrderStatus.UNKNOWN
+
+
+# --- Sandbox REST shapes (P5, MVP-7.3) ---
+#
+# T-Invest REST returns camelCase JSON: OpenSandboxAccount →
+# {"accountId": ...}, SandboxPayIn/CloseSandboxAccount requests use
+# "accountId", SandboxPayIn response keeps "balance". Source: proto/sandbox.proto
+# of RussianInvestments/invest-api-go-sdk (field names confirmed there).
+
+_OPEN_SANDBOX = "tinkoff.public.invest.api.contract.v1.SandboxService/OpenSandboxAccount"
+_PAY_IN = "tinkoff.public.invest.api.contract.v1.SandboxService/SandboxPayIn"
+_CLOSE_SANDBOX = "tinkoff.public.invest.api.contract.v1.SandboxService/CloseSandboxAccount"
+
+
+def _sandbox_fake() -> TInvestFakeClient:
+    return TInvestFakeClient(
+        responses={
+            _OPEN_SANDBOX: {"accountId": "sandbox-1"},
+            _PAY_IN: {"balance": {"currency": "RUB", "units": "50000", "nano": 0}},
+            _CLOSE_SANDBOX: {},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_open_sandbox_account_reads_rest_accountId() -> None:
+    fake = _sandbox_fake()
+    adapter = TInvestAdapter(client=fake)
+    account_id = await adapter.open_sandbox_account()
+    assert account_id == "sandbox-1"
+    assert fake.calls == [(_OPEN_SANDBOX, {})]
+
+
+@pytest.mark.asyncio
+async def test_sandbox_pay_in_posts_accountId_and_parses_balance() -> None:
+    fake = _sandbox_fake()
+    adapter = TInvestAdapter(client=fake)
+    balance = await adapter.sandbox_pay_in("sandbox-1", Decimal("50000"), "RUB")
+    assert balance == Decimal("50000")
+    (_, body), = [c for c in fake.calls if c[0] == _PAY_IN]
+    assert body == {
+        "accountId": "sandbox-1",
+        "amount": {"currency": "RUB", "units": "50000", "nano": 0},
+    }
+
+
+@pytest.mark.asyncio
+async def test_close_sandbox_account_posts_accountId() -> None:
+    fake = _sandbox_fake()
+    adapter = TInvestAdapter(client=fake)
+    await adapter.close_sandbox_account("sandbox-1")
+    (_, body), = [c for c in fake.calls if c[0] == _CLOSE_SANDBOX]
+    assert body == {"accountId": "sandbox-1"}

@@ -8,13 +8,14 @@ import type {
   SandboxPayInResponse,
   SyncResponse,
 } from "../types";
-import { Button, ErrorBanner, Field, Loading, SelectInput, TextInput } from "../components/FormControls";
+import { Button, ErrorBanner, Field, Loading, SelectInput, SuccessBanner, TextInput } from "../components/FormControls";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ORDER_STATUS_LABELS } from "../lib/labels";
 
 export function SandboxPage() {
   const [accounts, setAccounts] = useState<AccountInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const [selectedId, setSelectedId] = useState("");
@@ -43,6 +44,7 @@ export function SandboxPage() {
 
   const openAccount = async (accountId: string) => {
     setSelectedId(accountId);
+    setSuccess(null);
     try {
       const [p, o, d] = await Promise.all([
         api.get<PositionInfo[]>(`/api/positions?account_id=${encodeURIComponent(accountId)}`),
@@ -61,6 +63,7 @@ export function SandboxPage() {
   const createSandboxAccount = async () => {
     setBusy(true);
     setError(null);
+    setSuccess(null);
     try {
       const res = await api.post<{ account_id: string }>("/api/sandbox/accounts");
       await loadAccounts();
@@ -76,6 +79,7 @@ export function SandboxPage() {
     if (!selected || !payInAmount.trim()) return;
     setBusy(true);
     setError(null);
+    setSuccess(null);
     try {
       const res = await api.post<SandboxPayInResponse>(
         `/api/sandbox/accounts/${encodeURIComponent(selected.account_id)}/pay-in`,
@@ -84,7 +88,7 @@ export function SandboxPage() {
       await loadAccounts();
       await openAccount(selected.account_id);
       setPayInAmount("");
-      setError(`Пополнение выполнено, баланс: ${res.balance}`);
+      setSuccess(`Пополнение выполнено, баланс: ${res.balance}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -96,6 +100,7 @@ export function SandboxPage() {
     if (!selected) return;
     setBusy(true);
     setError(null);
+    setSuccess(null);
     try {
       await api.delete<{ account_id: string }>(
         `/api/sandbox/accounts/${encodeURIComponent(selected.account_id)}`,
@@ -116,10 +121,11 @@ export function SandboxPage() {
   const syncAccounts = async () => {
     setBusy(true);
     setError(null);
+    setSuccess(null);
     try {
       const res = await api.post<SyncResponse>("/api/accounts/sync");
       await loadAccounts();
-      setError(`Синхронизировано счетов: ${res.synced}`);
+      setSuccess(`Синхронизировано счетов: ${res.synced}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -140,6 +146,7 @@ export function SandboxPage() {
           </Button>
         </div>
       </div>
+      <SuccessBanner text={success} />
       <ErrorBanner text={error} />
 
       {!accounts ? (
