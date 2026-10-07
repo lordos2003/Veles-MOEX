@@ -127,10 +127,11 @@ git ls-remote origin agent/review/mvp-7.1 agent/control
 Подтверждение `git ls-remote` (2026-10-07, после push):
 
 ```
-fdb11756f***	refs/heads/agent/review/mvp-7.1
-***	refs/heads/agent/control
+fdb1175f5d0c497c8f0ae0a99d39ee58030cf3e9	refs/heads/agent/review/mvp-7.1
+5fb3547c863c48d3f391e8675926eae0f9cd8f5a	refs/heads/agent/control
 ```
 
 - `agent/review/mvp-7.1` = локальный `fdb1175` — **in sync with origin**.
-- `agent/control` = локальный `<REV2-CONTROL>` — **in sync with origin** (в ветке:
-  ревьюерский `00e1a4c` с раундом 2; коммит этого отчёта добавлен).
+- `agent/control` = локальный `5fb3547` — **in sync with origin** (в ветке:
+  ревьюерский `00e1a4c` с раундом 2, merge `33dbdab`; `5fb3547` — коммит этого
+  отчёта вместе с обновлённым `PROJECT_STATE.md`).
