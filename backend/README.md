@@ -90,7 +90,7 @@ Smoke test (read-only, real token only if provided via env): see
 Alembic is used for schema management:
 
 - `0001_initial` — core domain tables.
-- `0002_instrument_fields_and_market_candles` — extends `Instrument`
+- `0002_instrument_fields_candles` — extends `Instrument`
   (`trading_status`, `exchange`, non-null `figi`) and adds `market_candles`.
 
 Apply migrations (requires a running PostgreSQL):

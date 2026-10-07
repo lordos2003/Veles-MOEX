@@ -14,7 +14,10 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_strategy_service
 from app.strategies.config import StrategyConfig
+from app.strategies.indicators import INDICATOR_CATALOG
 from app.strategies.schemas import (
+    IndicatorParamResponse,
+    IndicatorResponse,
     LiveDealValidation,
     StrategyCreate,
     StrategyResponse,
@@ -72,6 +75,32 @@ async def validate_strategy(config: StrategyConfig) -> StrategyValidateResponse:
     except DealConfigUnsupported as exc:
         live = LiveDealValidation(supported=False, reason=str(exc))
     return StrategyValidateResponse(valid=True, live_deal=live)
+
+
+@router.get("/strategies/indicators", response_model=list[IndicatorResponse])
+async def list_indicators() -> list[IndicatorResponse]:
+    """Return the catalog of indicators the calculation engine supports (U3).
+
+    The catalog is driven by the same registry as ``indicator_series`` (see
+    ``app.strategies.indicators``): a name that the engine cannot compute is
+    never listed, and a listed entry is always computable. No default values
+    are exposed (AGENTS.md §2).
+    """
+    return [
+        IndicatorResponse(
+            name=entry.name,
+            series=list(entry.series),
+            params=[
+                IndicatorParamResponse(name=param.name, type=param.type, required=param.required)
+                for param in entry.params
+            ],
+            uses_period=entry.uses_period,
+            uses_method=entry.uses_method,
+            uses_series=entry.uses_series,
+            uses_params=entry.uses_params,
+        )
+        for entry in INDICATOR_CATALOG
+    ]
 
 
 @router.get("/strategies/{strategy_id}", response_model=StrategyResponse)

@@ -1,7 +1,7 @@
 """Durable live execution state tables.
 
 Revision ID: 0003_live_execution_state
-Revises: 0002_instrument_fields_and_market_candles
+Revises: 0002_instrument_fields_candles
 Create Date: 2026-09-22
 
 """
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "0003_live_execution_state"
-down_revision: Union[str, None] = "0002_instrument_fields_and_market_candles"
+down_revision: Union[str, None] = "0002_instrument_fields_candles"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

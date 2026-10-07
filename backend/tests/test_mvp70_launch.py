@@ -44,3 +44,33 @@ def test_env_example_safe_defaults() -> None:
     assert re.search(r"^\s*TINVEST_SANDBOX=true", text, re.MULTILINE)
     assert re.search(r"^\s*LIVE_TRADING_ENABLED=false", text, re.MULTILINE)
     assert re.search(r"^\s*BACKTEST_MAX_CANDLES=\d+", text, re.MULTILINE)
+
+
+def test_alembic_revision_ids_fit_version_column() -> None:
+    """B2 (MVP-7.1 REV1): revision ids must fit ``alembic_version.version_num``.
+
+    ``version_num`` is ``varchar(32)``; a longer revision id breaks
+    ``alembic upgrade head`` on a clean PostgreSQL (StringDataRightTruncationError
+    at migration ``0002``). Also check the chain has exactly one head.
+    """
+    versions_dir = _ROOT / "backend" / "alembic" / "versions"
+    scripts = sorted(versions_dir.glob("*.py"))
+    assert scripts, "alembic versions dir must contain migration scripts"
+
+    revision_ids: list[str] = []
+    down_revisions: list[str] = []
+    for script in scripts:
+        text = script.read_text(encoding="utf-8")
+        revision = re.search(r'^revision:\s*str\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        assert revision, f"{script.name}: missing revision id"
+        assert len(revision.group(1)) <= 32, (
+            f"{script.name}: revision id {revision.group(1)!r} is "
+            f"{len(revision.group(1))} chars > 32 (alembic_version.version_num)"
+        )
+        revision_ids.append(revision.group(1))
+        down = re.search(r'^down_revision:\s*[^=]*=\s*"([^"]+)"', text, re.MULTILINE)
+        if down:
+            down_revisions.append(down.group(1))
+
+    heads = set(revision_ids) - set(down_revisions)
+    assert len(heads) == 1, f"expected a single alembic head, got {sorted(heads)}"

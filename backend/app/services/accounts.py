@@ -79,4 +79,5 @@ class AccountService:
                 if not existing.is_active:
                     existing.is_active = True
         await self._session.flush()
+        await self._session.commit()
         return count

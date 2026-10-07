@@ -279,7 +279,7 @@ docker compose up -d
 
 - Используется **Alembic**.
 - `0001_initial` — базовая схема (основные доменные таблицы).
-- `0002_instrument_fields_and_market_candles` — расширение `Instrument`
+- `0002_instrument_fields_candles` — расширение `Instrument`
   (`trading_status`, `exchange`, NOT NULL `figi`) и таблица `market_candles`.
 
 > Миграция `0002` закоммичена; её применение требует запущенного экземпляра

@@ -1,6 +1,6 @@
 """Instrument domain fields and market candles.
 
-Revision ID: 0002_instrument_fields_and_market_candles
+Revision ID: 0002_instrument_fields_candles
 Revises: 0001_initial
 Create Date: 2026-09-18
 
@@ -13,7 +13,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "0002_instrument_fields_and_market_candles"
+revision: str = "0002_instrument_fields_candles"
 down_revision: Union[str, None] = "0001_initial"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

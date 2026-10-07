@@ -288,6 +288,7 @@ def _deal_to_schema(item: BrokerDeal) -> DealResponse:
 
 def _instrument_to_schema(item: Instrument) -> InstrumentResponse:
     return InstrumentResponse(
+        id=item.id,
         figi=item.figi,
         ticker=item.ticker,
         name=item.name,
