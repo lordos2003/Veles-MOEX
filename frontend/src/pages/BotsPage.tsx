@@ -22,7 +22,7 @@ import {
 } from "../components/BotSettingsPanel";
 import { useRuntime } from "../lib/useRuntime";
 import { BOT_STATUS_LABELS, CLOSE_REASON_LABELS, DEAL_STATUS_LABELS, LEVEL_STATUS_LABELS } from "../lib/labels";
-import { getPollIntervalMs } from "../lib/settings";
+import { usePolling, usePollInterval } from "../lib/usePolling";
 
 function StatusBadge(props: { status: string }) {
   const label = BOT_STATUS_LABELS[props.status] ?? props.status;
@@ -108,7 +108,7 @@ export function BotsPage() {
   const [bots, setBots] = useState<BotResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [pollMs, setPollMs] = useState(getPollIntervalMs());
+  const [pollMs, setPollMs] = usePollInterval();
   const navigate = useNavigate();
   const meta = useBotDisplayMeta();
 
@@ -125,11 +125,8 @@ export function BotsPage() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    if (pollMs <= 0) return;
-    const t = window.setInterval(() => void load(), pollMs);
-    return () => window.clearInterval(t);
-  }, [pollMs, load]);
+  const poll = useCallback(() => void load(), [load]);
+  usePolling(poll, pollMs);
 
   return (
     <div className="space-y-4">
@@ -340,6 +337,7 @@ export function BotDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const meta = useBotDisplayMeta();
+  const [pollMs] = usePollInterval();
 
   const load = useCallback(async () => {
     if (botId === null) return;
@@ -362,10 +360,8 @@ export function BotDetailPage() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    const t = window.setInterval(() => void load(), getPollIntervalMs());
-    return () => window.clearInterval(t);
-  }, [load]);
+  const poll = useCallback(() => void load(), [load]);
+  usePolling(poll, pollMs);
 
   if (error && !bot) {
     return (
