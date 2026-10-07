@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-7.1 — Экраны: стратегии (полная форма), боты, сделка, бэктест, песочница
-**Status: CHANGES REQUESTED → исправления REV2 готовы (2026-10-07), ждём раунд 3** — `fdb1175` (`agent/review/mvp-7.1`, pushed); B4 (новая форма берёт `default` из схемы; тест уровня страницы) и B6 (независимая загрузка счетов; `AccountErrorNote`) исправлены. Отчёт: `.agent/REPORT-MVP-7.1-REV2.md`. См. `.agent/REVIEW-MVP-7.1.md`.
+**Status: CHANGES REQUESTED (раунд 3, 2026-10-07)** — `fdb1175`; B4 и B6 исправлены (проверено вживую); новый блокер B8: страница бота при пустом `localStorage` шлёт ~230 запросов/с (`getPollIntervalMs()` возвращает 0 вместо `DEFAULT`, `BotDetailPage` не проверяет `pollMs <= 0`). Ждём `REPORT-MVP-7.1-REV3`. См. `.agent/REVIEW-MVP-7.1.md`.
 
 - Задание: `.agent/TASK-MVP-7.1-UI.md`
 - Ветка: `agent/review/mvp-7.1` (от `master` @ `795f4ed`)
