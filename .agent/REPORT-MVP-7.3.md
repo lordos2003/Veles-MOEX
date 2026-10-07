@@ -253,7 +253,7 @@ maker 0.0003 / taker 0.0003 / slippage 0.001. Результат: начальн
 
 ```
 git push origin agent/review/mvp-7.3      # 0409dfd
-git push origin agent/control             # 6a08f80
+git push origin agent/control             # cfa5ad7 (финальный; 6a08f80 — коммит с REPORT)
 git ls-remote origin agent/review/mvp-7.3 agent/control
 ```
 
