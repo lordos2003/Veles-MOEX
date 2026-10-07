@@ -416,6 +416,37 @@ async def test_strategy_without_indicator_params_rejected_422(client) -> None:
     assert "Value error" not in detail
 
 
+async def test_zero_or_negative_indicator_params_rejected_422(client) -> None:
+    """B1: integer period/params must be >= 1 — 0 and negative values pass the
+    presence check but break the calculation (division by zero, silently empty
+    series), so /strategies and /validate reject them with a Russian message."""
+    http, _ = client
+
+    for bad in (0, -5):
+        config_zero = _config_with_indicator(
+            _indicator_args("RSI", {}, period=bad)
+        )
+        created = await http.post("/api/strategies", json={"name": "rsi", "config": config_zero})
+        assert created.status_code == 422
+        assert "Индикатор RSI: параметр «период» должен быть целым числом не меньше 1" in str(
+            created.json()["detail"]
+        )
+        validated = await http.post("/api/strategies/validate", json=config_zero)
+        assert validated.status_code == 422
+        assert "Индикатор RSI: параметр «период» должен быть целым числом не меньше 1" in str(
+            validated.json()["detail"]
+        )
+
+    macd_zero_fast = _config_with_indicator(
+        _indicator_args("MACD", {"fast": 0, "slow": 26, "signal": 9}, period=12)
+    )
+    validated = await http.post("/api/strategies/validate", json=macd_zero_fast)
+    assert validated.status_code == 422
+    assert "Индикатор MACD: параметр «fast» должен быть целым числом не меньше 1" in str(
+        validated.json()["detail"]
+    )
+
+
 async def test_backtest_old_version_without_indicator_params_rejected_422(client) -> None:
     """I5: a version stored before indicator params became required fails the
     backtest with an explicit 422 (not a 500), naming indicator+param; a new

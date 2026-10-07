@@ -322,6 +322,76 @@ describe("REV1 B5 / MVP-7.2 I4: обязательные параметры ин
     expect(collectMissingIndicatorArgs(config, catalog)).toEqual({});
   });
 
+  it("B1: нулевой/отрицательный период и целые параметры — ошибка у поля", () => {
+    const base = {
+      entry: {
+        groups: [
+          {
+            conditions: [
+              {
+                arg1: { kind: "indicator", name: "SMA", timeframe: "5m" },
+                operator: ">",
+                arg2: { kind: "constant", value: 50 },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    for (const bad of [0, -5]) {
+      const config = structuredClone(base);
+      (config.entry.groups[0].conditions[0].arg1 as Record<string, unknown>).period = bad;
+      const errors = collectMissingIndicatorArgs(config, catalog);
+      expect(errors["entry.groups.0.conditions.0.arg1.period"]).toMatch(/целым числом не меньше 1/);
+    }
+    const macd = {
+      dca_grid: {
+        signal_groups: [
+          {
+            conditions: [
+              {
+                arg1: { kind: "indicator", name: "MACD", timeframe: "5m", params: { fast: 0, slow: 26, signal: 9 } },
+                operator: ">",
+                arg2: { kind: "constant", value: 0 },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const errors = collectMissingIndicatorArgs(macd, catalog);
+    expect(errors["dca_grid.signal_groups.0.conditions.0.arg1.params.fast"]).toMatch(
+      /целым числом не меньше 1/,
+    );
+  });
+
+  it("B1: числовая строка-целое допустима (JSON-режим), дробный период — ошибка", () => {
+    const config = {
+      entry: {
+        groups: [
+          {
+            conditions: [
+              {
+                arg1: {
+                  kind: "indicator",
+                  name: "SMA",
+                  timeframe: "5m",
+                  period: "20",
+                },
+                operator: ">",
+                arg2: { kind: "constant", value: 50 },
+              },
+            ],
+          },
+        ],
+      },
+    };
+    expect(collectMissingIndicatorArgs(config, catalog)).toEqual({});
+    (config.entry.groups[0].conditions[0].arg1 as Record<string, unknown>).period = 2.5;
+    const errors = collectMissingIndicatorArgs(config, catalog);
+    expect(errors["entry.groups.0.conditions.0.arg1.period"]).toMatch(/целым числом не меньше 1/);
+  });
+
   it("без каталога валидация не блокирует (каталог недоступен — редактор покажет ошибку)", () => {
     const config = { entry: { groups: [] } };
     expect(collectMissingIndicatorArgs(config, null)).toEqual({});

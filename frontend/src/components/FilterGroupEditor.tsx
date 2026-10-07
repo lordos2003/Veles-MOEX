@@ -430,6 +430,18 @@ const ARG_KIND_VARIANTS: Record<string, { kind: string; node: SchemaNode }> = {
 } as const;
 
 /**
+ * B1: integer period/params must be whole numbers >= 1 — the same rule as the
+ * backend ``validate_spec_args``, so the form blocks submission instead of
+ * letting a 0/negative value through to a calculation crash. Numeric strings
+ * are accepted for JSON mode (the backend coerces them); float params (``k``)
+ * are not bounded — the limit is arithmetical necessity, not Veles semantics.
+ */
+function isPositiveInt(value: unknown): boolean {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(n) && n >= 1;
+}
+
+/**
  * B5/I4: since MVP-7.2 the engine no longer substitutes hidden defaults — a
  * missing period/catalog param is an explicit validation error (HTTP 422).
  * The form blocks submission early with the same user-facing messages.
@@ -456,11 +468,17 @@ export function collectMissingIndicatorArgs(
       if (entry) {
         if (entry.uses_period && node.period == null) {
           errors[`${nodePath}.period`] = "Укажите период индикатора.";
+        } else if (entry.uses_period && !isPositiveInt(node.period)) {
+          errors[`${nodePath}.period`] = "Период должен быть целым числом не меньше 1.";
         }
         const params = isPlainObject(node.params) ? node.params : {};
         for (const param of entry.params) {
-          if (params[param.name] == null) {
+          const value = params[param.name];
+          if (value == null) {
             errors[`${nodePath}.params.${param.name}`] = `Укажите параметр «${param.name}».`;
+          } else if (param.type === "int" && !isPositiveInt(value)) {
+            errors[`${nodePath}.params.${param.name}`] =
+              `Параметр «${param.name}» должен быть целым числом не меньше 1.`;
           }
         }
       }

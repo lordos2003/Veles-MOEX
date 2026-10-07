@@ -367,12 +367,37 @@ def _catalog_entry(name: str) -> IndicatorDef | None:
     return _CATALOG_BY_NAME.get(_ALIASES.get(key, key))
 
 
+def _require_positive_int(entry: IndicatorDef, label: str, value: object) -> None:
+    """Integer period/params must be >= 1 (B1).
+
+    ``0`` and negative values pass a ``is None`` presence check but break the
+    calculation (division by zero, empty series) or silently yield nothing.
+    Numeric strings / whole floats are accepted (the calculation always cast
+    them with ``int(...)``; old configs may hold them); ``True``, fractions and
+    non-numeric text are rejected. Floats like ``k`` are not bounded: the bound
+    is arithmetical necessity, not Veles semantics, and ``k=0`` does not break
+    the calculation.
+    """
+    msg = f"Индикатор {entry.name}: параметр «{label}» должен быть целым числом не меньше 1."
+    if isinstance(value, bool):
+        raise ValueError(msg)
+    if not isinstance(value, int):
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(msg) from None
+        value = int(numeric) if numeric.is_integer() else None
+    if value is None or value < 1:
+        raise ValueError(msg)
+
+
 def validate_spec_args(name: str, period: int | None, params: dict) -> None:
-    """Catalog-driven validation of one indicator spec (I4).
+    """Catalog-driven validation of one indicator spec (I4, B1).
 
     Raises ``ValueError`` with a Russian user-facing message naming the
-    indicator and the missing period/parameter — no hidden fallback is applied.
-    ``StrategyConfig`` validation and the calculation engine both call this.
+    indicator and the missing/invalid period/parameter — no hidden fallback is
+    applied. ``StrategyConfig`` validation and the calculation engine both
+    call this; integer period/params must be >= 1.
     """
     entry = _catalog_entry(name)
     if entry is None:
@@ -380,9 +405,13 @@ def validate_spec_args(name: str, period: int | None, params: dict) -> None:
         return
     if entry.uses_period and period is None:
         raise ValueError(f"Индикатор {entry.name}: укажите параметр «период».")
+    if entry.uses_period:
+        _require_positive_int(entry, "период", period)
     for param in entry.params:
         if param.required and (param.name not in params or params[param.name] is None):
             raise ValueError(f"Индикатор {entry.name}: укажите параметр «{param.name}».")
+        if param.type == "int" and param.name in params and params[param.name] is not None:
+            _require_positive_int(entry, param.name, params[param.name])
 
 
 INDICATOR_CATALOG: tuple[IndicatorDef, ...] = (

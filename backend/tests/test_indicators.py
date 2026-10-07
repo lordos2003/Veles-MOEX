@@ -15,6 +15,7 @@ from app.strategies.indicators import (
     macd,
     rsi,
     sma,
+    validate_spec_args,
 )
 
 UTC = UTC
@@ -166,6 +167,60 @@ def test_missing_required_param_raises_explicit_error() -> None:
         indicator_series("MACD", series, period=None, series_name="macd", params={})
     with pytest.raises(ValueError, match=r"Индикатор BOLLINGER: укажите параметр «k»"):
         indicator_series("BOLLINGER", series, period=20, series_name="value", params={})
+
+
+def test_zero_or_negative_period_raises_explicit_error() -> None:
+    """B1: 0/negative integer periods pass the presence check but break the
+    calculation (division by zero, silently empty series) — reject them with an
+    explicit Russian message instead of crashing or yielding nothing."""
+    series = _series([float(i) for i in range(1, 30)])
+    for bad in (0, -5):
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"Индикатор RSI: параметр «период» "
+                r"должен быть целым числом не меньше 1"
+            ),
+        ):
+            indicator_series("RSI", series, period=bad, series_name="value", params={})
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Индикатор SMA: параметр «период» "
+            r"должен быть целым числом не меньше 1"
+        ),
+    ):
+        indicator_series("SMA", series, period=-3, series_name="value", params={})
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"Индикатор MACD: параметр «fast» "
+            r"должен быть целым числом не меньше 1"
+        ),
+    ):
+        indicator_series(
+            "MACD",
+            series,
+            period=12,
+            series_name="macd",
+            params={"fast": 0, "slow": 26, "signal": 9},
+        )
+
+
+def test_validate_spec_args_rejects_zero_or_negative() -> None:
+    """Same rule at the validation boundary (B1): integer params are >= 1,
+    float params (k) are not bounded — the limit is arithmetical necessity,
+    not Veles semantics."""
+    for bad in (0, -5):
+        with pytest.raises(ValueError, match=r"должен быть целым числом не меньше 1"):
+            validate_spec_args("RSI", bad, {})
+    with pytest.raises(ValueError, match=r"Индикатор MACD: параметр «fast»"):
+        validate_spec_args("MACD", 12, {"fast": 0, "slow": 26, "signal": 9})
+    validate_spec_args("BOLLINGER", 20, {"k": 0.0})
+    # Numeric strings / whole floats stay accepted (old configs and JSON mode).
+    validate_spec_args("SMA", "20", {})
+    validate_spec_args("MACD", 12, {"fast": "12", "slow": 26, "signal": 9})
+    validate_spec_args("MACD", 12, {"fast": 12.0, "slow": 26, "signal": 9})
 
 
 # --- Regression: I1 defaults produce the pre-change numbers (no redefinition) ---
