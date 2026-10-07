@@ -36,10 +36,19 @@ export interface BotDisplayMeta {
   /** local account id -> name (or broker id) */
   accounts: Map<number, string>;
   loading: boolean;
+  /** failure of the LOCAL data (strategies / instruments / versions) */
   error: string | null;
+  /** failure of GET /api/accounts (a broker request) — shown only at the account */
+  accountsError: string | null;
 }
 
-/** B6: load the display maps once per page (bot list / bot detail). */
+/**
+ * B6: load display maps once per page (bot list / bot detail). Strategies,
+ * instruments and versions are LOCAL data; accounts come from the broker
+ * (`GET /api/accounts`). They are loaded independently so that an accounts
+ * failure (no token, broker down) hides neither the strategy/instrument labels
+ * nor the version-change list — it only marks the account.
+ */
 export function useBotDisplayMeta(): BotDisplayMeta {
   const [meta, setMeta] = useState<BotDisplayMeta>({
     versions: new Map(),
@@ -47,16 +56,21 @@ export function useBotDisplayMeta(): BotDisplayMeta {
     accounts: new Map(),
     loading: true,
     error: null,
+    accountsError: null,
   });
 
   useEffect(() => {
     let cancelled = false;
+    const patch = (part: Partial<BotDisplayMeta>) => {
+      if (cancelled) return;
+      setMeta((prev) => ({ ...prev, ...part }));
+    };
+
     void (async () => {
       try {
-        const [strategies, instruments, accounts] = await Promise.all([
+        const [strategies, instruments] = await Promise.all([
           api.get<StrategyResponse[]>("/api/strategies"),
           api.get<InstrumentInfo[]>("/api/instruments?active=true"),
-          api.get<AccountInfo[]>("/api/accounts"),
         ]);
         const versions = new Map<number, VersionMeta>();
         await Promise.all(
@@ -69,34 +83,40 @@ export function useBotDisplayMeta(): BotDisplayMeta {
             }
           }),
         );
-        if (cancelled) return;
-        setMeta({
+        patch({
           versions,
           instruments: new Map(
             instruments
               .filter((i) => i.id !== null)
               .map((i) => [i.id as number, i.ticker ?? i.figi]),
           ),
+          error: null,
+          loading: false,
+        });
+      } catch (err) {
+        patch({
+          error: err instanceof Error ? err.message : String(err),
+          loading: false,
+        });
+      }
+    })();
+
+    void (async () => {
+      try {
+        const accounts = await api.get<AccountInfo[]>("/api/accounts");
+        patch({
           accounts: new Map(
             accounts
               .filter((a) => a.id !== null)
               .map((a) => [a.id as number, a.name ?? a.account_id]),
           ),
-          loading: false,
-          error: null,
+          accountsError: null,
         });
       } catch (err) {
-        if (!cancelled) {
-          setMeta({
-            versions: new Map(),
-            instruments: new Map(),
-            accounts: new Map(),
-            loading: false,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+        patch({ accountsError: err instanceof Error ? err.message : String(err) });
       }
     })();
+
     return () => {
       cancelled = true;
     };
@@ -120,6 +140,16 @@ export function accountLabel(meta: BotDisplayMeta, accountId: number | null): st
 export function instrumentLabel(meta: BotDisplayMeta, instrumentId: number | null): string | null {
   if (instrumentId === null) return null;
   return meta.instruments.get(instrumentId) ?? `#${instrumentId}`;
+}
+
+/** B6: accounts come from the broker; a failure is marked ONLY at the account. */
+export function AccountErrorNote(props: { meta: BotDisplayMeta }) {
+  if (props.meta.accountsError === null) return null;
+  return (
+    <span className="ml-1 text-red-400" title={props.meta.accountsError}>
+      счета недоступны
+    </span>
+  );
 }
 
 export function BotSettingsPanel(props: {

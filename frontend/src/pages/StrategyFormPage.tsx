@@ -108,12 +108,15 @@ export function StrategyFormPage(props: { edit?: boolean }) {
           setLoaded(true);
         })
         .catch((err) => setSaveError(err instanceof Error ? err.message : String(err)));
-    } else {
-      setLoaded(true);
     }
+    // New strategy: `loaded` is left to the schema-init effect below, so the
+    // form is built from schema defaults (B4) — never shown before the schema
+    // arrives.
   }, [edit, strategyId]);
 
-  // --- initialize form from schema (only when nothing loaded yet) ---
+  // --- initialize form from schema (B4): a NEW strategy starts from schema
+  // `default`s (the UI never invents values). In edit mode the stored config
+  // above already set `loaded`, so this effect is a no-op there. ---
   useEffect(() => {
     if (!schema || loaded) return;
     setForm(initialValue(schema, defs) as Config);

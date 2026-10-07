@@ -13,6 +13,7 @@ import type {
 import { Button, ErrorBanner, Field, Loading, SelectInput, TextInput } from "../components/FormControls";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
+  AccountErrorNote,
   BotSettingsPanel,
   accountLabel,
   instrumentLabel,
@@ -171,7 +172,7 @@ export function BotsPage() {
                   </Link>
                   <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
                     <StatusBadge status={bot.status} />
-                    <span>Счёт: {accountLabel(meta, bot.account_id) ?? "—"}</span>
+                    <span>Счёт: {accountLabel(meta, bot.account_id) ?? "—"}<AccountErrorNote meta={meta} /></span>
                     <span>Инструмент: {instrumentLabel(meta, bot.instrument_id) ?? "—"}</span>
                     <span>Стратегия: {versionLabel(meta, bot.strategy_version_id) ?? "—"}</span>
                     <span>Депозит: {bot.deposit ?? "—"}</span>
@@ -384,7 +385,7 @@ export function BotDetailPage() {
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
             <StatusBadge status={bot.status} />
             <span>Стратегия: {versionLabel(meta, bot.strategy_version_id) ?? "—"}</span>
-            <span>Счёт: {accountLabel(meta, bot.account_id) ?? "—"}</span>
+            <span>Счёт: {accountLabel(meta, bot.account_id) ?? "—"}<AccountErrorNote meta={meta} /></span>
             <span>Инструмент: {instrumentLabel(meta, bot.instrument_id) ?? "—"}</span>
             <span>Депозит: {bot.deposit ?? "—"}</span>
             {bot.started_at ? <span>Запущен: {new Date(bot.started_at).toLocaleString("ru-RU")}</span> : null}
