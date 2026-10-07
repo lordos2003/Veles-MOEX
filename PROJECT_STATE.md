@@ -24,6 +24,17 @@ No active task. Next MVP is chosen by the owner.
 
 ## Current accepted MVP
 
+### MVP-7.2 — Значения индикаторов по умолчанию: явно в схеме и форме, без скрытых запасных значений в расчёте
+**Status: ACCEPTED (раунд 2, 2026-10-07) and published to master.**
+
+- Принятая реализация: `9ac093a`
+- Publication PR: #22
+- Publication merge commit: `86deb76db11f6362f953f1ac520bb1bc80bc1663`
+- Задание: `.agent/TASK-MVP-7.2-INDICATOR-DEFAULTS.md`; ревью: `.agent/REVIEW-MVP-7.2.md` (раунд 1 CHANGES REQUESTED: B1; раунд 2 ACCEPT); отчёты: `.agent/REPORT-MVP-7.2.md`, `-REV1`
+- Контракт I1–I5 (владелец, 2026-10-07): единая таблица значений по умолчанию с источником (`veles` — RSI 14, Bollinger 20/2; `project` — остальные), каталог отдаёт `default`/`default_source`, форма предзаполняет с пометкой источника, из расчёта убраны скрытые запасные значения (нет параметра → ошибка валидации), период и целые параметры — целые ≥ 1, версии стратегий не мигрируются.
+- Проверка (независимо, живой прогон на чистом PostgreSQL и в браузере): `pytest 580 passed, 1 skipped`; `ruff` чисто; `npm test 29 passed`; `npm run build` ок.
+
+
 ### MVP-7.1 — Экраны: стратегии (полная форма), боты, сделка, бэктест, песочница
 **Status: ACCEPTED (раунд 4, 2026-10-07) and published to master.**
 
