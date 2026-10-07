@@ -7,6 +7,8 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -101,6 +103,26 @@ async def tinvest_error_handler(request: Request, exc: TInvestError) -> JSONResp
 async def sandbox_error_handler(request: Request, exc: SandboxUnsupportedError) -> JSONResponse:
     """Sandbox endpoints are unavailable when the sandbox is disabled (409)."""
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Strip pydantic's "Value error, " prefix from body-validation messages.
+
+    MVP-7.2 I4: model-validator messages must reach the UI verbatim in Russian
+    ("Индикатор RSI: укажите параметр «период».", not "Value error, ...").
+    The 422 detail shape (loc/type per item) is preserved for field mapping.
+    """
+    return JSONResponse(
+        status_code=422,
+        content=jsonable_encoder(
+            {
+                "detail": [
+                    {**err, "msg": err["msg"].removeprefix("Value error, ")} for err in exc.errors()
+                ]
+            }
+        ),
+    )
 
 
 @app.get("/", include_in_schema=False)

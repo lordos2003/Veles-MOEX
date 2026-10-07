@@ -24,10 +24,17 @@ export interface TInvestStatus {
 // --- strategies / indicators (U3, U4) ---
 export type IndicatorParamType = "int" | "float";
 
+/** Source of an indicator default value (MVP-7.2 I1): documented by Veles or
+ * an owner-approved project choice. */
+export type DefaultSource = "veles" | "project";
+
 export interface IndicatorParamDef {
   name: string;
   type: IndicatorParamType;
   required?: boolean;
+  /** Single source of truth for the form pre-fill (I2/I3). */
+  default: number;
+  default_source: DefaultSource;
 }
 
 export interface IndicatorResponse {
@@ -38,6 +45,9 @@ export interface IndicatorResponse {
   uses_series: boolean;
   uses_params: boolean;
   params: IndicatorParamDef[];
+  /** Explicit default for IndicatorSpec.period (null when not used). */
+  period_default: number | null;
+  period_default_source: DefaultSource | null;
 }
 
 /** Raw pydantic JSON Schema node (subset used by the form builder). */

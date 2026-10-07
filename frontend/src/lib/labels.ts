@@ -7,6 +7,8 @@
  * table (field -> label -> source) is exported as TERMS for the REPORT.
  */
 
+import type { DefaultSource } from "../types";
+
 export interface TermRow {
   field: string;
   label: string;
@@ -123,6 +125,13 @@ const SEGMENT_LABELS: Record<string, string> = {
   daily_loss_limit: "Дневной лимит убытка",
   emergency_stop: "Экстренная остановка",
 };
+
+/** Source marker under a field whose value equals the catalog default (I3). */
+export function defaultSourceLabel(source: DefaultSource | null): string | null {
+  if (source === "veles") return "по умолчанию (Veles)";
+  if (source === "project") return "по умолчанию (выбор проекта)";
+  return null;
+}
 
 /** Russian label for a config path like "exit.stop_loss.percent". */
 export function labelFor(path: string): string {

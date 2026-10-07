@@ -83,21 +83,31 @@ async def list_indicators() -> list[IndicatorResponse]:
 
     The catalog is driven by the same registry as ``indicator_series`` (see
     ``app.strategies.indicators``): a name that the engine cannot compute is
-    never listed, and a listed entry is always computable. No default values
-    are exposed (AGENTS.md §2).
+    never listed, and a listed entry is always computable. Since MVP-7.2 (I2)
+    each entry exposes its explicit ``default``/``period_default`` with a
+    ``default_source`` (``veles`` = documented by Veles, ``project`` = owner-
+    approved project choice): the form pre-fills from this single source.
     """
     return [
         IndicatorResponse(
             name=entry.name,
             series=list(entry.series),
             params=[
-                IndicatorParamResponse(name=param.name, type=param.type, required=param.required)
+                IndicatorParamResponse(
+                    name=param.name,
+                    type=param.type,
+                    required=param.required,
+                    default=param.default,
+                    default_source=param.default_source,
+                )
                 for param in entry.params
             ],
             uses_period=entry.uses_period,
             uses_method=entry.uses_method,
             uses_series=entry.uses_series,
             uses_params=entry.uses_params,
+            period_default=entry.period_default,
+            period_default_source=entry.period_default_source,
         )
         for entry in INDICATOR_CATALOG
     ]

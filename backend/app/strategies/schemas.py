@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -73,11 +73,18 @@ class StrategyValidateResponse(BaseModel):
 
 
 class IndicatorParamResponse(BaseModel):
-    """One configurable parameter of an indicator from the catalog (U3)."""
+    """One configurable parameter of an indicator from the catalog (U3).
+
+    ``default`` is the single source of truth value the form pre-fills (I2);
+    ``default_source`` says whether the value is documented by Veles
+    (``veles``) or an owner-approved project choice (``project``).
+    """
 
     name: str
     type: str
     required: bool
+    default: int | float
+    default_source: Literal["veles", "project"]
 
 
 class IndicatorResponse(BaseModel):
@@ -85,6 +92,8 @@ class IndicatorResponse(BaseModel):
 
     ``series`` are the selectable output series (``IndicatorSpec.series``);
     ``uses_*`` report which ``IndicatorSpec`` fields the calculation consumes.
+    ``period_default`` / ``period_default_source`` declare the explicit default
+    for ``IndicatorSpec.period`` (None when the indicator does not use period).
     """
 
     name: str
@@ -94,3 +103,5 @@ class IndicatorResponse(BaseModel):
     uses_method: bool
     uses_series: bool
     uses_params: bool
+    period_default: int | None = None
+    period_default_source: Literal["veles", "project"] | None = None

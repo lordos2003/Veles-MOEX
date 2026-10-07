@@ -95,7 +95,7 @@ def fake_series() -> BarSeries:
     return _fake_series()
 
 
-async def test_indicators_endpoint_lists_catalog(fake_series: BarSeries) -> None:
+async def test_indicators_endpoint_lists_catalog() -> None:
     http = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
     try:
         res = await http.get("/api/strategies/indicators")
@@ -110,15 +110,29 @@ async def test_indicators_endpoint_lists_catalog(fake_series: BarSeries) -> None
             for param in entry["params"]:
                 assert param["type"] in ("int", "float")
                 assert isinstance(param["required"], bool)
+                # I2: the explicit default and its source are exposed.
+                assert isinstance(param["default"], (int, float))
+                assert param["default_source"] in ("veles", "project")
+                if param["type"] == "int":
+                    assert isinstance(param["default"], int)
+                else:
+                    assert isinstance(param["default"], float)
 
-        # MACD/BOLLINGER/STOCHASTIC/ADX expose output series; defaults are
-        # never exposed (no "default" key anywhere in the catalog).
+        # MACD/BOLLINGER/STOCHASTIC/ADX expose output series.
         assert by_name["MACD"]["series"] == ["macd", "signal", "histogram"]
         assert by_name["STOCHASTIC"]["series"] == ["k", "d"]
         for name in ("SMA", "EMA", "RSI", "ATR", "CCI", "WILLIAMS_R", "CMO", "MFI"):
             assert by_name[name]["series"] == ["value"]
             assert by_name[name]["params"] == []
-        assert all("default" not in e for e in entries)
+
+        # Period default + source: set exactly for uses_period indicators.
+        for entry in entries:
+            if entry["uses_period"]:
+                assert isinstance(entry["period_default"], int), entry["name"]
+                assert entry["period_default_source"] in ("veles", "project"), entry["name"]
+            else:
+                assert entry["period_default"] is None, entry["name"]
+                assert entry["period_default_source"] is None, entry["name"]
     finally:
         await http.aclose()
 
@@ -126,10 +140,14 @@ async def test_indicators_endpoint_lists_catalog(fake_series: BarSeries) -> None
 def test_every_catalog_entry_computes_on_fake_bars(fake_series: BarSeries) -> None:
     """Each catalog entry must be computable via ``indicator_series`` (U3)."""
     for entry in INDICATOR_CATALOG:
-        params = {param.name: (11 if param.type == "int" else 2.5) for param in entry.params}
+        params = {param.name: param.default for param in entry.params}
         for series_name in entry.series:
             result = indicator_series(
-                entry.name, fake_series, period=20, series_name=series_name, params=dict(params)
+                entry.name,
+                fake_series,
+                period=entry.period_default,
+                series_name=series_name,
+                params=dict(params),
             )
             assert len(result) == N_BARS, f"{entry.name}.{series_name} length mismatch"
 

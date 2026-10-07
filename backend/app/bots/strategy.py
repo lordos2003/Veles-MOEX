@@ -47,9 +47,10 @@ async def load_bot_strategy(session: AsyncSession, bot: Bot) -> BotStrategy:
     try:
         config = StrategyConfig.model_validate(version.config)
     except ValidationError as exc:
+        msg = exc.errors()[0]["msg"].removeprefix("Value error, ")
         raise StrategyLoadError(
             f"strategy version {version.id} (v{version.version}) has an invalid "
-            f"configuration: {exc}"
+            f"configuration: {msg}"
         ) from exc
     return BotStrategy(
         strategy_version_id=version.id,

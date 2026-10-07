@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.domain.marketdata import Timeframe
 from app.strategies.filters import CalculationMethod, FilterGroup
+from app.strategies.indicators import validate_spec_args
 
 
 class Direction(StrEnum):
@@ -279,3 +280,29 @@ class StrategyConfig(BaseModel):
     )
     exit: ExitConfig = Field(description="Exit block (take-profit, stop-loss)")
     risk: RiskConfig = Field(default_factory=RiskConfig, description="Risk block")
+
+    @model_validator(mode="after")
+    def _validate_indicator_params(self) -> StrategyConfig:
+        """Every declared indicator arg must provide the parameters its
+        calculation consumes (MVP-7.2 I4): a missing period/parameter is an
+        explicit validation error, never a hidden engine fallback. Applies to
+        entry groups, grid signal groups and exit signal groups (signal TP,
+        signal stop-loss)."""
+        for group in _iter_filter_groups(self):
+            for cond in group.conditions:
+                for arg in (cond.arg1, cond.arg2):
+                    if getattr(arg, "kind", None) == "indicator":
+                        validate_spec_args(arg.name, arg.period, arg.params)
+        return self
+
+
+def _iter_filter_groups(config: StrategyConfig):
+    """Yield every FilterGroup the strategy evaluates (entry, grid signals,
+    signal TP, signal stop-loss)."""
+    yield from config.entry.groups
+    yield from config.dca_grid.signal_groups
+    tp = config.exit.take_profit
+    if isinstance(tp, SignalTP):
+        yield from tp.groups
+    if config.exit.signal_stop is not None:
+        yield from config.exit.signal_stop.groups
