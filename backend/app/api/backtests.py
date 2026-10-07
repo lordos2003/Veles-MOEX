@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -49,6 +50,17 @@ from app.trading.risk_manager import RiskManager
 from app.trading.sizing import SizingError
 
 router = APIRouter(prefix="/backtests", tags=["backtest"])
+
+
+def _validation_message(exc: ValidationError) -> str:
+    """First user-facing validation error (MVP-7.2 I4/I5).
+
+    pydantic prefixes model-validator messages with "Value error, "; API
+    consumers get the clean Russian message (e.g. "Индикатор RSI: укажите
+    параметр «период».").
+    """
+    msg = exc.errors()[0]["msg"]
+    return msg.removeprefix("Value error, ")
 
 
 def _estimate_candle_count(timeframe: Timeframe, start: datetime, end: datetime) -> int | None:
@@ -172,7 +184,14 @@ async def run_backtest(
             raise HTTPException(
                 status_code=404, detail=f"strategy version {payload.strategy_version_id} not found"
             )
-        strategy_config = StrategyConfig.model_validate(version.config)
+        try:
+            strategy_config = StrategyConfig.model_validate(version.config)
+        except ValidationError as exc:
+            # MVP-7.2 I5: an old version saved before indicator params became
+            # required is a 422 with the first user-facing error, not a 500.
+            raise HTTPException(
+                status_code=422, detail=_validation_message(exc)
+            ) from exc
         strategy_version_id = version.id
 
     # B3: the run must reproduce the strategy's own timeframe; a mismatch would

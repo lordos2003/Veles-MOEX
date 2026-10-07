@@ -129,6 +129,11 @@ async def client() -> tuple[httpx.AsyncClient, AsyncSession]:
 
 async def _seed_base(session: AsyncSession) -> None:
     """Seed account/instrument/strategy v1 with explicit ids (SQLite + BigInteger)."""
+    await _seed_base_with_config(session, STRATEGY_CONFIG)
+
+
+async def _seed_base_with_config(session: AsyncSession, config: dict) -> None:
+    """Seed account/instrument/strategy v1 with the given version config (I5)."""
     account = Account(name="main", broker="tinvest", external_account_id="ext-1")
     account.id = 1
     instrument = Instrument(
@@ -144,7 +149,7 @@ async def _seed_base(session: AsyncSession) -> None:
     strategy.id = 1
     session.add_all([account, instrument, strategy])
     await session.flush()
-    version = StrategyVersion(strategy_id=1, version=1, config=dict(STRATEGY_CONFIG))
+    version = StrategyVersion(strategy_id=1, version=1, config=config)
     version.id = 1
     session.add(version)
     await session.flush()
@@ -351,6 +356,99 @@ async def test_strategy_create_versions_schema_validate(client) -> None:
     live = rejected_live.json()["live_deal"]
     assert live["supported"] is False
     assert "fixed_percentage" in live["reason"]
+
+
+# --- MVP-7.2 I4/I5: indicator params are required ------------------------------
+
+
+def _indicator_args(name: str, params: dict, **overrides) -> dict:
+    arg = {"kind": "indicator", "name": name, "timeframe": "5m", "params": params}
+    arg.update(overrides)
+    return arg
+
+
+def _config_with_indicator(arg1: dict) -> dict:
+    return {
+        **STRATEGY_CONFIG,
+        "entry": {
+            "method": "at_bar_close",
+            "groups": [
+                {
+                    "conditions": [
+                        {
+                            "arg1": arg1,
+                            "operator": ">",
+                            "arg2": {"kind": "constant", "value": 50.0},
+                        }
+                    ]
+                }
+            ],
+        },
+    }
+
+
+async def test_strategy_without_indicator_params_rejected_422(client) -> None:
+    """I4: POST /api/strategies and /validate reject an indicator arg whose
+    required period/parameter is missing — with a Russian message naming the
+    indicator and the parameter (no hidden engine fallback)."""
+    http, _ = client
+
+    rsi_missing_period = _config_with_indicator(_indicator_args("RSI", {}))
+    created = await http.post("/api/strategies", json={"name": "rsi", "config": rsi_missing_period})
+    assert created.status_code == 422
+    assert "Индикатор RSI: укажите параметр «период»" in str(created.json()["detail"])
+
+    macd_missing_fast = _config_with_indicator(
+        _indicator_args("MACD", {"slow": 26, "signal": 9})
+    )
+    created_macd = await http.post(
+        "/api/strategies", json={"name": "macd", "config": macd_missing_fast}
+    )
+    assert created_macd.status_code == 422
+    assert "Индикатор MACD: укажите параметр «fast»" in str(created_macd.json()["detail"])
+
+    validated = await http.post("/api/strategies/validate", json=rsi_missing_period)
+    assert validated.status_code == 422
+    assert "Индикатор RSI: укажите параметр «период»" in str(validated.json()["detail"])
+
+
+async def test_backtest_old_version_without_indicator_params_rejected_422(client) -> None:
+    """I5: a version stored before indicator params became required fails the
+    backtest with an explicit 422 (not a 500), naming indicator+param; a new
+    version with the explicit parameter runs normally."""
+    http, session = client
+    await _seed_base_with_config(session, _config_with_indicator(_indicator_args("RSI", {})))
+    version = StrategyVersion(strategy_id=1, version=2, config=_config_with_indicator(
+        _indicator_args("RSI", {}, period=14)
+    ))
+    version.id = 2
+    session.add(version)
+    await session.flush()
+
+    payload = _backtest_payload()
+    del payload["config"]
+    payload["strategy_version_id"] = 1
+    payload["from"] = T0.isoformat()
+    payload["to"] = (T0 + timedelta(hours=1)).isoformat()
+
+    candles = [
+        _candle(0, 100, 100.5, 99.5, 100.0),
+        _candle(1, 100.5, 101, 100, 100.8),
+        _candle(2, 100.8, 111, 100.5, 110.5),
+    ]
+    app.dependency_overrides[get_instrument_service] = lambda: _FakeInstrumentService(_instrument())
+    app.dependency_overrides[get_market_data_service] = lambda: _FakeMarketData(candles)
+    try:
+        old = await http.post("/api/backtests", json=payload)
+        assert old.status_code == 422
+        assert "Индикатор RSI: укажите параметр «период»" in str(old.json()["detail"])
+
+        payload["strategy_version_id"] = 2
+        fixed = await http.post("/api/backtests", json=payload)
+        assert fixed.status_code == 200
+    finally:
+        app.dependency_overrides.pop(get_instrument_service, None)
+        app.dependency_overrides.pop(get_market_data_service, None)
 
 
 # --- R5: bots --------------------------------------------------------------------

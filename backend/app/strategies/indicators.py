@@ -4,14 +4,24 @@ Pure functions operating on normalized bar series (broker-agnostic). Outputs are
 lists of ``float | None`` (``None`` where the indicator is undefined for the
 window). The library is extensible: adding an indicator only requires a new
 function plus a registry entry; the Strategy Engine does not change.
+
+Default values (MVP-7.2 I1/I4): every period and parameter the calculation
+consumes is declared explicitly in |INDICATOR_CATALOG| with a ``default`` and a
+``default_source`` (``veles`` = documented by Veles, ``project`` = owner-
+approved project choice). The calculation functions take required parameters
+only: a missing period/parameter raises an explicit error through
+``validate_spec_args`` / ``indicator_series`` instead of a hidden fallback.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 
 from app.strategies.bars import BarSeries
+
+DefaultSource = Literal["veles", "project"]
 
 
 def sma(values: list[float], period: int) -> list[float]:
@@ -69,7 +79,7 @@ def bollinger(values, period, k):
     return middle, upper, lower
 
 
-def rsi(values, period=14):
+def rsi(values, period):
     n = len(values)
     out = [None] * n
     if n < period + 1:
@@ -96,7 +106,7 @@ def rsi(values, period=14):
     return out
 
 
-def atr(high, low, close, period=14):
+def atr(high, low, close, period):
     n = len(high)
     out = [None] * n
     if n < period + 1:
@@ -112,7 +122,7 @@ def atr(high, low, close, period=14):
     return out
 
 
-def cci(high, low, close, period=20):
+def cci(high, low, close, period):
     n = len(close)
     out = [None] * n
     tp = [(h + lo + c) / 3.0 for h, lo, c in zip(high, low, close, strict=False)]
@@ -124,7 +134,7 @@ def cci(high, low, close, period=20):
     return out
 
 
-def williams_r(high, low, close, period=14):
+def williams_r(high, low, close, period):
     n = len(high)
     out = [None] * n
     for i in range(period - 1, n):
@@ -134,7 +144,7 @@ def williams_r(high, low, close, period=14):
     return out
 
 
-def cmo(values, period=14):
+def cmo(values, period):
     n = len(values)
     out = [None] * n
     for i in range(period, n):
@@ -150,7 +160,7 @@ def cmo(values, period=14):
     return out
 
 
-def mfi(high, low, close, volume, period=14):
+def mfi(high, low, close, volume, period):
     n = len(close)
     out = [None] * n
     typical = [(h + lo + c) / 3.0 for h, lo, c in zip(high, low, close, strict=False)]
@@ -169,7 +179,7 @@ def mfi(high, low, close, volume, period=14):
     return out
 
 
-def stochastic(high, low, close, period=14, k_smooth=3, d_smooth=3):
+def stochastic(high, low, close, period, k_smooth, d_smooth):
     n = len(close)
     k = [None] * n
     for i in range(period - 1, n):
@@ -181,7 +191,7 @@ def stochastic(high, low, close, period=14, k_smooth=3, d_smooth=3):
     return k_s, d_s
 
 
-def adx(high, low, close, period=14):
+def adx(high, low, close, period):
     n = len(high)
     pdi = [None] * n
     mdi = [None] * n
@@ -242,18 +252,21 @@ def _wildered(raw: list[float], period: int) -> list[float]:
 
 @dataclass(frozen=True)
 class IndicatorParamDef:
-    """One configurable parameter of an indicator (MVP-7.1 U3).
+    """One configurable parameter of an indicator (MVP-7.1 U3, MVP-7.2 I1/I4).
 
-    ``type`` is ``"int"`` or ``"float"``. ``required`` is engine-level: True
-    only when the calculation has no fallback for a missing parameter (today
-    every parameter has one, so all are False). No default value is carried
-    here — see AGENTS.md §2: a documented Veles default for the form does not
-    exist, so the catalog must not invent one.
+    ``type`` is ``"int"`` or ``"float"``. ``required`` is engine-level: every
+    parameter the calculation consumes is required (I4) — the old hidden
+    fallbacks (``params.get("fast", 12)`` ...) are gone. ``default`` and
+    ``default_source`` are the single source of truth for the form pre-fill
+    (I3): ``veles`` when the value is documented by Veles, ``project`` when it
+    is an owner-approved project choice.
     """
 
     name: str
     type: str
     required: bool
+    default: int | float
+    default_source: DefaultSource
 
 
 @dataclass(frozen=True)
@@ -264,6 +277,8 @@ class IndicatorDef:
     ``IndicatorSpec.series`` selector); unknown series fall back to the first
     one. ``uses_*`` report which ``IndicatorSpec`` fields the calculation
     consumes (``period`` / ``method`` / ``series`` / ``params``).
+    ``period_default`` / ``period_default_source`` declare the explicit default
+    for ``IndicatorSpec.period`` (None when the indicator does not use period).
     """
 
     name: str
@@ -273,46 +288,55 @@ class IndicatorDef:
     uses_method: bool
     uses_series: bool
     uses_params: bool
+    period_default: int | None = None
+    period_default_source: DefaultSource | None = None
 
 
-Compute = Callable[[BarSeries, int | None, str, dict], list[float]]
+def _param(name: str, type_: str, default: int | float, source: DefaultSource) -> IndicatorParamDef:
+    """Required catalog parameter (I4): the calculation has no fallback."""
+    return IndicatorParamDef(
+        name=name, type=type_, required=True, default=default, default_source=source
+    )
+
+
+Compute = Callable[[BarSeries, int, str, dict], list[float]]
 
 
 def _macd_compute(
-    series: BarSeries, period: int | None, series_name: str, params: dict
+    series: BarSeries, period: int, series_name: str, params: dict
 ) -> list[float]:
-    fast = int(params.get("fast", 12))
-    slow = int(params.get("slow", 26))
-    signal = int(params.get("signal", 9))
+    fast = int(params["fast"])
+    slow = int(params["slow"])
+    signal = int(params["signal"])
     m, s, h = macd(series.closes(), fast, slow, signal)
     return {"macd": m, "signal": s, "histogram": h}.get(series_name, m)
 
 
 def _bollinger_compute(
-    series: BarSeries, period: int | None, series_name: str, params: dict
+    series: BarSeries, period: int, series_name: str, params: dict
 ) -> list[float]:
-    mid, up, low = bollinger(series.closes(), period or 20, float(params.get("k", 2.0)))
+    mid, up, low = bollinger(series.closes(), period, float(params["k"]))
     return {"middle": mid, "upper": up, "lower": low}.get(series_name, mid)
 
 
 def _stochastic_compute(
-    series: BarSeries, period: int | None, series_name: str, params: dict
+    series: BarSeries, period: int, series_name: str, params: dict
 ) -> list[float]:
     k, d = stochastic(
         series.highs(),
         series.lows(),
         series.closes(),
-        period or 14,
-        int(params.get("k_smooth", 3)),
-        int(params.get("d_smooth", 3)),
+        period,
+        int(params["k_smooth"]),
+        int(params["d_smooth"]),
     )
     return {"k": k, "d": d}.get(series_name, k)
 
 
 def _adx_compute(
-    series: BarSeries, period: int | None, series_name: str, params: dict
+    series: BarSeries, period: int, series_name: str, params: dict
 ) -> list[float]:
-    adx_line, pdi, mdi = adx(series.highs(), series.lows(), series.closes(), period or 14)
+    adx_line, pdi, mdi = adx(series.highs(), series.lows(), series.closes(), period)
     return {"adx": adx_line, "plus_di": pdi, "minus_di": mdi}.get(series_name, adx_line)
 
 
@@ -320,16 +344,16 @@ def _adx_compute(
 # and the calculation cannot diverge: the test asserts both are driven by the
 # same keys (backend/tests/test_mvp71_api.py).
 _COMPUTE: dict[str, Compute] = {
-    "SMA": lambda s, p, sn, prm: sma(s.closes(), p or 20),
-    "EMA": lambda s, p, sn, prm: ema(s.closes(), p or 9),
-    "RSI": lambda s, p, sn, prm: rsi(s.closes(), p or 14),
+    "SMA": lambda s, p, sn, prm: sma(s.closes(), p),
+    "EMA": lambda s, p, sn, prm: ema(s.closes(), p),
+    "RSI": lambda s, p, sn, prm: rsi(s.closes(), p),
     "MACD": _macd_compute,
     "BOLLINGER": _bollinger_compute,
-    "ATR": lambda s, p, sn, prm: atr(s.highs(), s.lows(), s.closes(), p or 14),
-    "CCI": lambda s, p, sn, prm: cci(s.highs(), s.lows(), s.closes(), p or 20),
-    "WILLIAMS_R": lambda s, p, sn, prm: williams_r(s.highs(), s.lows(), s.closes(), p or 14),
-    "CMO": lambda s, p, sn, prm: cmo(s.closes(), p or 14),
-    "MFI": lambda s, p, sn, prm: mfi(s.highs(), s.lows(), s.closes(), s.volumes(), p or 14),
+    "ATR": lambda s, p, sn, prm: atr(s.highs(), s.lows(), s.closes(), p),
+    "CCI": lambda s, p, sn, prm: cci(s.highs(), s.lows(), s.closes(), p),
+    "WILLIAMS_R": lambda s, p, sn, prm: williams_r(s.highs(), s.lows(), s.closes(), p),
+    "CMO": lambda s, p, sn, prm: cmo(s.closes(), p),
+    "MFI": lambda s, p, sn, prm: mfi(s.highs(), s.lows(), s.closes(), s.volumes(), p),
     "STOCHASTIC": _stochastic_compute,
     "ADX": _adx_compute,
 }
@@ -338,59 +362,171 @@ _COMPUTE: dict[str, Compute] = {
 _COMPUTE["WILLIAMS%R"] = _COMPUTE["WILLIAMS_R"]
 
 
+def _catalog_entry(name: str) -> IndicatorDef | None:
+    key = name.upper()
+    return _CATALOG_BY_NAME.get(_ALIASES.get(key, key))
+
+
+def validate_spec_args(name: str, period: int | None, params: dict) -> None:
+    """Catalog-driven validation of one indicator spec (I4).
+
+    Raises ``ValueError`` with a Russian user-facing message naming the
+    indicator and the missing period/parameter — no hidden fallback is applied.
+    ``StrategyConfig`` validation and the calculation engine both call this.
+    """
+    entry = _catalog_entry(name)
+    if entry is None:
+        # Unknown names are rejected by indicator_series at calculation time.
+        return
+    if entry.uses_period and period is None:
+        raise ValueError(f"Индикатор {entry.name}: укажите параметр «период».")
+    for param in entry.params:
+        if param.required and (param.name not in params or params[param.name] is None):
+            raise ValueError(f"Индикатор {entry.name}: укажите параметр «{param.name}».")
+
+
 INDICATOR_CATALOG: tuple[IndicatorDef, ...] = (
-    IndicatorDef("SMA", ("value",), (), True, False, False, False),
-    IndicatorDef("EMA", ("value",), (), True, False, False, False),
-    IndicatorDef("RSI", ("value",), (), True, False, False, False),
     IndicatorDef(
-        "MACD",
-        ("macd", "signal", "histogram"),
-        (
-            IndicatorParamDef("fast", "int", False),
-            IndicatorParamDef("slow", "int", False),
-            IndicatorParamDef("signal", "int", False),
+        name="SMA",
+        series=("value",),
+        params=(),
+        uses_period=True,
+        uses_method=False,
+        uses_series=False,
+        uses_params=False,
+        period_default=20,
+        period_default_source="project",
+    ),
+    IndicatorDef(
+        name="EMA",
+        series=("value",),
+        params=(),
+        uses_period=True,
+        uses_method=False,
+        uses_series=False,
+        uses_params=False,
+        period_default=9,
+        period_default_source="project",
+    ),
+    IndicatorDef(
+        name="RSI",
+        series=("value",),
+        params=(),
+        uses_period=True,
+        uses_method=False,
+        uses_series=False,
+        uses_params=False,
+        period_default=14,
+        period_default_source="veles",
+    ),
+    IndicatorDef(
+        name="MACD",
+        series=("macd", "signal", "histogram"),
+        params=(
+            _param("fast", "int", 12, "project"),
+            _param("slow", "int", 26, "project"),
+            _param("signal", "int", 9, "project"),
         ),
-        False,
-        False,
-        True,
-        True,
+        uses_period=False,
+        uses_method=False,
+        uses_series=True,
+        uses_params=True,
     ),
     IndicatorDef(
-        "BOLLINGER",
-        ("middle", "upper", "lower"),
-        (IndicatorParamDef("k", "float", False),),
-        True,
-        False,
-        True,
-        True,
+        name="BOLLINGER",
+        series=("middle", "upper", "lower"),
+        params=(_param("k", "float", 2.0, "veles"),),
+        uses_period=True,
+        uses_method=False,
+        uses_series=True,
+        uses_params=True,
+        period_default=20,
+        period_default_source="veles",
     ),
-    IndicatorDef("ATR", ("value",), (), True, False, False, False),
-    IndicatorDef("CCI", ("value",), (), True, False, False, False),
-    IndicatorDef("WILLIAMS_R", ("value",), (), True, False, False, False),
-    IndicatorDef("CMO", ("value",), (), True, False, False, False),
-    IndicatorDef("MFI", ("value",), (), True, False, False, False),
     IndicatorDef(
-        "STOCHASTIC",
-        ("k", "d"),
-        (
-            IndicatorParamDef("k_smooth", "int", False),
-            IndicatorParamDef("d_smooth", "int", False),
+        name="ATR",
+        series=("value",),
+        params=(),
+        uses_period=True,
+        uses_method=False,
+        uses_series=False,
+        uses_params=False,
+        period_default=14,
+        period_default_source="project",
+    ),
+    IndicatorDef(
+        name="CCI",
+        series=("value",),
+        params=(),
+        uses_period=True,
+        uses_method=False,
+        uses_series=False,
+        uses_params=False,
+        period_default=20,
+        period_default_source="project",
+    ),
+    IndicatorDef(
+        name="WILLIAMS_R",
+        series=("value",),
+        params=(),
+        uses_period=True,
+        uses_method=False,
+        uses_series=False,
+        uses_params=False,
+        period_default=14,
+        period_default_source="project",
+    ),
+    IndicatorDef(
+        name="CMO",
+        series=("value",),
+        params=(),
+        uses_period=True,
+        uses_method=False,
+        uses_series=False,
+        uses_params=False,
+        period_default=14,
+        period_default_source="project",
+    ),
+    IndicatorDef(
+        name="MFI",
+        series=("value",),
+        params=(),
+        uses_period=True,
+        uses_method=False,
+        uses_series=False,
+        uses_params=False,
+        period_default=14,
+        period_default_source="project",
+    ),
+    IndicatorDef(
+        name="STOCHASTIC",
+        series=("k", "d"),
+        params=(
+            _param("k_smooth", "int", 3, "project"),
+            _param("d_smooth", "int", 3, "project"),
         ),
-        True,
-        False,
-        True,
-        True,
+        uses_period=True,
+        uses_method=False,
+        uses_series=True,
+        uses_params=True,
+        period_default=14,
+        period_default_source="project",
     ),
     IndicatorDef(
-        "ADX",
-        ("adx", "plus_di", "minus_di"),
-        (),
-        True,
-        False,
-        True,
-        False,
+        name="ADX",
+        series=("adx", "plus_di", "minus_di"),
+        params=(),
+        uses_period=True,
+        uses_method=False,
+        uses_series=True,
+        uses_params=False,
+        period_default=14,
+        period_default_source="project",
     ),
 )
+
+_CATALOG_BY_NAME: dict[str, IndicatorDef] = {entry.name: entry for entry in INDICATOR_CATALOG}
+_ALIASES: dict[str, str] = {"WILLIAMS%R": "WILLIAMS_R"}
 
 
 def indicator_names() -> tuple[str, ...]:
@@ -401,8 +537,13 @@ def indicator_names() -> tuple[str, ...]:
 def indicator_series(
     name: str, series: BarSeries, period: int | None, series_name: str, params: dict
 ) -> list[float]:
-    """Compute the requested output series for a named indicator."""
+    """Compute the requested output series for a named indicator.
+
+    A period/parameter the calculation requires but the config does not declare
+    raises an explicit ``ValueError`` (I4) — never a silent fallback.
+    """
     compute = _COMPUTE.get(name.upper())
     if compute is None:
         raise ValueError(f"Unknown indicator: {name}")
-    return compute(series, period, series_name, params)
+    validate_spec_args(name, period, params)
+    return compute(series, period if period is not None else 0, series_name, params)

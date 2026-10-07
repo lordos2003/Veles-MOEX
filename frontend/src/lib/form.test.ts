@@ -222,7 +222,7 @@ describe("REV1 B4: default рядом с $ref (реальная форма сх�
   });
 });
 
-describe("REV1 B5: обязательные параметры индикаторов (движок подставляет скрытые дефолты)", () => {
+describe("REV1 B5 / MVP-7.2 I4: обязательные параметры индикаторов (движок не подставляет скрытых дефолтов)", () => {
   const catalog = new Map<string, IndicatorResponse>([
     [
       "SMA",
@@ -234,6 +234,8 @@ describe("REV1 B5: обязательные параметры индикато�
         uses_method: false,
         uses_series: false,
         uses_params: false,
+        period_default: 20,
+        period_default_source: "project",
       },
     ],
     [
@@ -242,14 +244,16 @@ describe("REV1 B5: обязательные параметры индикато�
         name: "MACD",
         series: ["macd", "signal", "histogram"],
         params: [
-          { name: "fast", type: "int", required: false },
-          { name: "slow", type: "int", required: false },
-          { name: "signal", type: "int", required: false },
+          { name: "fast", type: "int", required: true, default: 12, default_source: "project" },
+          { name: "slow", type: "int", required: true, default: 26, default_source: "project" },
+          { name: "signal", type: "int", required: true, default: 9, default_source: "project" },
         ],
         uses_period: false,
         uses_method: false,
         uses_series: true,
         uses_params: true,
+        period_default: null,
+        period_default_source: null,
       },
     ],
   ]);

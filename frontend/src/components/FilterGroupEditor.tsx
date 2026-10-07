@@ -1,10 +1,11 @@
-import type { IndicatorResponse, SchemaNode } from "../types";
+import type { DefaultSource, IndicatorResponse, SchemaNode } from "../types";
 import { initialValueForVariant, isPlainObject } from "../lib/schema";
 import {
   ARG_KIND_OPTIONS,
   OPERATOR_OPTIONS,
   SERIES_OPTIONS,
   TIMEFRAME_OPTIONS,
+  defaultSourceLabel,
   labelFor,
 } from "../lib/labels";
 import { Button, Field, NumberInput, SelectInput, TextInput } from "./FormControls";
@@ -252,6 +253,14 @@ function ArgumentEditor(props: {
   );
 }
 
+/** I3: small caption under a field whose value equals the catalog default,
+ * naming the source («по умолчанию (Veles)» / «…(выбор проекта)»). */
+function SourceMarker({ source }: { source: DefaultSource | null }) {
+  const label = defaultSourceLabel(source);
+  if (!label) return null;
+  return <p className="text-xs text-zinc-500">{label}</p>;
+}
+
 function IndicatorArgs(props: {
   pathPrefix: string;
   value: Record<string, unknown>;
@@ -265,7 +274,26 @@ function IndicatorArgs(props: {
   const name = typeof value.name === "string" ? value.name : "";
   const entry = catalog?.get(name) ?? null;
 
-  const setName = (n: string) => onChange({ ...value, name: n });
+  // I3: switching the indicator pre-fills period/params from the catalog
+  // (single source of truth I1); the values stay user-editable. Pre-fill only
+  // on an actual name change, so a loaded saved config is never clobbered.
+  // Params of the previous indicator are dropped: the new selection starts
+  // from its own catalog defaults.
+  const setName = (n: string) => {
+    const next = catalog?.get(n);
+    if (!next || n === name) {
+      onChange({ ...value, name: n });
+      return;
+    }
+    const updated: Record<string, unknown> = { ...value, name: n };
+    if (next.uses_period && next.period_default != null) {
+      updated.period = next.period_default;
+    }
+    const params: Record<string, unknown> = {};
+    for (const param of next.params) params[param.name] = param.default;
+    updated.params = params;
+    onChange(updated);
+  };
   const setField = (key: string, v: unknown) => onChange({ ...value, [key]: v });
   const setParam = (key: string, v: number | null) => {
     const params = { ...((value.params as Record<string, unknown>) ?? {}) };
@@ -317,6 +345,9 @@ function IndicatorArgs(props: {
             disabled={disabled}
             onChange={(period) => setField("period", period)}
           />
+          <SourceMarker
+            source={value.period === entry.period_default ? entry.period_default_source : null}
+          />
         </Field>
       ) : null}
       {entry?.uses_method ? (
@@ -362,6 +393,13 @@ function IndicatorArgs(props: {
                 disabled={disabled}
                 onChange={(v) => setParam(param.name, v)}
               />
+              <SourceMarker
+                source={
+                  ((value.params as Record<string, unknown>) ?? {})[param.name] === param.default
+                    ? param.default_source
+                    : null
+                }
+              />
             </Field>
           ))}
           {value.params && typeof value.params === "object"
@@ -392,9 +430,9 @@ const ARG_KIND_VARIANTS: Record<string, { kind: string; node: SchemaNode }> = {
 } as const;
 
 /**
- * B5: the calculation engine falls back to hidden defaults (SMA 20, RSI 14,
- * MACD 12/26/9, ...) when an indicator argument is empty, so the form must not
- * submit a strategy with missing period/catalog params.
+ * B5/I4: since MVP-7.2 the engine no longer substitutes hidden defaults — a
+ * missing period/catalog param is an explicit validation error (HTTP 422).
+ * The form blocks submission early with the same user-facing messages.
  *
  * Recursively walks the config, finds every `{ kind: "indicator", name }` node
  * and returns errors keyed by the same dotted paths Field components use.

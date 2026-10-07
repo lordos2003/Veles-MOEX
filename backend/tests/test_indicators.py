@@ -9,6 +9,7 @@ import pytest
 from app.domain.marketdata import Timeframe
 from app.strategies.bars import Bar, BarSeries
 from app.strategies.indicators import (
+    INDICATOR_CATALOG,
     ema,
     indicator_series,
     macd,
@@ -18,20 +19,6 @@ from app.strategies.indicators import (
 
 UTC = UTC
 T0 = datetime(2026, 1, 1, 9, 0, tzinfo=UTC)
-INDICATORS = [
-    "RSI",
-    "SMA",
-    "EMA",
-    "MACD",
-    "BOLLINGER",
-    "ATR",
-    "CCI",
-    "WILLIAMS_R",
-    "CMO",
-    "MFI",
-    "STOCHASTIC",
-    "ADX",
-]
 
 
 def _series(closes: list[float]) -> BarSeries:
@@ -81,11 +68,14 @@ def test_macd_returns_three_series_same_length() -> None:
 def test_all_indicators_return_full_series() -> None:
     series = _series([float(i) for i in range(1, 61)])
     n = len(series.bars)
-    for name in INDICATORS:
-        out = indicator_series(name, series, period=14, series_name="value", params={})
-        assert len(out) == n, name
+    for entry in INDICATOR_CATALOG:
+        params = {param.name: param.default for param in entry.params}
+        out = indicator_series(
+            entry.name, series, period=entry.period_default, series_name="value", params=params
+        )
+        assert len(out) == n, entry.name
         # some indicator must hold a defined value at the final bar.
-        assert out[-1] is not None, name
+        assert out[-1] is not None, entry.name
 
 
 def test_indicator_output_selector() -> None:
@@ -93,15 +83,154 @@ def test_indicator_output_selector() -> None:
     hist = indicator_series(
         "MACD",
         series,
-        period=14,
+        period=None,
         series_name="histogram",
         params={"fast": 4, "slow": 8, "signal": 3},
     )
     assert len(hist) == len(series.bars)
-    upper = indicator_series("BOLLINGER", series, period=14, series_name="upper", params={})
+    upper = indicator_series(
+        "BOLLINGER", series, period=14, series_name="upper", params={"k": 2.0}
+    )
     assert len(upper) == len(series.bars)
-    kline = indicator_series("STOCHASTIC", series, period=14, series_name="k", params={})
+    kline = indicator_series(
+        "STOCHASTIC",
+        series,
+        period=14,
+        series_name="k",
+        params={"k_smooth": 3, "d_smooth": 3},
+    )
     assert len(kline) == len(series.bars)
+
+
+def test_catalog_defaults_are_explicit_with_sources() -> None:
+    """I1: every engine-used period/parameter has an explicit default and a
+    source (``veles`` = documented by Veles, ``project`` = owner-approved
+    project choice); no catalog entry relies on a hidden fallback."""
+    by_name = {entry.name: entry for entry in INDICATOR_CATALOG}
+
+    # Period defaults: required (non-None, int) exactly for uses_period entries.
+    for entry in INDICATOR_CATALOG:
+        if entry.uses_period:
+            assert isinstance(entry.period_default, int), entry.name
+            assert entry.period_default_source in ("veles", "project"), entry.name
+        else:
+            assert entry.period_default is None, entry.name
+            assert entry.period_default_source is None, entry.name
+
+    # Params: every catalog param is required by the calculation (I4) and
+    # carries an explicit default + source.
+    for entry in INDICATOR_CATALOG:
+        for param in entry.params:
+            assert param.required is True, f"{entry.name}.{param.name}"
+            assert param.default is not None, f"{entry.name}.{param.name}"
+            assert param.default_source in ("veles", "project"), f"{entry.name}.{param.name}"
+
+    # The fixed I1 table (owner-approved MVP-7.2 values).
+    assert by_name["RSI"].period_default == 14
+    assert by_name["RSI"].period_default_source == "veles"
+    assert by_name["BOLLINGER"].period_default == 20
+    assert by_name["BOLLINGER"].period_default_source == "veles"
+    macd_params = {p.name: (p.default, p.default_source) for p in by_name["MACD"].params}
+    assert macd_params == {
+        "fast": (12, "project"),
+        "slow": (26, "project"),
+        "signal": (9, "project"),
+    }
+    assert by_name["BOLLINGER"].params[0].default == 2.0
+    assert by_name["BOLLINGER"].params[0].default_source == "veles"
+    assert by_name["SMA"].period_default == 20 and by_name["SMA"].period_default_source == "project"
+    assert by_name["EMA"].period_default == 9 and by_name["EMA"].period_default_source == "project"
+    assert by_name["ATR"].period_default == 14 and by_name["ATR"].period_default_source == "project"
+    assert by_name["CCI"].period_default == 20 and by_name["CCI"].period_default_source == "project"
+    assert (
+        by_name["WILLIAMS_R"].period_default == 14
+        and by_name["WILLIAMS_R"].period_default_source == "project"
+    )
+    assert by_name["CMO"].period_default == 14 and by_name["CMO"].period_default_source == "project"
+    assert by_name["MFI"].period_default == 14 and by_name["MFI"].period_default_source == "project"
+    stoch_params = {p.name: p.default for p in by_name["STOCHASTIC"].params}
+    assert stoch_params == {"k_smooth": 3, "d_smooth": 3}
+    assert by_name["STOCHASTIC"].period_default == 14
+    assert by_name["ADX"].period_default == 14 and by_name["ADX"].period_default_source == "project"
+
+
+def test_missing_required_period_raises_explicit_error() -> None:
+    series = _series([float(i) for i in range(1, 30)])
+    with pytest.raises(ValueError, match=r"Индикатор RSI: укажите параметр «период»"):
+        indicator_series("RSI", series, period=None, series_name="value", params={})
+
+
+def test_missing_required_param_raises_explicit_error() -> None:
+    series = _series([float(i) for i in range(1, 30)])
+    with pytest.raises(ValueError, match=r"Индикатор MACD: укажите параметр «fast»"):
+        indicator_series("MACD", series, period=None, series_name="macd", params={})
+    with pytest.raises(ValueError, match=r"Индикатор BOLLINGER: укажите параметр «k»"):
+        indicator_series("BOLLINGER", series, period=20, series_name="value", params={})
+
+
+# --- Regression: I1 defaults produce the pre-change numbers (no redefinition) ---
+# Snapshot captured on the 80-bar fake series of test_mvp71_api before MVP-7.2.
+N_BARS = 80
+T0_REG = datetime(2026, 1, 1, 9, 0, tzinfo=UTC)
+
+
+def _regression_series() -> BarSeries:
+    bars = []
+    for i in range(N_BARS):
+        base = 100.0 + i * 0.1
+        bars.append(
+            Bar(
+                timestamp=T0_REG + timedelta(minutes=i * 5),
+                open=base,
+                high=base + 1.0,
+                low=base - 0.5,
+                close=base + (0.2 if i % 2 == 0 else -0.2),
+                volume=1000.0 + i,
+            )
+        )
+    return BarSeries(timeframe=Timeframe.MIN_5, bars=bars)
+
+
+# name.series -> (expected last value, checksum = round(sum(defined), 10), count)
+_REG_SNAPSHOT: dict[str, tuple[float, float, int]] = {
+    "SMA.value": (106.95, 6340.95, 61),
+    "EMA.value": (107.47777779053834, 8286.8888888378, 80),
+    "RSI.value": (60.73335202705429, 4099.7090894174, 66),
+    "MACD.macd": (0.6877264904460105, 41.3367617285, 80),
+    "MACD.signal": (0.6941541174047399, 38.5601452588, 80),
+    "MACD.histogram": (-0.006427626958729338, 2.7766164696, 80),
+    "BOLLINGER.middle": (106.95, 6340.95, 61),
+    "BOLLINGER.upper": (108.1374342087038, 6415.3503527282, 61),
+    "BOLLINGER.lower": (105.76256579129621, 6266.5496472718, 61),
+    "ATR.value": (1.5, 99.0, 66),
+    "CCI.value": (117.77777777777678, 7690.8462104488, 61),
+    "WILLIAMS_R.value": (-42.85714285714278, -2400.0, 67),
+    "CMO.value": (24.999999999999872, 1650.0, 66),
+    "MFI.value": (49.98444814345553, 3302.1141986334, 66),
+    "STOCHASTIC.k": (61.904761904761905, 4176.1904761905, 65),
+    "STOCHASTIC.d": (63.49206349206347, 4049.2063492063, 63),
+    "ADX.adx": (1400.0, 74200.0, 53),
+    "ADX.plus_di": (6.666666666666694, 440.0, 66),
+    "ADX.minus_di": (0.0, 0.0, 66),
+}
+
+
+def test_catalog_defaults_keep_prechange_numbers() -> None:
+    """Explicit I1 defaults must reproduce the pre-MVP-7.2 values exactly:
+    the default table is a *declaration* of existing behavior, not a change."""
+    series = _regression_series()
+    for entry in INDICATOR_CATALOG:
+        params = {param.name: param.default for param in entry.params}
+        for name in entry.series:
+            out = indicator_series(
+                entry.name, series, period=entry.period_default, series_name=name, params=params
+            )
+            expected_last, expected_checksum, expected_count = _REG_SNAPSHOT[f"{entry.name}.{name}"]
+            defined = [v for v in out if v is not None]
+            assert len(defined) == expected_count, f"{entry.name}.{name} count"
+            assert out[-1] == pytest.approx(expected_last), f"{entry.name}.{name} last"
+            checksum = round(sum(defined), 10)
+            assert checksum == pytest.approx(expected_checksum), f"{entry.name}.{name} checksum"
 
 
 def test_unknown_indicator_raises() -> None:

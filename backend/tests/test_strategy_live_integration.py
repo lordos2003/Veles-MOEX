@@ -222,6 +222,39 @@ async def test_invalid_strategy_config_rejected(db_session: AsyncSession) -> Non
         await load_bot_strategy(db_session, bot)
 
 
+async def test_old_version_missing_indicator_params_rejected_explicitly(
+    db_session: AsyncSession,
+) -> None:
+    """MVP-7.2 I5: a version saved before indicator params became required is
+    rejected on bot start with the user-facing message naming indicator+param
+    (no hidden fallback, no silent substitution)."""
+    config = {
+        **VALID_STRATEGY_CONFIG,
+        "entry": {
+            "method": "at_bar_close",
+            "groups": [
+                {
+                    "conditions": [
+                        {
+                            "arg1": {
+                                "kind": "indicator",
+                                "name": "RSI",
+                                "timeframe": "5m",
+                                "params": {},
+                            },
+                            "operator": ">",
+                            "arg2": {"kind": "constant", "value": 50.0},
+                        }
+                    ]
+                }
+            ],
+        },
+    }
+    bot = await _seed_bot(db_session, config=config)
+    with pytest.raises(StrategyLoadError, match=r"Индикатор RSI: укажите параметр «период»"):
+        await load_bot_strategy(db_session, bot)
+
+
 # --- 4-5: failed strategy load and risk slot ----------------------------------
 
 
