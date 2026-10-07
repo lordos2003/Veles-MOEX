@@ -396,7 +396,9 @@ async def test_strategy_without_indicator_params_rejected_422(client) -> None:
     rsi_missing_period = _config_with_indicator(_indicator_args("RSI", {}))
     created = await http.post("/api/strategies", json={"name": "rsi", "config": rsi_missing_period})
     assert created.status_code == 422
-    assert "Индикатор RSI: укажите параметр «период»" in str(created.json()["detail"])
+    detail = str(created.json()["detail"])
+    assert "Индикатор RSI: укажите параметр «период»" in detail
+    assert "Value error" not in detail
 
     macd_missing_fast = _config_with_indicator(
         _indicator_args("MACD", {"slow": 26, "signal": 9})
@@ -409,7 +411,9 @@ async def test_strategy_without_indicator_params_rejected_422(client) -> None:
 
     validated = await http.post("/api/strategies/validate", json=rsi_missing_period)
     assert validated.status_code == 422
-    assert "Индикатор RSI: укажите параметр «период»" in str(validated.json()["detail"])
+    detail = str(validated.json()["detail"])
+    assert "Индикатор RSI: укажите параметр «период»" in detail
+    assert "Value error" not in detail
 
 
 async def test_backtest_old_version_without_indicator_params_rejected_422(client) -> None:
