@@ -96,11 +96,11 @@ git ls-remote origin agent/review/mvp-7.1 agent/control
 Подтверждение `git ls-remote` (2026-10-07, после push):
 
 ```
-366f09c<полный-SHA>	refs/heads/agent/review/mvp-7.1
-<REV3-CONTROL-SHA>	refs/heads/agent/control
+366f09c4c45506e6739cebe82c660c42205a3d42	refs/heads/agent/review/mvp-7.1
+6ca137414205fcb839b64f19b2501b64b77137c0	refs/heads/agent/control
 ```
 
 - `agent/review/mvp-7.1` = локальный `366f09c` — **in sync with origin**.
-- `agent/control` = локальный `<REV3-CONTROL>` — **in sync with origin** (в ветке:
-  ревьюерские `ef6cdf2` (раунд 3) и `05bf50c` (PROJECT_STATE); коммит этого отчёта
-  добавлен).
+- `agent/control` = локальный `6ca1374` — **in sync with origin** (в ветке:
+  ревьюерские `ef6cdf2` (раунд 3) и `05bf50c` (PROJECT_STATE); `6ca1374` —
+  коммит этого отчёта вместе с обновлённым `PROJECT_STATE.md`).
