@@ -211,3 +211,6 @@ For a new ChatGPT/Кодер session:
 3. Read the current `.agent/TASK-*.md`, applicable `.agent/REVIEW-*.md`, and latest `.agent/REPORT-*.md`.
 4. Check current Git branch/HEAD and compare with `master` when required.
 5. Continue from the accepted MVP and current control task; do not reconstruct state from chat history.
+
+CI и автослияние включены 2026-10-08, SHA зеркала MVP-7.4 — deda416
+
