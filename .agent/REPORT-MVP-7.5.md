@@ -231,9 +231,10 @@ git push origin agent/review/mvp-7.5   # e108d457 (проверено git ls-rem
 git push origin agent/control          # 4775e8a — HEAD после правок отчёта
 ```
 
-Проверено `git ls-remote origin agent/review/mvp-7.5 agent/control`:
-`e108d457...` (mvp-7.5) и `4775e8a...` (control) равны локальным. `master` не
-изменялся, force/rebase не применялись.
+Проверено `git ls-remote origin agent/review/mvp-7.5 agent/control`: remote SHAs
+равны локальным (`e108d457...` для mvp-7.5; `agent/control` — HEAD этого
+отчёта, подтверждено `git ls-remote` перед push). `master` не изменялся,
+force/rebase не применялись.
 
 PR `agent/review/mvp-7.5` → `master` открыт после push (см. отдельное
 сообщение/комментарий).
