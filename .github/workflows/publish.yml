@@ -1,0 +1,71 @@
+name: Publish
+
+# Автопубликация PR в master без ручных действий владельца.
+# Условия (все обязательны):
+#   1. CI (backend + frontend) зелёный на текущем head SHA.
+#   2. PR только про записи (.agent/**, PROJECT_STATE.md, docs/**) — сливается сам;
+#      если затронут код — нужен комментарий владельца ровно "ACCEPT <полный head SHA>"
+#      (вердикт ревью + «да» владельца в чате).
+#   3. Новый коммит меняет SHA и отменяет ACCEPT.
+# Слияние — merge-коммитом, привязанным к проверенному SHA.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.login == github.repository_owner)
+    steps:
+      - name: Evaluate and merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          if [ -n "${ISSUE_NUMBER:-}" ]; then
+            PR="$ISSUE_NUMBER"
+          else
+            PR="$(gh api "repos/$REPO/pulls?state=open&head=${OWNER}:${RUN_BRANCH}" -q '.[0].number // empty')"
+          fi
+          [ -n "$PR" ] || { echo "нет открытого PR"; exit 0; }
+
+          read -r STATE BASE HEAD DRAFT < <(gh api "repos/$REPO/pulls/$PR" -q '[.state,.base.ref,.head.sha,.draft]|@tsv')
+          if [ "$STATE" != open ] || [ "$BASE" != master ] || [ "$DRAFT" != false ]; then
+            echo "PR не подлежит публикации ($STATE/$BASE/draft=$DRAFT)"; exit 0
+          fi
+          if [ -n "${RUN_SHA:-}" ] && [ "$RUN_SHA" != "$HEAD" ]; then echo "SHA устарел"; exit 0; fi
+
+          # 1. CI зелёный на head SHA
+          for job in backend frontend; do
+            c="$(gh api "repos/$REPO/commits/$HEAD/check-runs?per_page=100" -q "[.check_runs[]|select(.name==\"$job\")]|sort_by(.completed_at)|last|.conclusion // \"none\"")"
+            [ "$c" = success ] || { echo "CI $job = $c — ждём"; exit 0; }
+          done
+
+          # 2. только записи, либо ACCEPT на этот SHA
+          CODE="$(gh api "repos/$REPO/pulls/$PR/files" --paginate -q '.[].filename' | grep -vE '^(\.agent/|docs/|PROJECT_STATE\.md$)' || true)"
+          if [ -n "$CODE" ]; then
+            ok="$(gh api "repos/$REPO/issues/$PR/comments" --paginate -q ".[]|select(.user.login==\"$OWNER\")|.body" | grep -cx "ACCEPT $HEAD" || true)"
+            [ "$ok" -ge 1 ] || { echo "код затронут, нет 'ACCEPT $HEAD' — не сливаю"; exit 0; }
+          fi
+
+          TITLE="$(gh api "repos/$REPO/pulls/$PR" -q .title)"
+          gh api -X PUT "repos/$REPO/pulls/$PR/merge" \
+            -f merge_method=merge -f sha="$HEAD" \
+            -f commit_title="Merge pull request #$PR" -f commit_message="$TITLE"
+          echo "PR #$PR слит на $HEAD"
