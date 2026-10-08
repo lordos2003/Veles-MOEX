@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy import Integer, MetaData
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.brokers.base import BrokerInstrument
+from app.brokers.base import REAL_EXCHANGE_MOEX, BrokerInstrument
 from app.domain.instrument import InstrumentType, TradingStatus
 from app.models import Instrument
 from app.services.instruments import InstrumentService
@@ -38,6 +38,7 @@ def _broker_instrument(
     ticker: str,
     instrument_type: InstrumentType = InstrumentType.SHARE,
     is_active: bool = True,
+    real_exchange: str = REAL_EXCHANGE_MOEX,
 ) -> BrokerInstrument:
     return BrokerInstrument(
         figi=figi,
@@ -51,6 +52,7 @@ def _broker_instrument(
         if is_active
         else TradingStatus.TRADING_UNAVAILABLE,
         exchange="MOEX",
+        real_exchange=real_exchange,
         is_active=is_active,
     )
 
@@ -140,3 +142,48 @@ async def test_sync_from_broker_no_duplicates(session) -> None:
     assert count2 == 3
     rows = await service.list()
     assert len(rows) == 3
+
+
+@pytest.mark.asyncio
+async def test_sync_from_broker_keeps_only_moex(session) -> None:
+    # P8 (MVP-7.3): the sync keeps instruments with the official T-Invest
+    # RealExchange enum REAL_EXCHANGE_MOEX only. Samples mirror the live
+    # sandbox catalog: MOEX share (TQBR) -> MOEX, SPB-listed/foreign share
+    # (e.g. CK Hutchison Holdings, hkd) -> REAL_EXCHANGE_RTS.
+    service = InstrumentService(session)
+    broker = _SyncBroker(
+        [
+            _broker_instrument("F1", "TQBR"),
+            _broker_instrument("F2", "SBER"),
+            _broker_instrument(
+                "F3",
+                "CKC",
+                real_exchange="REAL_EXCHANGE_RTS",
+            ),
+        ]
+    )
+    count = await service.sync_from_broker(broker, "share")
+    assert count == 2
+    rows = await service.list()
+    assert {row.figi for row in rows} == {"F1", "F2"}
+
+
+@pytest.mark.asyncio
+async def test_sync_from_broker_deactivates_missing_rows(session) -> None:
+    # P8 (MVP-7.3): rows of the synced kind that the broker no longer returns
+    # after the MOEX filter (previously synced foreign papers) are deactivated,
+    # not deleted: they vanish from active=true pick lists, historical
+    # references stay intact, no data migration.
+    service = InstrumentService(session)
+    await service.upsert_from_broker(_broker_instrument("F1", "AAA"))
+    await service.upsert_from_broker(_broker_instrument("F2", "BBB"))
+    await session.commit()
+
+    broker = _SyncBroker([_broker_instrument("F1", "AAA")])
+    count = await service.sync_from_broker(broker, "share")
+    assert count == 1
+
+    active = await service.list(active=True)
+    assert [row.figi for row in active] == ["F1"]
+    inactive = await service.list(active=False)
+    assert [row.figi for row in inactive] == ["F2"]

@@ -40,7 +40,7 @@ export function OverviewPage() {
       const [st, acc, inst, pos, ord, dl] = await Promise.all([
         api.get<TInvestStatus>("/api/tinvest/status"),
         api.get<AccountInfo[]>("/api/accounts"),
-        api.get<InstrumentInfo[]>("/api/instruments"),
+        api.get<InstrumentInfo[]>("/api/instruments?active=true"),
         api.get<PositionInfo[]>("/api/positions").catch(() => [] as PositionInfo[]),
         api.get<OrderInfo[]>("/api/orders").catch(() => [] as OrderInfo[]),
         api.get<{ deal_id: string; figi: string; side: string; quantity: string; price: string }[]>("/api/deals").catch(() => []),

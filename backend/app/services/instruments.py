@@ -10,7 +10,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.brokers.base import BrokerAdapter, BrokerInstrument
+from app.brokers.base import REAL_EXCHANGE_MOEX, BrokerAdapter, BrokerInstrument
 from app.domain.instrument import InstrumentType
 from app.models.instrument import Instrument
 
@@ -83,11 +83,39 @@ class InstrumentService:
     async def sync_from_broker(self, broker: BrokerAdapter, kind: str | None = None) -> int:
         """Synchronize instruments from the broker into PostgreSQL.
 
-        Existing FIGIs are updated, new ones are created, and inactive status is
-        preserved. Returns the number of instruments processed.
+        Only MOEX instruments are kept (P8, MVP-7.3): the project works solely
+        with Moscow Exchange papers, and T-Invest's free-text ``exchange`` is a
+        trading-schedule value (e.g. ``moex_morning_weekend``), not a market.
+        The reliable marker is the official ``realExchange`` enum
+        (``REAL_EXCHANGE_MOEX`` = «Московская биржа», proto/instruments.proto).
+        Verified against the live sandbox catalog (MOEX shares TQBR/MTQR →
+        ``REAL_EXCHANGE_MOEX``; SPB-listed and foreign shares → RTS/UNSPECIFIED).
+
+        Existing FIGIs are updated, new ones are created. Rows of the same
+        instrument kind that the broker no longer returns (after the filter —
+        i.e. previously synced foreign/delisted papers) are deactivated, not
+        deleted, so they disappear from the ``active=true`` pick lists without
+        a data migration and without touching historical references.
         """
         broker_instruments = await broker.get_instruments(kind)
-        for item in broker_instruments:
+        moex = [i for i in broker_instruments if i.real_exchange == REAL_EXCHANGE_MOEX]
+        seen = {item.figi for item in moex}
+        for item in moex:
             await self.upsert_from_broker(item)
+        await self._deactivate_missing(kind, seen)
         await self._session.commit()
-        return len(broker_instruments)
+        return len(moex)
+
+    async def _deactivate_missing(self, kind: str | None, seen: set[str]) -> None:
+        """Deactivate rows of the synced kind that the broker did not return."""
+        type_value = (kind or "share").upper()
+        result = await self._session.execute(
+            select(Instrument).where(
+                Instrument.instrument_type == type_value,
+                Instrument.is_active.is_(True),
+            )
+        )
+        for row in result.scalars():
+            if row.figi not in seen:
+                row.is_active = False
+                await self._session.flush()

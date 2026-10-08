@@ -242,9 +242,12 @@ async def test_sandbox_disabled_returns_409(client) -> None:
 
 async def test_sandbox_mapping_on_fake_client(client) -> None:
     http, _ = client
+    # P5 (MVP-7.3): T-Invest REST returns camelCase — OpenSandboxAccount →
+    # {"accountId": ...}; SandboxPayIn/CloseSandboxAccount requests also use
+    # "accountId"; the SandboxPayIn response keeps "balance".
     fake = TInvestFakeClient(
         responses={
-            f"{_SANDBOX}/OpenSandboxAccount": {"account_id": "sandbox-1"},
+            f"{_SANDBOX}/OpenSandboxAccount": {"accountId": "sandbox-1"},
             f"{_SANDBOX}/SandboxPayIn": {"balance": {"units": "50000", "nano": 0}},
             f"{_SANDBOX}/CloseSandboxAccount": {},
         }
@@ -275,13 +278,13 @@ async def test_sandbox_mapping_on_fake_client(client) -> None:
             (
                 f"{_SANDBOX}/SandboxPayIn",
                 {
-                    "account_id": "sandbox-1",
+                    "accountId": "sandbox-1",
                     "amount": {"currency": "RUB", "units": "50000", "nano": 0},
                 },
             )
         ]
         close_calls = [c for c in fake.calls if c[0] == f"{_SANDBOX}/CloseSandboxAccount"]
-        assert close_calls == [(f"{_SANDBOX}/CloseSandboxAccount", {"account_id": "sandbox-1"})]
+        assert close_calls == [(f"{_SANDBOX}/CloseSandboxAccount", {"accountId": "sandbox-1"})]
     finally:
         app.dependency_overrides.pop(get_settings_dep, None)
         app.dependency_overrides.pop(get_broker_adapter, None)

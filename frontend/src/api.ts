@@ -68,6 +68,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     ...((init?.headers as Record<string, string>) ?? {}),
   };
+  // P1 (MVP-7.3): a request with a body must be JSON — browsers otherwise send
+  // `text/plain`, and recent FastAPI versions reject a string body.
+  if (init?.body !== undefined && headers["Content-Type"] === undefined) {
+    headers["Content-Type"] = "application/json";
+  }
   const res = await fetch(path, { ...init, headers });
   const text = await res.text();
   let body: unknown = null;

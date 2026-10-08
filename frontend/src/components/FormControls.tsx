@@ -160,6 +160,15 @@ export function ErrorBanner(props: { text: string | null }) {
   );
 }
 
+export function SuccessBanner(props: { text: string | null }) {
+  if (!props.text) return null;
+  return (
+    <div className="rounded border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300">
+      {props.text}
+    </div>
+  );
+}
+
 export function Loading(props: { text?: string }) {
   return <p className="text-sm text-zinc-500">{props.text ?? "Загрузка…"}</p>;
 }

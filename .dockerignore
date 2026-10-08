@@ -8,3 +8,9 @@
 **/dist
 **/.env
 .git
+
+# P7 (MVP-7.3): local first-run workarounds must not enter the build context.
+# docker/certs/ (official Russian Trusted CA certs) IS needed by the backend
+# image and stays included.
+/certs
+docker-compose.override.yml
