@@ -11,9 +11,8 @@
   Примечание: локальный указатель `master` в рабочей копии отставал (`b9bdb31`,
   до MVP-6.14); дистанционно проверено `git ls-remote origin master` → `734f861`,
   дифф построен от `734f861` (`git diff 734f861`).
-- Отчёт: `agent/control:.agent/REPORT-MVP-7.5.md` — коммиты **`f144a0a`** (REPORT)
-  и **`e86c4ff`** (SHA/подтверждение) pushed
-  (`git ls-remote origin agent/control` → `e86c4ff25...` = локальный).
+- Отчёт: `agent/control:.agent/REPORT-MVP-7.5.md` — коммит **`f144a0a`**;
+  финальный HEAD `agent/control` — см. «Публикация» (ls-remote).
 - Самостоятельная приёмка не объявлялась — ревью за независимым ревьюером.
 
 ## U9. «Инструмент (id)» → «Ценная бумага»
@@ -228,10 +227,13 @@ EMA 9/RSI 14/ATR 14 = 5×период+1; MACD 12/26/9 → 5×26+1=131; свеч�
 ## Публикация
 
 ```
-git push origin agent/review/mvp-7.5
-git push origin agent/control
-git ls-remote origin agent/review/mvp-7.5 agent/control
+git push origin agent/review/mvp-7.5   # e108d457 (проверено git ls-remote)
+git push origin agent/control          # 4775e8a — HEAD после правок отчёта
 ```
+
+Проверено `git ls-remote origin agent/review/mvp-7.5 agent/control`:
+`e108d457...` (mvp-7.5) и `4775e8a...` (control) равны локальным. `master` не
+изменялся, force/rebase не применялись.
 
 PR `agent/review/mvp-7.5` → `master` открыт после push (см. отдельное
 сообщение/комментарий).
