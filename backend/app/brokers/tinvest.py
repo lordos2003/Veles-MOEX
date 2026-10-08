@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from app.brokers.base import (
+    REAL_EXCHANGE_MOEX,
     BrokerAccount,
     BrokerAdapter,
     BrokerDeal,
@@ -766,6 +767,12 @@ class TInvestAdapter(BrokerAdapter):
         tick_size = _quotation_to_decimal(raw.get("minPriceIncrement"))
         lot = raw.get("lot")
         api_available = bool(raw.get("apiTradeAvailableFlag", True))
+        real_exchange = raw.get("realExchange")
+        # P8 (MVP-7.3): display a meaningful exchange. `exchange` from T-Invest
+        # is the trading section/schedule ("moex_morning_weekend", ...) — raw
+        # values like "moex_mrng_evng_e_wknd_dlr" or "unknown" are meaningless
+        # in the UI. MOEX instruments (RealExchange enum) are labelled "MOEX".
+        exchange = "MOEX" if real_exchange == REAL_EXCHANGE_MOEX else raw.get("exchange")
         return BrokerInstrument(
             figi=figi,
             ticker=raw.get("ticker"),
@@ -775,7 +782,8 @@ class TInvestAdapter(BrokerAdapter):
             lot_size=int(lot) if lot is not None else None,
             tick_size=tick_size,
             trading_status=_map_trading_status(api_available),
-            exchange=raw.get("exchange"),
+            exchange=exchange,
+            real_exchange=real_exchange,
             is_active=api_available,
         )
 

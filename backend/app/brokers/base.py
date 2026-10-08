@@ -146,6 +146,12 @@ class BrokerOrder:
     reject_info: str | None = None
 
 
+# Official T-Invest RealExchange enum value for Moscow Exchange
+# (proto/instruments.proto: REAL_EXCHANGE_MOEX — «Московская биржа»).
+# The project syncs MOEX instruments only (P8, MVP-7.3).
+REAL_EXCHANGE_MOEX = "REAL_EXCHANGE_MOEX"
+
+
 @dataclass
 class BrokerInstrument:
     """Broker-agnostic instrument metadata (normalized to domain types)."""
@@ -159,6 +165,11 @@ class BrokerInstrument:
     tick_size: Decimal | None = None
     trading_status: TradingStatus = TradingStatus.TRADING_AVAILABLE
     exchange: str | None = None
+    # Official broker exchange enum (T-Invest RealExchange, instruments.proto):
+    # e.g. "REAL_EXCHANGE_MOEX" = Moscow Exchange (P8, MVP-7.3). The instrument
+    # sync filter keys on this verbatim value — never derive "MOEX-ness" from
+    # the display label or from `exchange`.
+    real_exchange: str | None = None
     is_active: bool = True
 
 

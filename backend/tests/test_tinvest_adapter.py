@@ -88,6 +88,9 @@ async def test_get_instrument_normalized() -> None:
                     "instrumentType": "share",
                     "apiTradeAvailableFlag": True,
                     "minPriceIncrement": {"units": "1", "nano": 0},
+                    # P8 (MVP-7.3): real sandbox sample of a MOEX share.
+                    "realExchange": "REAL_EXCHANGE_MOEX",
+                    "exchange": "moex_morning_weekend",
                 }
             }
         }
@@ -99,6 +102,34 @@ async def test_get_instrument_normalized() -> None:
     assert instrument.lot_size == 10
     assert instrument.tick_size == _quotation_to_decimal({"units": "1", "nano": 0})
     assert instrument.is_active is True
+    # P8: MOEX enum -> displayable exchange label; raw schedule value is not
+    # shown verbatim anywhere.
+    assert instrument.real_exchange == "REAL_EXCHANGE_MOEX"
+    assert instrument.exchange == "MOEX"
+
+
+@pytest.mark.asyncio
+async def test_to_instrument_keeps_raw_exchange_for_non_moex() -> None:
+    # P8 (MVP-7.3): a foreign/SPB-listed paper (real sandbox sample — CK
+    # Hutchison-class hkd share from SPBHKEX) must NOT be relabelled "MOEX":
+    # the display label follows the RealExchange enum only.
+    instrument = TInvestAdapter._to_instrument(
+        {
+            "figi": "BBG0013B4HH5",
+            "ticker": "CKC",
+            "name": "CK Hutchison Holdings",
+            "currency": "HKD",
+            "lot": 10,
+            "instrumentType": "share",
+            "apiTradeAvailableFlag": False,
+            "realExchange": "REAL_EXCHANGE_RTS",
+            "exchange": "unknown",
+        },
+        "share",
+    )
+    assert instrument.real_exchange == "REAL_EXCHANGE_RTS"
+    assert instrument.exchange == "unknown"
+    assert instrument.is_active is False
 
 
 @pytest.mark.asyncio
