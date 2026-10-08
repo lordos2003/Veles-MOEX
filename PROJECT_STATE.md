@@ -17,10 +17,10 @@
 
 ## Current task
 
-**MVP-7.3 — Первый запуск в Docker: исправления по итогам живого прогона** — **CHANGES REQUESTED (раунд 1, 2026-10-08); блокер B1 исправлен (REV1, 2026-10-08), ждёт раунд 2**.
-Проверенная реализация раунда 1: `687642a` (`agent/review/mvp-7.3`, база `master` @ `55feb68`); задание `.agent/TASK-MVP-7.3-DOCKER-FIRST-RUN.md`, ревью `.agent/REVIEW-MVP-7.3.md`, отчёт `.agent/REPORT-MVP-7.3.md`; Issue #23.
-REV1: `5589e93` на `agent/review/mvp-7.3` — `ENV SSL_CERT_FILE/SSL_CERT_DIR` в `docker/backend.Dockerfile` (certifi направлен на системный набор с корнем Минцифры; TLS включён, `verify_mode` = 2), отчёт `.agent/REPORT-MVP-7.3-REV1.md`. Проверено в контейнере без переменных оператора (`httpx.get` → 404, не ConnectError) и повторным живым прогоном на чистой копии (без `certs/` и `docker-compose.override.yml`): T-Invest «Подключено», справочник 270 MOEX/rub, песочница open+pay-in 500000, UI-смок со скриншотами.
-Для следующего MVP (после 7.3): кнопка «Проверить» в форме стратегии всегда 422 (UI шлёт `{config}`, API ждёт голый конфиг; с MVP-7.1); сырой JSON в баннере 422; `pydantic-settings>=2.7`; защита от пустого ответа брокера при синхронизации.
+**MVP-7.3 — Первый запуск в Docker: исправления по итогам живого прогона** — **ACCEPTED (раунд 2, 2026-10-08)**, ждёт Docker-подтверждения владельца и публикации в master.
+Принятая реализация: `5589e93` (`agent/review/mvp-7.3`, база `master` @ `55feb68`); задание `.agent/TASK-MVP-7.3-DOCKER-FIRST-RUN.md`, ревью `.agent/REVIEW-MVP-7.3.md` (раунд 1 CHANGES REQUESTED: B1; раунд 2 ACCEPT), отчёты `.agent/REPORT-MVP-7.3.md`, `-REV1`; Issue #23.
+Проверка (независимо, Python 3.12 + `requirements.lock`, живой прогон на чистом PostgreSQL и в браузере): `pytest 591 passed, 1 skipped`; `ruff` чисто; `npm test 34 passed`; `npm run build` ок. B1: `ENV SSL_CERT_FILE`/`SSL_CERT_DIR` в `docker/backend.Dockerfile` (приложение доверяет системному хранилищу с корнем Минцифры, проверка TLS включена).
+Для следующего MVP: кнопка «Проверить» в форме стратегии всегда 422 (UI шлёт `{config}`, API ждёт голый конфиг; с MVP-7.1); сырой JSON в баннере 422; `pydantic-settings>=2.7`; защита от пустого ответа брокера при синхронизации.
 
 
 - При первом запуске в песочнице проверить вручную: события `OrderStateStream`; поведение сделки, когда песочница удаляет неисполненные заявки после сессии.
