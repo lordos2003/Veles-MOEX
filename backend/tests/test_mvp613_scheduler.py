@@ -1181,7 +1181,7 @@ async def test_s4_two_failures_then_success_resets_counter() -> None:
 
 async def test_s4_non_transient_config_error_fails_bot_immediately() -> None:
     clock = FakeClock(T0 + timedelta(seconds=5))
-    rt = _runtime(1, lookback_bars=None)  # LookbackNotConfigured (non-transient)
+    rt = _runtime(1, timeframe=None)  # TimeframeNotConfigured (non-transient)
     snaps = FakeSnapshotProvider(_single_candle_snapshot(T0 - timedelta(minutes=5)))
     sched = _make_scheduler(clock, rt, snapshot_provider=snaps)
 
@@ -1190,7 +1190,7 @@ async def test_s4_non_transient_config_error_fails_bot_immediately() -> None:
     assert rt.executions == []
     assert snaps.requests == []  # failed before any broker snapshot
     assert len(rt.fail_reasons) == 1
-    assert "lookback_bars is not configured" in rt.fail_reasons[0]
+    assert "timeframe is not configured" in rt.fail_reasons[0]
     assert sched.last_error_for(1) == rt.fail_reasons[0]
     assert rt.state is BotState.ERROR
 
@@ -1270,7 +1270,7 @@ async def test_s1_slow_bot_does_not_delay_another_bot() -> None:
 
 async def test_s1_failing_bot_does_not_block_other_bots() -> None:
     clock = FakeClock(T0 + timedelta(seconds=5))
-    failing = _runtime(1, lookback_bars=None)  # fails immediately (non-transient)
+    failing = _runtime(1, timeframe=None)  # fails immediately (non-transient)
     healthy = _runtime(2)
     sched = _make_scheduler(clock, [failing, healthy])
 

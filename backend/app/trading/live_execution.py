@@ -22,6 +22,7 @@ from app.trading.market_context import (
     MarketContextUnavailable,
     build_market_context,
     build_market_snapshot_context,
+    resolved_lookback_bars,
 )
 from app.trading.order_manager import OrderManager
 from app.trading.position_manager import PositionManager
@@ -371,20 +372,18 @@ async def build_live_service() -> LiveExecutionService:
     Market snapshot / per-bot timeframe (MVP-6.10): the bot runtime's
     market-context provider builds the live MarketContext for a strategy cycle
     from the bot's own configured timeframe
-    (``StrategyConfig.timeframe``) and the explicitly configured snapshot
-    lookback (``StrategyConfig.lookback_bars``) via
-    ``MarketDataService.get_snapshot`` ->
+    (``StrategyConfig.timeframe``) and the snapshot history resolved by
+    contract H1 (MVP-7.5 U10: an explicit ``StrategyConfig.lookback_bars``
+    takes priority, otherwise the depth is computed from the filter arguments
+    — ``resolved_lookback_bars``) via ``MarketDataService.get_snapshot`` ->
     ``build_market_snapshot_context``. The Strategy path stays broker-neutral:
     T-Invest-specific mapping remains inside ``TInvestAdapter``; prices stay
     ``Decimal`` and timestamps timezone-aware UTC. No global runtime timeframe
     or implicit default exists: a missing timeframe fails the cycle with
-    ``TimeframeNotConfigured``, a missing explicit lookback fails the cycle
-    with ``LookbackNotConfigured`` (no lookback is inferred from indicator
-    periods/shifts — the Veles documentation defines no universal
-    warmup/history rule), and a missing/invalid snapshot blocks live intent
-    creation (``MarketDataUnavailable``). The MVP-6.9 position-state invariant
-    is preserved (unresolved position state still blocks all live intents);
-    Backtest semantics are untouched.
+    ``TimeframeNotConfigured``, and a missing/invalid snapshot blocks live
+    intent creation (``MarketDataUnavailable``). The MVP-6.9 position-state
+    invariant is preserved (unresolved position state still blocks all live
+    intents); Backtest semantics are untouched.
     """
     from app.bots.repository import BotRepository
     from app.bots.strategy import (
@@ -446,12 +445,12 @@ async def build_live_service() -> LiveExecutionService:
 
         async def _make_market_context(bot_strategy: BotStrategy) -> MarketContext:
             # MVP-6.10: the live MarketContext for this bot's strategy cycle is
-            # built from the bot's own configured timeframe and the explicitly
-            # configured snapshot lookback (lookback_bars) via the broker-
-            # neutral MarketDataService. A missing timeframe, a missing
-            # explicit lookback, or a missing/invalid snapshot fails the cycle
-            # explicitly (no fabricated market data, no implicit defaults, no
-            # lookback inferred from indicator semantics).
+            # built from the bot's own configured timeframe and the snapshot
+            # history resolved by contract H1 (explicit lookback_bars wins,
+            # else computed from the filter arguments) via the broker-neutral
+            # MarketDataService. A missing timeframe or a missing/invalid
+            # snapshot fails the cycle explicitly (no fabricated market data,
+            # no implicit defaults).
             bot = await bot_repository.get(bot_id)
             if bot is None:
                 raise StrategyLoadError(f"bot {bot_id} not found")
@@ -629,10 +628,12 @@ async def build_live_service() -> LiveExecutionService:
         return instrument.figi
 
     async def _scheduler_snapshot(figi: str, config: StrategyConfig) -> MarketSnapshot:
-        # The scheduler validates timeframe/lookback before calling; the
-        # snapshot is the raw one S2 confirms from (no fabrication).
+        # The scheduler validates the timeframe before calling. The snapshot
+        # depth is resolved by contract H1 (explicit lookback_bars wins, else
+        # computed from the filter arguments); the snapshot is the raw one S2
+        # confirms from (no fabrication).
         return await market_data.get_snapshot(
-            figi, config.timeframe, config.lookback_bars
+            figi, config.timeframe, resolved_lookback_bars(config)
         )
 
     scheduler = LiveCycleScheduler(

@@ -39,6 +39,18 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Pydantic discriminator errors (the strategy form's «Тейк-профит» etc.)
+ * come with a technical English message ("Unable to extract tag using
+ * discriminator 'kind'"). M3 (MVP-7.4 review): show the readable Russian text.
+ */
+export function validationMessage(item: ValidationItem | null | undefined): string {
+  if (item?.type === "union_tag_not_found" || item?.type === "union_tag_invalid") {
+    return "Выберите вид тейк-профита.";
+  }
+  return item?.msg ?? "";
+}
+
 /** The user-facing message of an API error: the backend text, unchanged. */
 export function verbatimMessage(detail: unknown): string {
   detail = unwrapDetail(detail);
@@ -49,7 +61,8 @@ export function verbatimMessage(detail: unknown): string {
         const loc = (item?.loc ?? []) as (string | number)[];
         const paths = loc.filter((p) => typeof p === "string" && p !== "body");
         const where = paths.length ? labelFor(paths.join(".")) : "";
-        return where ? `${where}: ${item?.msg ?? ""}` : (item?.msg ?? "");
+        const msg = validationMessage(item);
+        return where ? `${where}: ${msg}` : msg;
       })
       .join("; ");
   }
@@ -76,7 +89,7 @@ export function fieldErrors(detail: unknown): Record<string, string> {
   for (const item of detail as ValidationItem[]) {
     const loc = (item.loc ?? []).filter((p) => typeof p === "string" && p !== "body");
     const path = loc.join(".");
-    if (path) out[path] = item.msg ?? "Ошибка";
+    if (path) out[path] = validationMessage(item) || "Ошибка";
   }
   return out;
 }
