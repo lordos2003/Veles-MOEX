@@ -262,3 +262,16 @@ git ls-remote origin agent/review/mvp-7.4 agent/control
 **`4f36e24` — pushed, in sync with origin** (ветка `agent/review/mvp-7.4`;
 создана на origin, SHA совпадает с локальным). `master` не изменялся;
 `--force`/rebase не применялись.
+
+Подтверждение (`git ls-remote origin agent/review/mvp-7.4 agent/control`)
+после публикации:
+
+```
+bba246c21ff49839b2474ee47796099cafe5a46	refs/heads/agent/control
+4f36e2482e75d4c5373c8be3f759eff713489638	refs/heads/agent/review/mvp-7.4
+```
+
+Первая попытка push `agent/control` была отклонена (на origin появился
+коммит владельца `354f627` — делегирование слияний Claude, §5c).
+Выполнен plain `git merge origin/agent/control` + повторный push — без
+`--force` и rebase. Локальные SHA совпадают с удалёнными.
