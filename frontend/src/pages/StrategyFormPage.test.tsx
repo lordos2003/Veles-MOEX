@@ -11,8 +11,9 @@
  * accessible name.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { ApiError, api } from "../api";
 import { StrategyFormPage } from "./StrategyFormPage";
 
 // vitest runs without globals, so @testing-library cannot auto-cleanup.
@@ -105,22 +106,23 @@ const { schemaFixture } = vi.hoisted(() => {
   return { schemaFixture };
 });
 
-vi.mock("../api", () => ({
-  ApiError: class ApiError extends Error {},
-  fieldErrors: () => ({}),
-  verbatimMessage: (detail: unknown) => String(detail),
-  api: {
-    get: vi.fn(async (path: string) => {
-      if (path === "/api/strategies/schema") return schemaFixture;
-      if (path === "/api/strategies/indicators") return [];
-      throw new Error(`unexpected path: ${path}`);
-    }),
-    post: vi.fn(),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  },
-}));
+vi.mock("../api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api")>();
+  return {
+    ...actual,
+    api: {
+      get: vi.fn(async (path: string) => {
+        if (path === "/api/strategies/schema") return schemaFixture;
+        if (path === "/api/strategies/indicators") return [];
+        throw new Error(`unexpected path: ${path}`);
+      }),
+      post: vi.fn(),
+      put: vi.fn(),
+      patch: vi.fn(),
+      delete: vi.fn(),
+    },
+  };
+});
 
 /** The label and the control are siblings inside one field div. */
 function fieldControl(selector: string, label: RegExp): HTMLInputElement | HTMLSelectElement {
@@ -180,5 +182,52 @@ describe("REV2 B4: новая форма стратегии берёт знач�
     const stopLoss = fieldControl("input", /^Стоп-лосс$/) as HTMLInputElement;
     expect(stopLoss.type).toBe("checkbox");
     expect(stopLoss.checked).toBe(false);
+  });
+});
+
+describe("MVP-7.4 U5/U6: кнопка «Проверить»", () => {
+  it("U5: шлёт голый конфиг (без обёртки { config }) и показывает вердикт live_deal", async () => {
+    const post = vi.mocked(api.post);
+    post.mockResolvedValue({ valid: true, live_deal: { supported: true, reason: null } });
+    renderNewStrategy();
+    await screen.findByRole("heading", { name: "Новая стратегия" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Проверить" }));
+    await screen.findByText("Для живой торговли подходит.");
+
+    expect(post).toHaveBeenCalledWith("/api/strategies/validate", expect.any(Object));
+    const body = post.mock.calls[0][1] as Record<string, unknown>;
+    expect(body).not.toHaveProperty("config");
+    expect(body).toHaveProperty("entry");
+  });
+
+  it("U6: ошибка «не выбран вид тейк-профита» — у поля «Тейк-профит» и читаемый баннер", async () => {
+    vi.mocked(api.post).mockRejectedValue(
+      new ApiError(422, {
+        detail: [
+          {
+            type: "missing",
+            loc: ["body", "exit", "take_profit"],
+            msg: "Field required",
+            input: {},
+          },
+        ],
+      }),
+    );
+    renderNewStrategy();
+    await screen.findByRole("heading", { name: "Новая стратегия" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Проверить" }));
+
+    // Баннер в формате «поле: сообщение», без сырого JSON-списка.
+    await screen.findByText("Тейк-профит: Field required");
+
+    // Сообщение привязано к полю «Тейк-профит».
+    const cell = screen
+      .getByText(
+        (content, el) => el?.tagName === "LABEL" && content.startsWith("Тейк-профит"),
+      )
+      .parentElement;
+    expect(cell?.textContent).toContain("Field required");
   });
 });

@@ -10,6 +10,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.brokers import InvalidRequestError
 from app.brokers.base import REAL_EXCHANGE_MOEX, BrokerAdapter, BrokerInstrument
 from app.domain.instrument import InstrumentType
 from app.models.instrument import Instrument
@@ -99,6 +100,10 @@ class InstrumentService:
         """
         broker_instruments = await broker.get_instruments(kind)
         moex = [i for i in broker_instruments if i.real_exchange == REAL_EXCHANGE_MOEX]
+        if not moex:
+            # U8: an empty broker catalog (or no MOEX papers after the filter)
+            # must not silently deactivate previously synced instruments.
+            raise InvalidRequestError("справочник брокера пуст, записи не изменены")
         seen = {item.figi for item in moex}
         for item in moex:
             await self.upsert_from_broker(item)

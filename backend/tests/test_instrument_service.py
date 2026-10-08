@@ -10,6 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy import Integer, MetaData
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.brokers import InvalidRequestError
 from app.brokers.base import REAL_EXCHANGE_MOEX, BrokerInstrument
 from app.domain.instrument import InstrumentType, TradingStatus
 from app.models import Instrument
@@ -187,3 +188,40 @@ async def test_sync_from_broker_deactivates_missing_rows(session) -> None:
     assert [row.figi for row in active] == ["F1"]
     inactive = await service.list(active=False)
     assert [row.figi for row in inactive] == ["F2"]
+
+
+@pytest.mark.asyncio
+async def test_sync_from_broker_empty_response_keeps_rows(session) -> None:
+    # U8: an empty broker catalog must not silently deactivate previously
+    # synced instruments — the sync raises a clear error, rows stay intact.
+    service = InstrumentService(session)
+    await service.upsert_from_broker(_broker_instrument("F1", "AAA"))
+    await service.upsert_from_broker(_broker_instrument("F2", "BBB"))
+    await session.commit()
+
+    with pytest.raises(InvalidRequestError) as excinfo:
+        await service.sync_from_broker(_SyncBroker([]), "share")
+    assert "справочник брокера пуст, записи не изменены" in str(excinfo.value)
+
+    active = await service.list(active=True)
+    assert {row.figi for row in active} == {"F1", "F2"}
+
+
+@pytest.mark.asyncio
+async def test_sync_from_broker_no_moex_papers_keeps_rows(session) -> None:
+    # U8: a broker response with papers but zero MOEX instruments after the
+    # filter is the same situation — clear error, no deactivation.
+    service = InstrumentService(session)
+    await service.upsert_from_broker(_broker_instrument("F1", "AAA"))
+    await session.commit()
+
+    broker = _SyncBroker(
+        [_broker_instrument("F9", "FOREIGN", real_exchange="REAL_EXCHANGE_RTS")]
+    )
+    with pytest.raises(InvalidRequestError) as excinfo:
+        await service.sync_from_broker(broker, "share")
+    assert "справочник брокера пуст, записи не изменены" in str(excinfo.value)
+
+    active = await service.list(active=True)
+    assert [row.figi for row in active] == ["F1"]
+    assert await service.list(active=False) == []

@@ -299,6 +299,8 @@ export interface AccountInfo {
   currency: string;
   available_cash: string;
   equity: string;
+  /** U1: false when the portfolio for this account could not be fetched — UI shows "—". */
+  portfolio_available?: boolean;
   currencies: string[];
   name: string | null;
   account_type: string | null;

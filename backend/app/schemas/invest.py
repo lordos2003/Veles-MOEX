@@ -37,6 +37,9 @@ class AccountInfoResponse(BaseModel):
     currency: str = "RUB"
     available_cash: Decimal = Decimal("0")
     equity: Decimal = Decimal("0")
+    # U1: False when the portfolio for this account could not be fetched
+    # (e.g. a closed account) — the UI shows empty values ("—") instead.
+    portfolio_available: bool = True
     currencies: list[str] = []
     name: str | None = None
     account_type: str | None = None

@@ -8,6 +8,7 @@ global handler.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Annotated
 
@@ -74,10 +75,45 @@ async def list_accounts(
     broker: Annotated[BrokerAdapter, Depends(get_broker_adapter)],
     account_service: Annotated[AccountService, Depends(get_account_service)],
 ) -> list[AccountInfoResponse]:
-    """List broker accounts with local id / saved flag when tracked locally."""
+    """List broker accounts with local id / saved flag and portfolio summary.
+
+    Cash/equity come from GetPortfolio per account (U1) — the same calculation
+    as ``account_info``. Portfolio queries run concurrently with a bounded
+    limit; an error for one account (e.g. a closed one) does not break the
+    whole list: such an account is returned with ``portfolio_available=False``.
+    """
     accounts = await broker.get_accounts()
     local_ids = await account_service.local_by_broker_ids([acc.account_id for acc in accounts])
-    return [_account_to_schema(acc, local_id=local_ids.get(acc.account_id)) for acc in accounts]
+    portfolios = await _account_portfolios(broker, accounts)
+    return [
+        _account_to_schema(
+            acc,
+            local_id=local_ids.get(acc.account_id),
+            portfolio=portfolios.get(acc.account_id),
+            portfolio_available=acc.account_id in portfolios,
+        )
+        for acc in accounts
+    ]
+
+
+async def _account_portfolios(
+    broker: BrokerAdapter, accounts: list[BrokerAccount]
+) -> dict[str, BrokerAccount]:
+    """Fetch one portfolio summary per account, concurrently and bounded."""
+    semaphore = asyncio.Semaphore(5)
+    found: dict[str, BrokerAccount] = {}
+
+    async def fetch(account_id: str) -> None:
+        async with semaphore:
+            try:
+                found[account_id] = await broker.get_account(account_id)
+            except TInvestError:
+                # One unavailable account (closed/foreign) must not break the list.
+                return
+
+    if accounts:
+        await asyncio.gather(*(fetch(account.account_id) for account in accounts))
+    return found
 
 
 @router.post("/accounts/sync", response_model=SyncResponse)
@@ -217,15 +253,18 @@ def _account_to_schema(
     account: BrokerAccount,
     positions: list[BrokerPosition] | None = None,
     local_id: int | None = None,
+    portfolio: BrokerAccount | None = None,
+    portfolio_available: bool = True,
 ) -> AccountInfoResponse:
+    values = portfolio if portfolio is not None else account
     return AccountInfoResponse(
         account_id=account.account_id,
         id=local_id,
         is_saved=local_id is not None,
         broker=account.broker,
-        currency=account.currency,
-        available_cash=account.available_cash,
-        equity=account.equity,
+        currency=values.currency,
+        available_cash=values.available_cash,
+        equity=values.equity,
         currencies=account.currencies,
         name=account.name,
         account_type=account.account_type,
@@ -233,6 +272,7 @@ def _account_to_schema(
         opened_at=account.opened_at,
         closed_at=account.closed_at,
         positions=[_position_to_schema(position) for position in (positions or [])],
+        portfolio_available=portfolio_available,
     )
 
 

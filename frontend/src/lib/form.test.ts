@@ -11,7 +11,7 @@
 import { describe, expect, it } from "vitest";
 import { compact, formFromConfig, formToConfig, initialValue, propertyMetas } from "./schema";
 import { collectMissingIndicatorArgs } from "../components/FilterGroupEditor";
-import { fieldErrors, verbatimMessage } from "../api";
+import { fieldErrors, verbatimMessage, ApiError } from "../api";
 import type { IndicatorResponse, SchemaNode } from "../types";
 
 const defs: Record<string, SchemaNode> = {
@@ -171,6 +171,32 @@ describe("U8.3 ошибки 422 с путями попадают к нужным
   it("строковый detail показывается дословно", () => {
     expect(verbatimMessage("period from 2020-01-01 to 2020-02-01 estimates 100000 candles")).toBe(
       "period from 2020-01-01 to 2020-02-01 estimates 100000 candles",
+    );
+  });
+});
+
+describe("MVP-7.4 U6: читаемые 422-сообщения", () => {
+  const item = {
+    type: "missing",
+    loc: ["body", "exit", "take_profit"],
+    msg: "Field required",
+    input: {},
+  };
+
+  it("ApiError распаковывает конверт { detail: [...] }", () => {
+    const err = new ApiError(422, { detail: [item] });
+    expect(err.detail).toEqual([item]);
+    expect(err.message).toBe("Тейк-профит: Field required");
+  });
+
+  it("verbatimMessage показывает русское имя поля вместо точечного пути", () => {
+    expect(verbatimMessage([item])).toBe("Тейк-профит: Field required");
+    expect(verbatimMessage({ detail: [item] })).toBe("Тейк-профит: Field required");
+  });
+
+  it("сообщение без пути показывается без префикса", () => {
+    expect(verbatimMessage([{ type: "missing", loc: ["body"], msg: "Что-то пошло не так" }])).toBe(
+      "Что-то пошло не так",
     );
   });
 });
