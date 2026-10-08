@@ -6,13 +6,13 @@
 
 - Ветка реализации: `agent/review/mvp-7.5` (от `master @ 734f861`)
   - **`e108d45`** — U9, U10 (H1, вариант B), U11, M1–M3 — **pushed, in sync with origin**
-    (подтверждение `git ls-remote` в «Публикация»).
+    (`git ls-remote origin agent/review/mvp-7.5` → `e108d457...` = локальный).
 - База: `origin/master @ 734f861` (содержит MVP-7.4 и CI). `master` не изменялся.
   Примечание: локальный указатель `master` в рабочей копии отставал (`b9bdb31`,
   до MVP-6.14); дистанционно проверено `git ls-remote origin master` → `734f861`,
   дифф построен от `734f861` (`git diff 734f861`).
-- Отчёт: `agent/control:.agent/REPORT-MVP-7.5.md` — коммит в `agent/control`
-  pushed (см. «Публикация»).
+- Отчёт: `agent/control:.agent/REPORT-MVP-7.5.md` — коммит **`f144a0a`**
+  pushed (`git ls-remote origin agent/control` → `f144a0ae...` = локальный).
 - Самостоятельная приёмка не объявлялась — ревью за независимым ревьюером.
 
 ## U9. «Инструмент (id)» → «Ценная бумага»
