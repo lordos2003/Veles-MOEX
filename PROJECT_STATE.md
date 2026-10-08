@@ -17,9 +17,9 @@
 
 ## Current task
 
-**MVP-7.3 — Первый запуск в Docker: исправления по итогам живого прогона** — **CHANGES REQUESTED (раунд 1, 2026-10-08)**.
-Проверенная реализация: `687642a` (`agent/review/mvp-7.3`, база `master` @ `55feb68`); задание `.agent/TASK-MVP-7.3-DOCKER-FIRST-RUN.md`, ревью `.agent/REVIEW-MVP-7.3.md`, отчёт `.agent/REPORT-MVP-7.3.md`; Issue #23.
-Блокер B1 (P4): образ положил сертификаты Минцифры в системное хранилище, но `httpx` проверяет TLS по `certifi`; из контейнера «T-Invest: Отключено / ConnectError» (`CERTIFICATE_VERIFY_FAILED`). Подтверждено владельцем на чистой сборке; с `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt` запрос проходит (404). Всё остальное принято (P1–P3, P5–P8; `pytest 591 passed`, `npm test 34 passed`).
+**MVP-7.3 — Первый запуск в Docker: исправления по итогам живого прогона** — **CHANGES REQUESTED (раунд 1, 2026-10-08); блокер B1 исправлен (REV1, 2026-10-08), ждёт раунд 2**.
+Проверенная реализация раунда 1: `687642a` (`agent/review/mvp-7.3`, база `master` @ `55feb68`); задание `.agent/TASK-MVP-7.3-DOCKER-FIRST-RUN.md`, ревью `.agent/REVIEW-MVP-7.3.md`, отчёт `.agent/REPORT-MVP-7.3.md`; Issue #23.
+REV1: `5589e93` на `agent/review/mvp-7.3` — `ENV SSL_CERT_FILE/SSL_CERT_DIR` в `docker/backend.Dockerfile` (certifi направлен на системный набор с корнем Минцифры; TLS включён, `verify_mode` = 2), отчёт `.agent/REPORT-MVP-7.3-REV1.md`. Проверено в контейнере без переменных оператора (`httpx.get` → 404, не ConnectError) и повторным живым прогоном на чистой копии (без `certs/` и `docker-compose.override.yml`): T-Invest «Подключено», справочник 270 MOEX/rub, песочница open+pay-in 500000, UI-смок со скриншотами.
 Для следующего MVP (после 7.3): кнопка «Проверить» в форме стратегии всегда 422 (UI шлёт `{config}`, API ждёт голый конфиг; с MVP-7.1); сырой JSON в баннере 422; `pydantic-settings>=2.7`; защита от пустого ответа брокера при синхронизации.
 
 
