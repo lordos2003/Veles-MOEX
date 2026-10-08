@@ -11,8 +11,9 @@
   Примечание: локальный указатель `master` в рабочей копии отставал (`b9bdb31`,
   до MVP-6.14); дистанционно проверено `git ls-remote origin master` → `734f861`,
   дифф построен от `734f861` (`git diff 734f861`).
-- Отчёт: `agent/control:.agent/REPORT-MVP-7.5.md` — коммит **`f144a0a`**
-  pushed (`git ls-remote origin agent/control` → `f144a0ae...` = локальный).
+- Отчёт: `agent/control:.agent/REPORT-MVP-7.5.md` — коммиты **`f144a0a`** (REPORT)
+  и **`e86c4ff`** (SHA/подтверждение) pushed
+  (`git ls-remote origin agent/control` → `e86c4ff25...` = локальный).
 - Самостоятельная приёмка не объявлялась — ревью за независимым ревьюером.
 
 ## U9. «Инструмент (id)» → «Ценная бумага»
