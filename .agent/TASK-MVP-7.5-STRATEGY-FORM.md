@@ -2,9 +2,11 @@
 
 ## Статус
 
-**УТВЕРЖДЕНО ВЛАДЕЛЬЦЕМ (2026-10-08), ждёт выдачи.** U9, U10 (формула — вариант B) и U11 подтверждены. Выдавать Кодеру после приёмки MVP-7.4 (U2 — общий компонент поиска — берётся оттуда).
+**OPEN — назначено Кодеру (2026-10-08).** U9, U10 (формула — вариант B) и U11 утверждены владельцем. MVP-7.4 принят и опубликован (PR #28).
 
-База: `master` после публикации MVP-7.4.
+Ветка реализации: `agent/review/mvp-7.5` — создать от текущего `master` @ `734f861` (содержит MVP-7.4 и CI).
+
+База: `master` @ `734f861`.
 
 ## U9. Поле «Инструмент (id)» → «Ценная бумага» (решение владельца 2026-10-08)
 
@@ -68,3 +70,13 @@
 4. `pytest`, `ruff`, `npm test`, `npm run build`, `alembic heads`.
 
 REPORT → `agent/control:.agent/REPORT-MVP-7.5.md` по-русски; без публикации в `master`.
+
+## Публикация (обязательно, `AGENTS.md` §6)
+
+```
+git push origin agent/review/mvp-7.5
+git push origin agent/control
+git ls-remote origin agent/review/mvp-7.5 agent/control
+```
+
+Без `--force` и rebase. Если push отклонён: `git fetch origin`, `git merge origin/<ветка>`, повторить. `master` не пушить. После push открыть PR `agent/review/mvp-7.5` → `master`, чтобы прошёл CI (сливает ревьюер после ACCEPT).
