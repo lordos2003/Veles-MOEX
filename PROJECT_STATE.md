@@ -17,10 +17,10 @@
 
 ## Current task
 
-**MVP-7.3 — Первый запуск в Docker: исправления по итогам живого прогона** (выдано 2026-10-07).
-Задание: `.agent/TASK-MVP-7.3-DOCKER-FIRST-RUN.md`; ветка реализации `agent/review/mvp-7.3` от `master` @ `55feb68`.
-Проблемы P1–P7: нет `Content-Type: application/json` в `api.ts` (запись из UI не работает), зависимости бэкенда не зафиксированы, `CORS_ORIGINS` только JSON, нет корня Минцифры в образе (T-Invest из контейнера), ключ `accountId` в `OpenSandboxAccount`, стиль плашки успеха, README/ignore.
-**P8 (владелец, Issue #23, 2026-10-07):** синхронизация загружает только MOEX — фильтр по официальному enum `realExchange` (`REAL_EXCHANGE_MOEX`), «Биржа» = MOEX в UI, ранее загруженные иностранные записи деактивируются (не удаляются) при повторной синхронизации.
+**MVP-7.3 — Первый запуск в Docker: исправления по итогам живого прогона** — **ACCEPTED (раунд 1, 2026-10-08)**, ждёт Docker-подтверждения владельца и публикации в master.
+Принятая реализация: `687642a` (`agent/review/mvp-7.3`, база `master` @ `55feb68`); задание `.agent/TASK-MVP-7.3-DOCKER-FIRST-RUN.md`, ревью `.agent/REVIEW-MVP-7.3.md`, отчёт `.agent/REPORT-MVP-7.3.md`; Issue #23.
+Проверка (независимо, Python 3.12 + `requirements.lock`, живой прогон на чистом PostgreSQL и в браузере): `pytest 591 passed, 1 skipped`; `ruff` чисто; `npm test 34 passed`; `npm run build` ок.
+Для следующего MVP: кнопка «Проверить» в форме стратегии всегда 422 (UI шлёт `{config}`, API ждёт голый конфиг; с MVP-7.1); сырой JSON в баннере 422; `pydantic-settings>=2.7` в `pyproject.toml`; защита от пустого ответа брокера при синхронизации.
 
 **Реализация завершена (2026-10-08):** `agent/review/mvp-7.3` @ `0409dfd` (P1–P7) + `687642a` (P8) — pushed, in sync with origin; отчёт: `.agent/REPORT-MVP-7.3.md` (pushed) — ждём ревью (раунд 1). Живой прогон по критерию приёмки (чистый том, 4 контейнера, T-Invest, песочница, стратегия/бот/бэктест из UI) пройден; повторный прогон P8: после синхронизации активны 270 MOEX-инструментов (все RUB, биржа «MOEX»), иностранные (CK Hutchison/HKD и др.) `is_active=false` — детали в отчёте.
 
