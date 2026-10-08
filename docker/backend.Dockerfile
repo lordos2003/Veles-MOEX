@@ -26,6 +26,15 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && update-ca-certificates
 
+# B1 (MVP-7.3, review round 1): httpx (certifi) verifies TLS against its own
+# bundle, not the system store, so update-ca-certificates alone was not enough
+# and the image failed against *.tbank.ru with CERTIFICATE_VERIFY_FAILED.
+# Point certifi at the system bundle, which includes the Russian Trusted Root
+# CA chain from P4. TLS verification stays ON; no operator environment is
+# needed — the value is part of the image.
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_DIR=/etc/ssl/certs
+
 # P2 (MVP-7.3): install the exact dependency set the tests run on — the
 # requirements.lock pins every package, so builds are reproducible and the
 # image cannot silently pick up a newer FastAPI.
