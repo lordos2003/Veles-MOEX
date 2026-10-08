@@ -199,7 +199,7 @@ Known boundaries:
 - DCA/Grid and Backtest semantics are preserved across live-market-data work.
 
 ## Workflow rule: publication to master
-PR в `master` создаёт Claude, **сливает владелец** (среда сессии ревью блокирует самослияние); порядок — `.agent/PROJECT-CONTROL-RULES.md` §5c.
+Владелец делегировал Claude все слияния, пуши и закрытие Issue (2026-10-08): после ACCEPT (и проверки владельца на своей машине, если она нужна) Claude сам создаёт PR и сливает его, затем записывает SHA и зеркалирует записи в `master`. Порядок и границы — `.agent/PROJECT-CONTROL-RULES.md` §5c. Если среда заблокирует слияние, обхода нет: сообщить владельцу и дать PR.
 
 ## Workflow rule: push before review
 Work is delivered only when `agent/review/mvp-X` and the REPORT on `agent/control` are pushed to GitHub (plain push, no `--force`/rebase). See `.agent/CODER-WORKFLOW.md` → "Mandatory push rule". The same rule is in `AGENTS.md` §6 (published with MVP-6.11).
