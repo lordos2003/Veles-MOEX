@@ -3,8 +3,12 @@
  *
  * Error handling contract (task U1): the backend error text is shown to the
  * user verbatim. HTTP 422 (FastAPI validation) is additionally mapped to
- * per-field messages so the strategy form can mark concrete fields.
+ * per-field messages so the strategy form can mark concrete fields (U6: the
+ * FastAPI ``{"detail": [...]}`` envelope is unwrapped, and non-field messages
+ * are shown as readable «поле: сообщение» with Russian field labels).
  */
+
+import { labelFor } from "./lib/labels";
 
 export interface ValidationItem {
   loc: (string | number)[];
@@ -12,26 +16,39 @@ export interface ValidationItem {
   type: string;
 }
 
+/** Unwrap FastAPI's ``{"detail": ...}`` envelope so callers see the message
+ * list / string directly instead of the wrapper object. */
+function unwrapDetail(detail: unknown): unknown {
+  if (detail && typeof detail === "object" && "detail" in detail) {
+    const inner = (detail as { detail?: unknown }).detail;
+    if (typeof inner === "string" || Array.isArray(inner)) return inner;
+  }
+  return detail;
+}
+
 export class ApiError extends Error {
   readonly status: number;
   readonly detail: unknown;
 
   constructor(status: number, detail: unknown) {
-    super(verbatimMessage(detail));
+    const inner = unwrapDetail(detail);
+    super(verbatimMessage(inner));
     this.name = "ApiError";
     this.status = status;
-    this.detail = detail;
+    this.detail = inner;
   }
 }
 
 /** The user-facing message of an API error: the backend text, unchanged. */
 export function verbatimMessage(detail: unknown): string {
+  detail = unwrapDetail(detail);
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) {
     return detail
       .map((item) => {
         const loc = (item?.loc ?? []) as (string | number)[];
-        const where = loc.filter((p) => typeof p === "string" && p !== "body").join(".");
+        const paths = loc.filter((p) => typeof p === "string" && p !== "body");
+        const where = paths.length ? labelFor(paths.join(".")) : "";
         return where ? `${where}: ${item?.msg ?? ""}` : (item?.msg ?? "");
       })
       .join("; ");

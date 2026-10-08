@@ -176,8 +176,11 @@ export function SandboxPage() {
                 <span>Брокер: {a.broker}</span>
                 <span>Валюта: {a.currency}</span>
                 <span>Тип: {a.account_type ?? "—"}</span>
-                <span>Баланс: {a.available_cash}</span>
-                <span>Капитал: {a.equity}</span>
+                <span>Баланс: {a.portfolio_available ? a.available_cash : "—"}</span>
+                <span>Капитал: {a.portfolio_available ? a.equity : "—"}</span>
+                {a.portfolio_available === false ? (
+                  <span className="text-amber-400">портфель недоступен</span>
+                ) : null}
               </div>
             </button>
           ))}

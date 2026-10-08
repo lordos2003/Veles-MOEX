@@ -175,9 +175,12 @@ export function StrategyFormPage(props: { edit?: boolean }) {
     setSaveError(null);
     if (!requireIndicatorArgs()) return;
     try {
-      const result = await api.post<StrategyValidateResponse>("/api/strategies/validate", {
-        config: compact(form),
-      });
+      // U5: the endpoint takes the bare config (API contract R4 unchanged);
+      // the old `{"config": ...}` wrapper made every «Проверить» click 422.
+      const result = await api.post<StrategyValidateResponse>(
+        "/api/strategies/validate",
+        compact(form),
+      );
       setLiveVerdict(result.live_deal);
       setValidated(true);
       setErrors({});

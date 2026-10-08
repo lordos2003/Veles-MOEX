@@ -167,6 +167,10 @@ class _FakeAccountsBroker:
     async def get_accounts(self) -> list[BrokerAccount]:
         return self._accounts
 
+    async def get_account(self, account_id: str | None = None) -> BrokerAccount:
+        # U1: GET /api/accounts enriches the list with per-account portfolios.
+        return BrokerAccount(account_id=account_id or "")
+
 
 async def test_accounts_sync_no_duplicates_and_local_flag(client) -> None:
     http, session = client
