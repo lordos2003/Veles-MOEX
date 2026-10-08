@@ -1,17 +1,21 @@
-# REPORT-MVP-7.3 — Первый запуск в Docker: исправления по итогам живого прогона (P1–P7)
+# REPORT-MVP-7.3 — Первый запуск в Docker: исправления по итогам живого прогона (P1–P7) + P8 (только MOEX)
 
 ## Статус
 
 **Реализация завершена, готово к ревью (раунд 1).**
 
 - Ветка реализации: `agent/review/mvp-7.3` (от `master @ 55feb68`)
-  - **`0409dfd`** — **pushed, in sync with origin** (подтверждение
+  - **`0409dfd`** — P1–P7 — **pushed, in sync with origin**;
+  - **`687642a`** — P8 — **pushed, in sync with origin** (подтверждение
     `git ls-remote` в «Публикация»).
 - База: `master @ 55feb68` (содержит принятые MVP-7.1 и MVP-7.2); `master`
   не изменялся.
 - Отчёт: `agent/control:.agent/REPORT-MVP-7.3.md` — коммит в `agent/control`
   pushed.
 - Самостоятельная приёмка не объявлялась — ревью за независимым ревьюером.
+- P8 добавлен владельцем после первой редакции задания (Issue #23,
+  2026-10-07): синхронизация справочника должна загружать только инструменты
+  MOEX. Описан ниже как отдельный раздел.
 
 ## P1. `Content-Type: application/json` для запросов с телом
 
@@ -161,6 +165,81 @@ TLS-проверка нигде не отключается: `verify=False` и �
 нужен образу бэкенда и остаётся в контексте сборки; `.env` и `dist`
 уже были исключены.
 
+## P8. Синхронизация загружает только инструменты MOEX
+
+### Признак MOEX — официальный enum `realExchange`, не поле `exchange`
+
+По документации T-Invest поле `exchange` — свободный текст
+«Торговая площадка (секция биржи)»: оно несёт значения торговых
+сессий/расписаний (`moex_morning_weekend`, `moex_mrng_evng_e_wknd_dlr`,
+`otc_ncc`, `SPB_RU_MORNING`, `unknown`), а **не** биржу. Надёжный признак —
+официальный enum `RealExchange` (`proto/instruments.proto`, также
+`common.proto`): `REAL_EXCHANGE_MOEX` («Московская биржа»),
+`REAL_EXCHANGE_RTS` («Санкт-Петербургская биржа»), `REAL_EXCHANGE_OTC`,
+`REAL_EXCHANGE_DEALER`, `REAL_EXCHANGE_UNSPECIFIED`. Источник —
+https://github.com/RussianInvestments/invest-api-go-sdk/blob/main/proto/instruments.proto
+(проверено через `gh api`, raw-файл).
+
+Признак проверен на **живом каталоге песочницы** (1916 акций, запрос
+`InstrumentsService/Shares` из контейнера бэкенда):
+
+- `REAL_EXCHANGE_MOEX` — 270 (TQBR/MTQR, RUB/RU — Московская биржа);
+- `REAL_EXCHANGE_RTS` — 1628 (SPBXM/SPBHKEX/SPBRU/SPBEQRU, в т.ч. все
+  бумаги вида «CK Hutchison Holdings», HKD);
+- `REAL_EXCHANGE_UNSPECIFIED` — 18 (A27, USD).
+
+Иностранная бумага и SPB-бумага в песочнице никогда не отдают
+`REAL_EXCHANGE_MOEX`, MOEX-бумага — всегда его. Фильтр построен на
+verbatim-сравнении enum, без вывода «моексности» из подписи или из
+`exchange`.
+
+### Механизм
+
+- `backend/app/brokers/base.py` — константа `REAL_EXCHANGE_MOEX`
+  (с комментарием-источником) и новое поле `BrokerInstrument.real_exchange`
+  (официальный enum; в PostgreSQL не сохраняется — в БД остаётся
+  отображаемое `exchange`).
+- `backend/app/brokers/tinvest.py` (`_to_instrument`): `real_exchange`
+  берётся из `raw["realExchange"]`; отображаемое `exchange` для MOEX-бумаг
+  становится `"MOEX"` вместо бессмысленного `moex_*`/`unknown`, для
+  остальных сохраняется как есть.
+- `backend/app/services/instruments.py` (`sync_from_broker`): фильтр
+  `real_exchange == REAL_EXCHANGE_MOEX`; возвращает число
+  синхронизированных MOEX-инструментов. Новый метод
+  `_deactivate_missing(kind, seen)`: активные записи того же типа, которые
+  брокер после фильтра не вернул (ранее загруженные иностранные/удалённые
+  бумаги), помечаются `is_active = false`, **а не удаляются** — так они
+  исчезают из списков выбора с `active=true` без миграции данных и без
+  потери исторических ссылок (боты/бэктесты ссылаются по FIGI).
+- `frontend/src/pages/OverviewPage.tsx`: выбор инструмента на «Обзоре»
+  тоже запрашивает `/api/instruments?active=true` (остальные экраны уже
+  фильтровали активные — BacktestPage, BotsPage, BotSettingsPanel).
+
+### Тесты
+
+`backend/tests/test_instrument_service.py` (3 новых):
+
+- `test_sync_from_broker_keeps_only_moex` — образцы живого каталога:
+  две MOEX-бумаги (TQBR/SBER) проходят фильтр, бумага с
+  `real_exchange=REAL_EXCHANGE_RTS` (аналог CK Hutchison) не проходит
+  (`synced == 2`, в БД только две);
+- `test_sync_from_broker_deactivates_missing_rows` — повторная
+  синхронизация без бумаги: она становится `is_active=false`, остаётся
+  в БД, активный список содержит только оставшуюся;
+- хелпер `_broker_instrument` по умолчанию помечает бумаги MOEX
+  (существующие тесты сохраняют поведение).
+
+`backend/tests/test_tinvest_adapter.py` (2 новых/расширенных):
+
+- `test_get_instrument_normalized` — реальный образец MOEX-бумаги из
+  песочницы (`realExchange=REAL_EXCHANGE_MOEX`,
+  `exchange=moex_morning_weekend`): `exchange → "MOEX"`,
+  `real_exchange` сохраняется;
+- `test_to_instrument_keeps_raw_exchange_for_non_moex` — реальный образец
+  иностранной бумаги (`realExchange=REAL_EXCHANGE_RTS`,
+  `exchange=unknown`): метка «MOEX» не подставляется, `exchange` остаётся
+  `unknown`, `is_active=false`.
+
 ## Живой прогон (критерий приёмки) — 2026-10-07, Windows/Docker Desktop
 
 С чистого тома PostgreSQL, без ручных правок `.env` кроме токена.
@@ -176,8 +255,9 @@ TLS-проверка нигде не отключается: `verify=False` и �
 `http://127.0.0.1:5173`: зелёная плашка «Подключено» (T-Invest API
 connected) — TLS-хендшейк из контейнера прошёл с проверкой включённой
 (см. P4). «Синхронизировать инструменты»: справочник T-Invest загружен —
-инструменты появились в селекторе инструментов (например,
-«1 · CK Hutchison Holdings»).
+инструменты появились в селекторе инструментов. На тот момент в справочнике
+были и иностранные бумаги (например, «1 · CK Hutchison Holdings») — это
+и есть исходный дефект, закрываемый P8 (см. «Повторный прогон P8» ниже).
 
 **Критерий 3 — песочница и счета.** «Песочница и счета»: «+ Открыть
 песочничный счёт» — карточка нового счёта появилась без ошибки
@@ -220,9 +300,33 @@ maker 0.0003 / taker 0.0003 / slippage 0.001. Результат: начальн
    выполнялись через DOM (`evaluate`) — это те же пользовательские
    действия, на работоспособность приложения не влияет.
 
+### Повторный прогон P8 — 2026-10-08 (критерий 2, обновлённый)
+
+После добавления P8 образ бэкенда пересобран (`docker compose build
+backend`), контейнер `backend` перезапущен, БД не очищалась — в ней
+оставались 1916 инструментов от прогона 2026-10-07 (все активные), включая
+иностранные («1 · CK Hutchison Holdings» — HKD).
+
+1. `POST /api/instruments/sync?kind=share` → `{"synced": 270}` (ровно
+   число `REAL_EXCHANGE_MOEX` в каталоге песочницы).
+2. БД (`SELECT ... GROUP BY exchange`): активных — **270**, все со
+   значением `exchange = 'MOEX'`; `unknown` (1642), `SPB_RU_MORNING` (3),
+   `LSE_MORNING` (1) — `is_active = false`; «CK Hutchison Holdings»
+   (currency `hkd`) — `is_active = false`, запись осталась в таблице
+   (исторические ссылки не тронуты), было 1916 активных → стало 270.
+3. `GET /api/instruments?active=true` → 270 записей; `exchange`:
+   только `"MOEX"`; `currency`: только `RUB`; HKD-бумаг нет; SBER
+   присутствует.
+4. UI: список выбора «Рынок» на обзоре и остальные списки выбора
+   (`?active=true`) больше не содержат иностранных бумаг; «Биржа»
+   показывает «MOEX».
+
+Иностранная бумага удалена из списков выбора без миграции данных —
+за счёт деактивации, что и требовала задача («способ описать в REPORT»).
+
 ## Валидация
 
-- `pytest` (backend, полный прогон): **588 passed, 1 skipped**.
+- `pytest` (backend, полный прогон): **591 passed, 1 skipped**.
 - `ruff check app tests scripts`: **All checks passed**.
 - `alembic heads`: **единственный head — `0006_stop_loss`**.
 - `npm test` (frontend): **34 passed** (7 файлов).
@@ -241,21 +345,20 @@ maker 0.0003 / taker 0.0003 / slippage 0.001. Результат: начальн
   как в критерии 1.
 - Дефектов класса «первый запуск», найденных в ходе прогона и не
   входящих в P1–P7, не обнаружено; наблюдения 1–2 описаны выше.
-- Примечание: в `PROJECT_STATE.md` сохранилось упоминание кандидата
-  «P8 — синхронизация только инструментов MOEX» от черновой
-  формулировки; в финальном `TASK-MVP-7.3-DOCKER-FIRST-RUN.md` пункт P8
-  отсутствует (в задании только P1–P7), поэтому он не исправлялся.
-  Наблюдение живого прогона: «Синхронизировать инструменты» загрузил
-  справочник T-Invest без ошибок; если ревью сочтёт P8 задачей — это
-  отдельный MVP.
+- P8 добавлен владельцем позже (Issue #23, 2026-10-07) как расширение
+  задания; реализован и проверен (см. раздел P8 и «Повторный прогон P8»).
+  Признак MOEX взят из официального enum `RealExchange`; сведений
+  документации/песочницы, где этот признак был бы ненадёжен, не найдено —
+  граница не нарушена, «остановка на границе» не потребовалась.
 
 ## Публикация
 
 ```
-git push origin agent/review/mvp-7.3      # 0409dfd
+git push origin agent/review/mvp-7.3      # 0409dfd (P1–P7), 687642a (P8)
 git push origin agent/control             # коммит с REPORT и последующие уточнения — см. git log
 git ls-remote origin agent/review/mvp-7.3 agent/control
 ```
 
-**`0409dfd` — pushed, in sync with origin** (ветка `agent/review/mvp-7.3`).
-`master` не изменялся; `--force`/rebase не применялись.
+**`0409dfd` (P1–P7) и `687642a` (P8) — pushed, in sync with origin**
+(ветка `agent/review/mvp-7.3`). `master` не изменялся; `--force`/rebase не
+применялись.
