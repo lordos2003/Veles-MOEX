@@ -17,7 +17,7 @@
 
 ## Current task
 
-**MVP-7.4 — Правки интерфейса по итогам первого запуска** (выдано 2026-10-08). Задание: `.agent/TASK-MVP-7.4-UI-FIXES.md`; ветка реализации `agent/review/mvp-7.4` от `master` @ `555ad35` (содержит MVP-7.3). U1 счета из портфеля (свободно/эквити), U2 живой поиск в «Рынке», U3 подписи без «(тип / валюта)», U4 зелёная плашка на «Обзоре», U5 кнопка «Проверить» (UI шлёт `{config}`, API ждёт голый конфиг), U6 читаемые 422 вне полей, U7 `pydantic-settings>=2.7`, U8 защита от пустого ответа брокера при синхронизации.
+**MVP-7.4 — Правки интерфейса по итогам первого запуска** (выдано 2026-10-08). Задание: `.agent/TASK-MVP-7.4-UI-FIXES.md`; ветка реализации `agent/review/mvp-7.4` от `master` @ `f162689` (содержит MVP-7.3). U1 счета из портфеля (свободно/эквити), U2 живой поиск в «Рынке», U3 подписи без «(тип / валюта)», U4 зелёная плашка на «Обзоре», U5 кнопка «Проверить» (UI шлёт `{config}`, API ждёт голый конфиг), U6 читаемые 422 вне полей, U7 `pydantic-settings>=2.7`, U8 защита от пустого ответа брокера при синхронизации.
 
 - Первый запуск в Docker и песочницу владелец прошёл (MVP-7.3). Осталось проверить вручную: события `OrderStateStream`; поведение сделки, когда песочница удаляет неисполненные заявки после сессии.
 - Остальные кандидаты: мульти-тейк / безубыток / сигнальный TP / сигнальный стоп / подтяжка / режим «Сигнал» в живой торговле; кэш свечей для M1; время свечей `HOUR_4`/`WEEK_1`/`MONTH_1`; перевыставление TP при перезапуске; ошибка `FILLED -> UNKNOWN`; политика единичного сбоя чтения `GetStopOrders`.
@@ -29,7 +29,7 @@
 
 - Принятая реализация: `5589e93`
 - Publication PR: #25
-- Publication merge commit: `555ad3522c0ca0cbcd318313c63b631361069cc6`
+- Publication merge commit: `555ad3522c0ca0cbcd318313c63b631361069cc6` (записи MVP-7.3 в `master` — PR #26, `f162689`)
 - Задание: `.agent/TASK-MVP-7.3-DOCKER-FIRST-RUN.md`; ревью: `.agent/REVIEW-MVP-7.3.md` (раунд 1 CHANGES REQUESTED: B1; раунд 2 ACCEPT); отчёты: `.agent/REPORT-MVP-7.3.md`, `-REV1`; Issue #23 (закрыт)
 - Содержание: P1 `Content-Type: application/json` в `api.ts`; P2 `backend/requirements.lock` (воспроизводимая сборка образа); P3 `CORS_ORIGINS`/`risk_blocked_instruments` строкой через запятую или JSON; P4 сертификаты Минцифры в образе + `SSL_CERT_FILE`/`SSL_CERT_DIR` (B1: `httpx` не использовал системное хранилище), проверка TLS включена; P5 песочничные вызовы с `accountId`; P6 `SuccessBanner`; P7 README/ignore; P8 синхронизация только инструментов MOEX (`realExchange`), остальные деактивируются.
 - Проверка (независимо, Python 3.12 + `requirements.lock`, живой прогон на чистом PostgreSQL и в браузере; Docker-подтверждение владельца): `pytest 591 passed, 1 skipped`; `ruff` чисто; `npm test 34 passed`; `npm run build` ок.
@@ -197,6 +197,9 @@ Known boundaries:
 - `MarketCandle` uniqueness: `(figi, timeframe, timestamp)`.
 - Veles Filter/Signal semantics: Argument1 + Operator + Argument2; AND within group, OR between groups; state operators `>`/`<`, event operators for crossings.
 - DCA/Grid and Backtest semantics are preserved across live-market-data work.
+
+## Workflow rule: publication to master
+PR в `master` создаёт Claude, **сливает владелец** (среда сессии ревью блокирует самослияние); порядок — `.agent/PROJECT-CONTROL-RULES.md` §5c.
 
 ## Workflow rule: push before review
 Work is delivered only when `agent/review/mvp-X` and the REPORT on `agent/control` are pushed to GitHub (plain push, no `--force`/rebase). See `.agent/CODER-WORKFLOW.md` → "Mandatory push rule". The same rule is in `AGENTS.md` §6 (published with MVP-6.11).
