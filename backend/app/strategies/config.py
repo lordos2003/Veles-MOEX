@@ -263,14 +263,11 @@ class StrategyConfig(BaseModel):
     timeframe: Timeframe | None = Field(
         default=None, description="Live bot market-data timeframe (1m/5m/.../1mo)"
     )
-    # The explicitly configured number of candle bars the live market
-    # snapshot must fetch for this bot's timeframe (MVP-6.10). This is a
-    # project-level contract parameter, NOT a Veles indicator/warmup
-    # semantic: the official Veles documentation does not define a
-    # universal required-history/lookback rule, so no lookback is derived
-    # from indicator periods/shifts. ``None`` (missing) blocks the live
-    # processing cycle explicitly (LookbackNotConfigured); a non-positive
-    # value fails strategy configuration validation (StrategyLoadError).
+    # Optional explicit override of the snapshot history length in bars
+    # (MVP-7.5 U10, contract H1). When present it takes priority over the
+    # engine-computed depth (``resolved_lookback_bars``); when ``None`` the
+    # engine computes the depth from the strategy's filter arguments. Veles has
+    # no such field, so it is not required and not shown in the strategy form.
     lookback_bars: int | None = Field(
         default=None, ge=1, description="Explicit live snapshot history in bars (>=1)"
     )
@@ -288,7 +285,7 @@ class StrategyConfig(BaseModel):
         explicit validation error, never a hidden engine fallback. Applies to
         entry groups, grid signal groups and exit signal groups (signal TP,
         signal stop-loss)."""
-        for group in _iter_filter_groups(self):
+        for group in iter_filter_groups(self):
             for cond in group.conditions:
                 for arg in (cond.arg1, cond.arg2):
                     if getattr(arg, "kind", None) == "indicator":
@@ -296,9 +293,11 @@ class StrategyConfig(BaseModel):
         return self
 
 
-def _iter_filter_groups(config: StrategyConfig):
+def iter_filter_groups(config: StrategyConfig):
     """Yield every FilterGroup the strategy evaluates (entry, grid signals,
-    signal TP, signal stop-loss)."""
+    signal TP, signal stop-loss). Public: contract H1 depth computation
+    (``app.trading.market_context.computed_lookback_bars``) iterates the same
+    groups the engine evaluates."""
     yield from config.entry.groups
     yield from config.dca_grid.signal_groups
     tp = config.exit.take_profit

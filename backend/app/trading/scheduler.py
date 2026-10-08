@@ -113,7 +113,6 @@ from app.strategies.filters import CalculationMethod
 from app.trading.bot_lifecycle import BotRuntime, BotRuntimeManager
 from app.trading.deal import DealError
 from app.trading.market_context import (
-    LookbackNotConfigured,
     TimeframeNotConfigured,
     market_snapshot_to_context,
 )
@@ -378,14 +377,16 @@ class LiveCycleScheduler:
         return self._safety_gate is None or self._safety_gate()
 
     def _require_config(self, ticker: _BotTicker, config: StrategyConfig) -> None:
-        """S4: missing timeframe / lookback are non-transient config errors."""
+        """S4: missing timeframe is a non-transient config error.
+
+        The snapshot depth is resolved by contract H1 (MVP-7.5 U10): an
+        explicit ``lookback_bars`` takes priority, otherwise the engine
+        computes it from the filter arguments — so a missing lookback no
+        longer blocks the cycle.
+        """
         if config.timeframe is None:
             raise TimeframeNotConfigured(
                 f"bot {ticker.runtime.bot_id}: strategy timeframe is not configured"
-            )
-        if config.lookback_bars is None:
-            raise LookbackNotConfigured(
-                f"bot {ticker.runtime.bot_id}: strategy lookback_bars is not configured"
             )
 
     # --- AT_BAR_CLOSE (S2 + S6) -------------------------------------------------

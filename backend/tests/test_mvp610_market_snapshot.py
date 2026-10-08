@@ -372,16 +372,14 @@ async def test_snapshot_request_uses_explicit_lookback_from_config() -> None:
     provider = FakeSnapshotProvider(snapshot=_snapshot())
     config = _strategy(lookback_bars=7)
     await build_market_snapshot_context(provider, FIGI, config)
-    # The lookback is the strategy's own explicitly configured parameter,
-    # never derived from indicator periods/shifts.
+    # H1: the explicit parameter takes priority over the computed depth.
     assert provider.requests == [(FIGI, TF, 7)]
 
 
-async def test_lookback_is_not_inferred_from_indicator_period_or_shift() -> None:
-    # The lookback must not be derivable from the strategy's filter contract:
-    # a config with indicator period/shift but no explicit lookback is missing
-    # a lookback, and the boundary must fail explicitly instead of computing
-    # one (no warmup, no period-as-history, no cross-operator +1).
+async def test_snapshot_request_computes_depth_from_indicator_period_and_shift() -> None:
+    # H1 (MVP-7.5 U10): with no explicit lookback the depth is computed from
+    # the filter arguments. EMA is recursive -> W = 5 x period = 45, plus
+    # shift 3, plus the forming bar -> 49.
     groups = [
         FilterGroup(
             conditions=[
@@ -397,10 +395,9 @@ async def test_lookback_is_not_inferred_from_indicator_period_or_shift() -> None
     ]
     config = _strategy(entry=EntryConfig(groups=groups))
     assert config.lookback_bars is None
-    with pytest.raises(LookbackNotConfigured):
-        await build_market_snapshot_context(
-            FakeSnapshotProvider(snapshot=_snapshot()), FIGI, config
-        )
+    provider = FakeSnapshotProvider(snapshot=_snapshot())
+    await build_market_snapshot_context(provider, FIGI, config)
+    assert provider.requests == [(FIGI, TF, 49)]
 
 
 def test_non_positive_lookback_rejected_by_strategy_config() -> None:
@@ -439,21 +436,17 @@ async def test_missing_timeframe_fails_live_cycle_explicitly() -> None:
     assert om.list_orders() == []
 
 
-# --- 4b: missing explicit lookback ----------------------------------------------
+# --- 4b: computed depth with no explicit lookback ----------------------------------
 
 
-async def test_missing_lookback_fails_snapshot_context_explicitly() -> None:
-    broker = RecordingBroker()
-    with pytest.raises(LookbackNotConfigured):
-        await build_market_snapshot_context(
-            MarketDataService(broker), FIGI, _strategy()
-        )
-    # No broker request is issued: the cycle fails before any data fetch.
-    assert broker.last_price_calls == []
-    assert broker.candle_calls == []
+async def test_missing_lookback_uses_computed_depth_of_one() -> None:
+    # H1: a strategy without filter arguments has no history need -> N = 1.
+    provider = FakeSnapshotProvider(snapshot=_snapshot())
+    await build_market_snapshot_context(provider, FIGI, _strategy())
+    assert provider.requests == [(FIGI, TF, 1)]
 
 
-async def test_missing_lookback_fails_live_cycle_explicitly() -> None:
+async def test_provider_lookback_error_propagates_to_live_cycle() -> None:
     broker = RecordingBroker()
     om = OrderManager(broker)
     bot_strategy = BotStrategy(

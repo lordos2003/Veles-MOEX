@@ -181,6 +181,20 @@ describe("MVP-7.4: «Обзор» (U1/U2/U3/U4)", () => {
     expect(screen.queryByText(/Найдено:/)).toBeNull();
   });
 
+  it("M1/M2: поле показывает подпись выбранной бумаги, фокус открывает полный список", async () => {
+    render(<OverviewPage />);
+    const input = (await screen.findByRole("combobox")) as HTMLInputElement;
+
+    // M2: on first load the selected paper (first instrument, chart shown)
+    // must be visible in the field, not an empty input.
+    expect(input.value).toBe("SBER — Сбербанк");
+
+    // M1: refocus does not leave the long label as the query — the full list
+    // is shown instead of «Ничего не найдено».
+    fireEvent.focus(input);
+    expect(screen.getByText("Найдено: 3 из 3")).toBeTruthy();
+  });
+
   it("U4: после синхронизации показывается плашка успеха (не ошибка)", async () => {
     render(<OverviewPage />);
     const button = await screen.findByRole("button", { name: /Синхронизировать инструменты/ });

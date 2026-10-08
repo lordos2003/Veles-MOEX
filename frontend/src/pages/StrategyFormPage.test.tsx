@@ -11,7 +11,7 @@
  * accessible name.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { ApiError, api } from "../api";
 import { StrategyFormPage } from "./StrategyFormPage";
@@ -19,7 +19,48 @@ import { StrategyFormPage } from "./StrategyFormPage";
 // vitest runs without globals, so @testing-library cannot auto-cleanup.
 afterEach(() => cleanup());
 
-const { schemaFixture } = vi.hoisted(() => {
+const { schemaFixture, instruments } = vi.hoisted(() => {
+  const instruments = [
+    {
+      id: 1,
+      figi: "BBG004730N88",
+      ticker: "SBER",
+      name: "Сбербанк",
+      instrument_type: "SHARE",
+      currency: "RUB",
+      lot_size: 10,
+      tick_size: "0.01",
+      trading_status: "TRADING_AVAILABLE",
+      exchange: "MOEX",
+      is_active: true,
+    },
+    {
+      id: 2,
+      figi: "BBG004730R19",
+      ticker: "GAZP",
+      name: "Газпром",
+      instrument_type: "SHARE",
+      currency: "RUB",
+      lot_size: 10,
+      tick_size: "0.01",
+      trading_status: "TRADING_AVAILABLE",
+      exchange: "MOEX",
+      is_active: true,
+    },
+    {
+      id: 3,
+      figi: "BBG012345678",
+      ticker: "ABIO",
+      name: "Артген",
+      instrument_type: "SHARE",
+      currency: "RUB",
+      lot_size: 1,
+      tick_size: "0.01",
+      trading_status: "TRADING_AVAILABLE",
+      exchange: "MOEX",
+      is_active: true,
+    },
+  ];
   const schemaFixture = {
     title: "StrategyConfig",
     $defs: {
@@ -103,8 +144,28 @@ const { schemaFixture } = vi.hoisted(() => {
       risk: { $ref: "#/$defs/RiskConfig" },
     },
   };
-  return { schemaFixture };
+  return { schemaFixture, instruments };
 });
+
+const savedStrategy = {
+  id: 7,
+  name: "Тестовая",
+  description: "",
+  is_active: false,
+  versions: 1,
+  created_at: null,
+  updated_at: null,
+  config: {
+    name: "Тестовая",
+    direction: "LONG",
+    timeframe: "1m",
+    instrument_id: 2,
+    entry: { method: "at_bar_close", groups: [] },
+    dca_grid: { mode: "simple", levels: 1, overlap_percent: 0.0 },
+    exit: { take_profit: { kind: "fixed_percentage", percent: 10.0 } },
+    risk: {},
+  },
+};
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -114,6 +175,8 @@ vi.mock("../api", async (importOriginal) => {
       get: vi.fn(async (path: string) => {
         if (path === "/api/strategies/schema") return schemaFixture;
         if (path === "/api/strategies/indicators") return [];
+        if (path === "/api/instruments?active=true") return instruments;
+        if (path === "/api/strategies/7") return savedStrategy;
         throw new Error(`unexpected path: ${path}`);
       }),
       post: vi.fn(),
@@ -176,12 +239,84 @@ describe("REV2 B4: новая форма стратегии берёт знач�
     renderNewStrategy();
     await screen.findByRole("heading", { name: "Новая стратегия" });
 
-    const lookback = fieldControl("input", /^История,/) as HTMLInputElement;
-    expect(lookback.value).toBe("");
+    const picker = fieldControl("input", /Ценная бумага/) as HTMLInputElement;
+    expect(picker.value).toBe("");
 
     const stopLoss = fieldControl("input", /^Стоп-лосс$/) as HTMLInputElement;
     expect(stopLoss.type).toBe("checkbox");
     expect(stopLoss.checked).toBe(false);
+  });
+
+  it("U10: поля «История, баров» в форме нет и оно не попадает в «Дополнительные поля»", async () => {
+    renderNewStrategy();
+    await screen.findByRole("heading", { name: "Новая стратегия" });
+
+    expect(screen.queryByText(/История, баров/)).toBeNull();
+    expect(screen.queryByText(/Дополнительные поля/)).toBeNull();
+  });
+});
+
+describe("MVP-7.5 U9: «Ценная бумага»", () => {
+  it("выбор по тикеру записывает верный instrument_id и показывает подпись", async () => {
+    const post = vi.mocked(api.post);
+    post.mockResolvedValue({ valid: true, live_deal: { supported: true, reason: null } });
+    renderNewStrategy();
+    await screen.findByRole("heading", { name: "Новая стратегия" });
+
+    const input = fieldControl("input", /Ценная бумага/) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "газпром" } });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    // The field shows the paper label (U3 format), the config keeps the id.
+    expect(input.value).toBe("GAZP — Газпром");
+    fireEvent.click(screen.getByRole("button", { name: "Проверить" }));
+    await screen.findByText("Для живой торговли подходит.");
+    const body = post.mock.calls.find(([p]) => p === "/api/strategies/validate")?.[1] as
+      | Record<string, unknown>
+      | undefined;
+    expect(body?.instrument_id).toBe(2);
+  });
+
+  it("пустой выбор — ошибка бэкенда привязана к полю «Ценная бумага»", async () => {
+    vi.mocked(api.post).mockRejectedValue(
+      new ApiError(422, {
+        detail: [
+          {
+            type: "missing",
+            loc: ["body", "instrument_id"],
+            msg: "Field required",
+            input: {},
+          },
+        ],
+      }),
+    );
+    renderNewStrategy();
+    await screen.findByRole("heading", { name: "Новая стратегия" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Проверить" }));
+    await screen.findByText("Ценная бумага: Field required");
+
+    const cell = screen
+      .getByText(
+        (content, el) => el?.tagName === "LABEL" && content.startsWith("Ценная бумага"),
+      )
+      .parentElement;
+    expect(cell?.textContent).toContain("Field required");
+  });
+
+  it("существующая стратегия открывается с подписью бумаги, а не с числом", async () => {
+    render(
+      <MemoryRouter initialEntries={["/strategies/7/edit"]}>
+        <Routes>
+          <Route path="/strategies/:id/edit" element={<StrategyFormPage edit />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByRole("heading", { name: "Стратегия — редактирование" });
+
+    const input = fieldControl("input", /Ценная бумага/) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe("GAZP — Газпром"));
   });
 });
 

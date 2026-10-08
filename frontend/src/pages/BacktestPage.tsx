@@ -10,6 +10,7 @@ import type {
 } from "../types";
 import { Button, ErrorBanner, Field, Loading, SelectInput, TextInput } from "../components/FormControls";
 import CandleChart, { ChartMarker } from "../components/CandleChart";
+import { PeriodPicker, PeriodRange } from "../components/PeriodPicker";
 
 const TF_CHOICES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1mo"];
 
@@ -25,8 +26,7 @@ export function BacktestPage() {
   const [inlineError, setInlineError] = useState<string | null>(null);
 
   const [instrumentId, setInstrumentId] = useState("");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [period, setPeriod] = useState<PeriodRange>({ from: null, to: null });
   const [deposit, setDeposit] = useState("");
   const [makerFee, setMakerFee] = useState("");
   const [takerFee, setTakerFee] = useState("");
@@ -110,8 +110,7 @@ export function BacktestPage() {
     const errors: Record<string, string> = {};
     if (!instrumentId) errors.instrument = "Выберите инструмент.";
     if (!configTimeframe && !timeframe.trim()) errors.timeframe = "Выберите таймфрейм.";
-    if (!from.trim()) errors.from = "Укажите начало периода.";
-    if (!to.trim()) errors.to = "Укажите конец периода.";
+    if (!period.from || !period.to) errors.from = "Укажите период.";
     if (!deposit.trim()) errors.deposit = "Укажите депозит сделки.";
     if (!makerFee.trim()) errors.makerFee = "Укажите комиссию.";
     if (!takerFee.trim()) errors.takerFee = "Укажите комиссию.";
@@ -124,8 +123,8 @@ export function BacktestPage() {
     const payload: BacktestRequest = {
       instrument_id: Number(instrumentId),
       timeframe,
-      from: new Date(from).toISOString(),
-      to: new Date(to).toISOString(),
+      from: period.from!.toISOString(),
+      to: period.to!.toISOString(),
       deposit: deposit.trim(),
       maker_fee: makerFee.trim(),
       taker_fee: takerFee.trim(),
@@ -145,7 +144,7 @@ export function BacktestPage() {
       setResult(res);
       const inst = instruments.find((i) => String(i.id) === instrumentId);
       if (inst) {
-        await loadChart(res, inst.figi, timeframe, from, to, setChart, setError);
+        await loadChart(res, inst.figi, timeframe, period.from!, period.to!, setChart, setError);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -239,11 +238,17 @@ export function BacktestPage() {
                 />
               )}
             </Field>
-            <Field label="С" required error={fieldErrors.from}>
-              <TextInput value={from} onChange={setFrom} placeholder="например, 2026-01-01T10:00" />
-            </Field>
-            <Field label="По" required error={fieldErrors.to}>
-              <TextInput value={to} onChange={setTo} placeholder="например, 2026-02-01T10:00" />
+            <Field
+              label="Период"
+              required
+              error={fieldErrors.from}
+              hint="нет данных о доступном диапазоне"
+            >
+              <PeriodPicker
+                from={period.from}
+                to={period.to}
+                onChange={(from, to) => setPeriod({ from, to })}
+              />
             </Field>
             <Field label="Депозит сделки" required error={fieldErrors.deposit}>
               <TextInput value={deposit} onChange={setDeposit} placeholder="например, 100000" />
@@ -365,15 +370,15 @@ async function loadChart(
   result: BacktestResponse,
   figi: string,
   timeframe: string,
-  from: string,
-  to: string,
+  from: Date,
+  to: Date,
   setChart: (v: { candles: CandleInfo[]; markers: ChartMarker[] }) => void,
   setError: (m: string) => void,
 ): Promise<void> {
   if (result.deals.length === 0) return;
   try {
     const candles = await api.get<CandleInfo[]>(
-      `/api/market-data/${figi}/candles?timeframe=${encodeURIComponent(timeframe)}&from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`,
+      `/api/market-data/${figi}/candles?timeframe=${encodeURIComponent(timeframe)}&from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`,
     );
     const times = candles.map((c) => c.timestamp);
     const snap = (ts: string) => {

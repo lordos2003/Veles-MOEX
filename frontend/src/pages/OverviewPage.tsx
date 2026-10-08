@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { KeyboardEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import type {
   AccountInfo,
@@ -13,7 +12,7 @@ import type {
 } from "../types";
 import CandleChart from "../components/CandleChart";
 import { Button, ErrorBanner, Loading, Section, SuccessBanner } from "../components/FormControls";
-import { filterInstruments } from "../lib/instrumentSearch";
+import { InstrumentPicker } from "../components/InstrumentPicker";
 
 /** U1 «Обзор»: T-Invest status, accounts, positions, market data with chart. */
 export function OverviewPage() {
@@ -30,12 +29,6 @@ export function OverviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-
-  // U2: live search over the already-loaded instruments (no per-keystroke
-  // broker requests) — case-insensitive substring on ticker / name / FIGI.
-  const [search, setSearch] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [highlight, setHighlight] = useState(0);
 
   const load = useCallback(async () => {
     setError(null);
@@ -86,37 +79,9 @@ export function OverviewPage() {
     }
   };
 
-  const filtered = useMemo(() => filterInstruments(search, instruments), [search, instruments]);
-
-  const selectInstrument = useCallback(
-    (figi: string) => {
-      const inst = instruments.find((i) => i.figi === figi);
-      setSelected(figi);
-      setSearch(inst ? `${inst.ticker} — ${inst.name ?? ""}` : "");
-      setSearchOpen(false);
-    },
-    [instruments],
-  );
-
-  const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      if (!searchOpen) {
-        setSearchOpen(true);
-        return;
-      }
-      setHighlight((h) => Math.min(h + 1, Math.max(filtered.length - 1, 0)));
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setHighlight((h) => Math.max(h - 1, 0));
-    } else if (event.key === "Enter") {
-      event.preventDefault();
-      const pick = filtered[highlight];
-      if (searchOpen && pick) selectInstrument(pick.figi);
-    } else if (event.key === "Escape") {
-      setSearchOpen(false);
-    }
-  };
+  const selectInstrument = useCallback((figi: string) => {
+    setSelected(figi);
+  }, []);
 
   const loadMarket = useCallback(async (figi: string) => {
     if (!figi) return;
@@ -245,56 +210,12 @@ export function OverviewPage() {
           </p>
         ) : (
           <>
-            <div className="relative">
-              <input
-                className="w-full rounded border border-zinc-700 bg-zinc-900 p-2 text-sm"
-                placeholder="Поиск по тикеру, названию или FIGI…"
-                value={search}
-                role="combobox"
-                aria-expanded={searchOpen}
-                aria-controls="market-search-results"
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setSearchOpen(true);
-                  setHighlight(0);
-                }}
-                onFocus={() => setSearchOpen(true)}
-                onBlur={() => setSearchOpen(false)}
-                onKeyDown={onSearchKeyDown}
-              />
-              {searchOpen ? (
-                <div
-                  id="market-search-results"
-                  className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded border border-zinc-700 bg-zinc-900"
-                >
-                  <p className="px-3 py-1 text-xs text-zinc-500">
-                    Найдено: {filtered.length} из {instruments.length}
-                  </p>
-                  {filtered.length === 0 ? (
-                    <p className="px-3 py-2 text-sm text-zinc-500">Ничего не найдено</p>
-                  ) : (
-                    <ul>
-                      {filtered.map((inst, idx) => (
-                        <li key={inst.figi}>
-                          <button
-                            type="button"
-                            className={`block w-full px-3 py-1.5 text-left text-sm ${
-                              idx === highlight ? "bg-zinc-800" : ""
-                            } ${inst.figi === selected ? "text-emerald-400" : ""}`}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              selectInstrument(inst.figi);
-                            }}
-                          >
-                            {inst.ticker} — {inst.name}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ) : null}
-            </div>
+            <InstrumentPicker
+              instruments={instruments}
+              selectedFigi={selected}
+              onSelect={selectInstrument}
+              listId="market-search-results"
+            />
             {lastPrice ? (
               <p className="text-sm">
                 Последняя цена: <span className="font-medium">{lastPrice.price}</span>

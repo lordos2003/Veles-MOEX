@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, fieldErrors, verbatimMessage } from "../api";
-import type { IndicatorResponse, SchemaNode, StrategyValidateResponse } from "../types";
+import type { IndicatorResponse, InstrumentInfo, SchemaNode, StrategyValidateResponse } from "../types";
 import {
   compact,
   deepClone,
@@ -37,6 +37,7 @@ import {
   TextInput,
 } from "../components/FormControls";
 import { FilterGroupEditor, collectMissingIndicatorArgs } from "../components/FilterGroupEditor";
+import { InstrumentPicker } from "../components/InstrumentPicker";
 
 type Config = Record<string, unknown>;
 type Defs = Record<string, SchemaNode>;
@@ -56,6 +57,7 @@ export function StrategyFormPage(props: { edit?: boolean }) {
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Map<string, IndicatorResponse> | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [instruments, setInstruments] = useState<InstrumentInfo[]>([]);
 
   const [form, setForm] = useState<Config>({});
   const [description, setDescription] = useState<string>("");
@@ -88,6 +90,14 @@ export function StrategyFormPage(props: { edit?: boolean }) {
         if (!cancelled) setCatalog(new Map(list.map((i) => [i.name, i])));
       } catch (err) {
         if (!cancelled) setCatalogError(err instanceof Error ? err.message : String(err));
+      }
+      try {
+        // U9: the «Ценная бумага» picker sources active instruments the same
+        // way as «Обзор» (U2 MVP-7.4).
+        const list = await api.get<InstrumentInfo[]>("/api/instruments?active=true");
+        if (!cancelled) setInstruments(list);
+      } catch {
+        // Leave the list empty: the field shows «не загружены», no fabrication.
       }
     }
     void load();
@@ -238,6 +248,19 @@ export function StrategyFormPage(props: { edit?: boolean }) {
   const exit = (config.exit as Config) ?? {};
   const risk = (config.risk as Config) ?? {};
 
+  // U9: the form keeps `instrument_id` (local id) in the config, but shows
+  // the paper by its ticker/name label — or falls back to "#id" when the
+  // paper is no longer in the active list.
+  const chosenInstrument =
+    config.instrument_id === null || config.instrument_id === undefined
+      ? undefined
+      : instruments.find((i) => i.id === Number(config.instrument_id));
+  const instrumentFigi = chosenInstrument ? chosenInstrument.figi : "";
+  const onSelectInstrument = (figi: string) => {
+    const inst = instruments.find((i) => i.figi === figi);
+    setField("instrument_id", inst ? inst.id : null);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -315,20 +338,25 @@ export function StrategyFormPage(props: { edit?: boolean }) {
                   onChange={(v) => setField("timeframe", v === "" ? null : v)}
                 />
               </Field>
-              <Field label={labelFor("lookback_bars")} hint="История для снимка (баров, ≥1)">
-                <NumberInput
-                  value={config.lookback_bars as number | null}
-                  onChange={(v) => setField("lookback_bars", v)}
-                />
-              </Field>
               <Field
                 label={labelFor("instrument_id")}
                 error={pathError(errors, "instrument_id")}
               >
-                <NumberInput
-                  value={config.instrument_id as number | null}
-                  onChange={(v) => setField("instrument_id", v)}
-                />
+                {instruments.length === 0 ? (
+                  <p className="text-sm text-zinc-500">Инструменты не загружены.</p>
+                ) : (
+                  <InstrumentPicker
+                    instruments={instruments}
+                    selectedFigi={instrumentFigi}
+                    onSelect={onSelectInstrument}
+                    fallbackLabel={
+                      config.instrument_id === null || config.instrument_id === undefined
+                        ? ""
+                        : `#${String(config.instrument_id)}`
+                    }
+                    listId="strategy-form-instrument-results"
+                  />
+                )}
               </Field>
             </div>
           </Section>
@@ -820,6 +848,10 @@ function UnknownFields(props: {
   const { schema, defs, form, setField } = props;
   const root = resolveRef(schema, defs) ?? schema;
   const propsOfRoot = root.properties ?? {};
+  // U10: `lookback_bars` remains an optional schema field (old strategies keep
+  // it working), but it is intentionally not rendered — the engine computes
+  // the depth by contract H1. It stays in `handled` so it does not fall into
+  // the generic «Дополнительные поля» block.
   const handled = new Set(["name", "description", "direction", "timeframe", "lookback_bars", "instrument_id", "entry", "dca_grid", "exit", "risk"]);
   const unknown = Object.entries(propsOfRoot).filter(([key]) => !handled.has(key));
   if (unknown.length === 0) return null;
