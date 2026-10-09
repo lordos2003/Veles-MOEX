@@ -133,6 +133,32 @@ async def test_to_instrument_keeps_raw_exchange_for_non_moex() -> None:
 
 
 @pytest.mark.asyncio
+async def test_to_instrument_maps_first_candle_dates() -> None:
+    # MVP-7.6 (H2): the broker's earliest-history facts (instruments.proto
+    # fields 56/57) map to the broker-neutral DTO; absent -> None, nothing is
+    # substituted. The REST gateway serializes proto fields as camelCase
+    # (first1minCandleDate — verified against the live sandbox response).
+    instrument = TInvestAdapter._to_instrument(
+        {
+            "figi": "BBG004730N88",
+            "ticker": "SBER",
+            "realExchange": "REAL_EXCHANGE_MOEX",
+            "first1minCandleDate": "2020-02-07T00:00:00Z",
+            "first1dayCandleDate": "1998-01-01T00:00:00Z",
+        },
+        "share",
+    )
+    assert instrument.first_1min_candle_date == datetime(2020, 2, 7, tzinfo=UTC)
+    assert instrument.first_1day_candle_date == datetime(1998, 1, 1, tzinfo=UTC)
+
+    bare = TInvestAdapter._to_instrument(
+        {"figi": "F1", "realExchange": "REAL_EXCHANGE_MOEX"}, "share"
+    )
+    assert bare.first_1min_candle_date is None
+    assert bare.first_1day_candle_date is None
+
+
+@pytest.mark.asyncio
 async def test_get_instrument_not_found_maps_to_instrument_error() -> None:
     fake = TInvestFakeClient(errors={_GET_INSTRUMENT: ResourceNotFoundError("not found")})
     adapter = TInvestAdapter(client=fake)

@@ -785,6 +785,9 @@ class TInvestAdapter(BrokerAdapter):
             exchange=exchange,
             real_exchange=real_exchange,
             is_active=api_available,
+            # MVP-7.6 (H2): Share/Instrument fields (instruments.proto 56/57).
+            first_1min_candle_date=_timestamp_to_datetime(raw.get("first1minCandleDate")),
+            first_1day_candle_date=_timestamp_to_datetime(raw.get("first1dayCandleDate")),
         )
 
     @staticmethod

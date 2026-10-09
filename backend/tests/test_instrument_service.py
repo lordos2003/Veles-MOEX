@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 
 import pytest
@@ -40,6 +41,8 @@ def _broker_instrument(
     instrument_type: InstrumentType = InstrumentType.SHARE,
     is_active: bool = True,
     real_exchange: str = REAL_EXCHANGE_MOEX,
+    first_1min_candle_date: datetime | None = None,
+    first_1day_candle_date: datetime | None = None,
 ) -> BrokerInstrument:
     return BrokerInstrument(
         figi=figi,
@@ -55,6 +58,8 @@ def _broker_instrument(
         exchange="MOEX",
         real_exchange=real_exchange,
         is_active=is_active,
+        first_1min_candle_date=first_1min_candle_date,
+        first_1day_candle_date=first_1day_candle_date,
     )
 
 
@@ -101,6 +106,37 @@ async def test_get_by_figi_and_ticker(session) -> None:
     assert by_ticker.figi == "F1"
 
     assert await service.get_by_figi("NOPE") is None
+
+
+@pytest.mark.asyncio
+async def test_upsert_stores_first_candle_dates_then_none(session) -> None:
+    # MVP-7.6 (H2): the broker-reported earliest history is stored; a value is
+    # overwritten by a re-sync; no value from the broker -> NULL, never a
+    # substituted default. (SQLite keeps datetimes naive — compare that way.)
+    service = InstrumentService(session)
+    first = await service.upsert_from_broker(
+        _broker_instrument(
+            "F1",
+            "AAA",
+            first_1min_candle_date=datetime(2020, 2, 7, 0, 0),
+            first_1day_candle_date=datetime(1998, 1, 1, 0, 0),
+        )
+    )
+    await session.commit()
+    assert first.first_1min_candle_date == datetime(2020, 2, 7, 0, 0)
+    assert first.first_1day_candle_date == datetime(1998, 1, 1, 0, 0)
+
+    # Re-sync with no broker facts -> fields become NULL (not left stale).
+    updated = await service.upsert_from_broker(_broker_instrument("F1", "AAA"))
+    await session.commit()
+    assert updated.first_1min_candle_date is None
+    assert updated.first_1day_candle_date is None
+
+    # A second instrument without facts stays NULL after sync.
+    other = await service.upsert_from_broker(_broker_instrument("F2", "BBB"))
+    await session.commit()
+    assert other.first_1min_candle_date is None
+    assert other.first_1day_candle_date is None
 
 
 @pytest.mark.asyncio

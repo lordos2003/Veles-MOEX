@@ -64,6 +64,8 @@ class InstrumentService:
                 trading_status=broker.trading_status.value,
                 exchange=broker.exchange,
                 is_active=broker.is_active,
+                first_1min_candle_date=broker.first_1min_candle_date,
+                first_1day_candle_date=broker.first_1day_candle_date,
             )
             self._session.add(instrument)
             await self._session.flush()
@@ -78,6 +80,8 @@ class InstrumentService:
         existing.trading_status = broker.trading_status.value
         existing.exchange = broker.exchange
         existing.is_active = broker.is_active
+        existing.first_1min_candle_date = broker.first_1min_candle_date
+        existing.first_1day_candle_date = broker.first_1day_candle_date
         await self._session.flush()
         return existing
 
