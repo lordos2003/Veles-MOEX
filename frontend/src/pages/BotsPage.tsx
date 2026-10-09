@@ -11,6 +11,7 @@ import type {
   StrategyVersionOption,
 } from "../types";
 import { Button, ErrorBanner, Field, Loading, SelectInput, TextInput } from "../components/FormControls";
+import { InstrumentPicker } from "../components/InstrumentPicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
   AccountErrorNote,
@@ -243,6 +244,17 @@ function CreateBotPanel(props: { onCreated: () => void }) {
     }
   }, []);
 
+  /**
+   * MVP-7.7 P1/P2: the picker works by FIGI; the panel keeps the local
+   * `instrument_id`. Papers without a local id are filtered out at load.
+   */
+  const chosenInstrument = instruments.find((i) => String(i.id) === instrumentId);
+  const instrumentFigi = chosenInstrument ? chosenInstrument.figi : "";
+  const onSelectInstrument = (figi: string) => {
+    const inst = instruments.find((i) => i.figi === figi);
+    setInstrumentId(inst ? String(inst.id) : "");
+  };
+
   const submit = async () => {
     setError(null);
     const payload: BotCreateRequest = {
@@ -303,17 +315,18 @@ function CreateBotPanel(props: { onCreated: () => void }) {
             options={accounts.map((a) => ({ value: String(a.id), label: `#${a.id} · ${a.name ?? a.account_id}` }))}
           />
         </Field>
-        <Field label="Инструмент (локальный)" required>
-          <SelectInput
-            value={instrumentId}
-            onChange={setInstrumentId}
-            allowEmpty
-            emptyLabel="— выберите —"
-            options={instruments.map((i) => ({
-              value: String(i.id),
-              label: `${i.ticker ?? i.figi} · ${i.name ?? ""}`,
-            }))}
-          />
+        <Field label="Ценная бумага" required>
+          {instruments.length === 0 ? (
+            <p className="text-sm text-zinc-500">Инструменты не загружены.</p>
+          ) : (
+            <InstrumentPicker
+              instruments={instruments}
+              selectedFigi={instrumentFigi}
+              onSelect={onSelectInstrument}
+              fallbackLabel={instrumentId ? `#${instrumentId}` : ""}
+              listId="create-bot-instrument-results"
+            />
+          )}
         </Field>
         <Field label="Депозит (необязательно)">
           <TextInput value={deposit} onChange={setDeposit} placeholder="например, 100000" />
