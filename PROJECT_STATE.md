@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-8.1 — Обновление Vite, Vitest и plugin-react (dev-инструменты)
-**Status: OPEN — назначено Кодеру (2026-10-09).**
+**Status: ACCEPT (раунд 1, 2026-10-09), ожидает публикации.** PR #43; принятая реализация `7d71c45`; ревью `.agent/REVIEW-MVP-8.1.md`.
 
 - Задание: `.agent/TASK-MVP-8.1-VITE-VITEST.md`; основание — аудит (этап 2.2); ветка `agent/review/mvp-8.1` от текущего `master`.
 - Ступенями до минимальных безопасных stable-версий; критерий — нет critical/high в цепочках vite/vitest/esbuild/tinypool; остаток цепочки Tailwind 3 — в отчёт (закрывается Tailwind 4 отдельным MVP); `npm audit --omit=dev` остаётся 0.
