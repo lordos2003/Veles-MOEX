@@ -1,5 +1,5 @@
-# Reproducible dependency set for the backend image (P2, MVP-7.3).
-# Generated from the test venv (Python 3.14.6) with `pip freeze`; only the
+# Reproducible dependency set for the backend image (P2, MVP-7.3; G3, MVP-8.0).
+# Generated from a Python 3.12.11 venv (as the image and CI) with `pip freeze`; only the
 # editable project entry is excluded. The image installs with
 # `pip install -c requirements.lock .`, so every build uses these exact
 # versions. Update together with pyproject.toml.
