@@ -202,10 +202,19 @@ export function BotsPage() {
 }
 
 function CreateBotPanel(props: { onCreated: () => void }) {
-  const [strategies, setStrategies] = useState<StrategyResponse[]>([]);
+  /**
+   * G5 (MVP-8.0, замечание M1 ревью MVP-7.7): strategies / accounts /
+   * instruments load independently, so a broker failure (`/api/accounts`)
+   * hides neither the paper picker nor the strategy list. Each error is shown
+   * verbatim next to its own field only.
+   */
+  const [strategies, setStrategies] = useState<StrategyResponse[] | null>(null);
+  const [strategiesError, setStrategiesError] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<AccountInfo[] | null>(null);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [instruments, setInstruments] = useState<InstrumentInfo[] | null>(null);
+  const [instrumentsError, setInstrumentsError] = useState<string | null>(null);
   const [versions, setVersions] = useState<StrategyVersionOption[]>([]);
-  const [accounts, setAccounts] = useState<AccountInfo[]>([]);
-  const [instruments, setInstruments] = useState<InstrumentInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -217,20 +226,46 @@ function CreateBotPanel(props: { onCreated: () => void }) {
   const [deposit, setDeposit] = useState("");
 
   useEffect(() => {
+    let cancelled = false;
+    const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
     void (async () => {
       try {
-        const [st, acc, inst] = await Promise.all([
-          api.get<StrategyResponse[]>("/api/strategies"),
-          api.get<AccountInfo[]>("/api/accounts"),
-          api.get<InstrumentInfo[]>("/api/instruments?active=true"),
-        ]);
-        setStrategies(st);
-        setAccounts(acc.filter((a) => a.id !== null));
-        setInstruments(inst.filter((i) => i.id !== null));
+        const st = await api.get<StrategyResponse[]>("/api/strategies");
+        if (!cancelled) {
+          setStrategies(st);
+          setStrategiesError(null);
+        }
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setStrategiesError(message(err));
       }
     })();
+    void (async () => {
+      try {
+        const acc = await api.get<AccountInfo[]>("/api/accounts");
+        if (!cancelled) {
+          setAccounts(acc.filter((a) => a.id !== null));
+          setAccountsError(null);
+        }
+      } catch (err) {
+        if (!cancelled) setAccountsError(message(err));
+      }
+    })();
+    void (async () => {
+      try {
+        const inst = await api.get<InstrumentInfo[]>("/api/instruments?active=true");
+        if (!cancelled) {
+          setInstruments(inst.filter((i) => i.id !== null));
+          setInstrumentsError(null);
+        }
+      } catch (err) {
+        if (!cancelled) setInstrumentsError(message(err));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const loadVersions = useCallback(async (sid: string) => {
@@ -248,10 +283,10 @@ function CreateBotPanel(props: { onCreated: () => void }) {
    * MVP-7.7 P1/P2: the picker works by FIGI; the panel keeps the local
    * `instrument_id`. Papers without a local id are filtered out at load.
    */
-  const chosenInstrument = instruments.find((i) => String(i.id) === instrumentId);
+  const chosenInstrument = (instruments ?? []).find((i) => String(i.id) === instrumentId);
   const instrumentFigi = chosenInstrument ? chosenInstrument.figi : "";
   const onSelectInstrument = (figi: string) => {
-    const inst = instruments.find((i) => i.figi === figi);
+    const inst = (instruments ?? []).find((i) => i.figi === figi);
     setInstrumentId(inst ? String(inst.id) : "");
   };
 
@@ -293,8 +328,9 @@ function CreateBotPanel(props: { onCreated: () => void }) {
               }}
               allowEmpty
               emptyLabel="— выберите —"
-              options={strategies.map((s) => ({ value: String(s.id), label: s.name }))}
+              options={(strategies ?? []).map((s) => ({ value: String(s.id), label: s.name }))}
             />
+            {strategiesError ? <p className="text-xs text-red-400">{strategiesError}</p> : null}
           </Field>
           <Field label="Версия" required>
             <SelectInput
@@ -312,11 +348,14 @@ function CreateBotPanel(props: { onCreated: () => void }) {
             onChange={setAccountId}
             allowEmpty
             emptyLabel="— выберите —"
-            options={accounts.map((a) => ({ value: String(a.id), label: `#${a.id} · ${a.name ?? a.account_id}` }))}
+            options={(accounts ?? []).map((a) => ({ value: String(a.id), label: `#${a.id} · ${a.name ?? a.account_id}` }))}
           />
+          {accountsError ? <p className="text-xs text-red-400">{accountsError}</p> : null}
         </Field>
         <Field label="Ценная бумага" required>
-          {instruments.length === 0 ? (
+          {instrumentsError ? (
+            <p className="text-sm text-red-400">{instrumentsError}</p>
+          ) : !instruments || instruments.length === 0 ? (
             <p className="text-sm text-zinc-500">Инструменты не загружены.</p>
           ) : (
             <InstrumentPicker

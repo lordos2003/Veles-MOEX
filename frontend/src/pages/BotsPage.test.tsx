@@ -84,6 +84,18 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+async function openCreate() {
+  render(
+    <MemoryRouter initialEntries={["/bots"]}>
+      <Routes>
+        <Route path="/bots" element={<BotsPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "+ Создать бота" }));
+  await screen.findByPlaceholderText("Поиск по тикеру, названию или FIGI…");
+}
+
 describe("MVP-7.7 P1/P2: форма создания бота — единый поиск «Ценная бумага»", () => {
   /**
    * The instrument list contains a paper with `id: null` (NOLOCAL) — such a
@@ -165,18 +177,6 @@ describe("MVP-7.7 P1/P2: форма создания бота — единый �
     return control;
   }
 
-  async function openCreate() {
-    render(
-      <MemoryRouter initialEntries={["/bots"]}>
-        <Routes>
-          <Route path="/bots" element={<BotsPage />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-    fireEvent.click(await screen.findByRole("button", { name: "+ Создать бота" }));
-    await screen.findByPlaceholderText("Поиск по тикеру, названию или FIGI…");
-  }
-
   function fillTextFields() {
     const name = fieldControl("input", /Название/) as HTMLInputElement;
     fireEvent.change(name, { target: { value: "Бот-тест" } });
@@ -241,6 +241,57 @@ describe("MVP-7.7 P1/P2: форма создания бота — единый �
     expect(screen.getByText("Найдено: 1 из 1")).toBeTruthy();
     expect(screen.getByText("SBER — Сбербанк")).toBeTruthy();
     expect(screen.queryByText("NOLOCAL — Без локального id")).toBeNull();
+  });
+});
+
+describe("G5 (MVP-8.0): независимая загрузка данных на «Боты → создать»", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    localStorage.setItem("veles.ui.poll_interval_ms", "0");
+  });
+
+  it("сбой /api/accounts не мешает бумагам и стратегиям; у «Счёта» своя ошибка", async () => {
+    getMock.mockImplementation(async (path: string) => {
+      if (path === "/api/bots") return [];
+      if (path === "/api/strategies") {
+        return [{ id: 1, name: "Стратегия 1", version: 1, active: true }];
+      }
+      if (path === "/api/accounts") throw new Error("Брокер недоступен: нет токена");
+      if (path === "/api/instruments?active=true") {
+        return [
+          {
+            id: 1,
+            figi: "BBG004730N88",
+            ticker: "SBER",
+            name: "Сбербанк",
+            instrument_type: "SHARE",
+            currency: "RUB",
+            lot_size: 10,
+            tick_size: "0.01",
+            trading_status: "TRADING_AVAILABLE",
+            exchange: "MOEX",
+            is_active: true,
+            first_1min_candle_date: null,
+            first_1day_candle_date: null,
+          },
+        ];
+      }
+      throw new Error(`unexpected path: ${path}`);
+    });
+
+    await openCreate();
+
+    // Бумаги загрузились, несмотря на ошибку счетов.
+    const picker = screen.getByPlaceholderText("Поиск по тикеру, названию или FIGI…") as HTMLInputElement;
+    fireEvent.focus(picker);
+    expect(screen.getByText("Найдено: 1 из 1")).toBeTruthy();
+    expect(screen.getByText("SBER — Сбербанк")).toBeTruthy();
+
+    // Стратегии тоже доступны.
+    expect(screen.getByText("Стратегия 1")).toBeTruthy();
+
+    // Ошибка счетов показана дословно и только у поля «Счёт».
+    expect(screen.getByText("Брокер недоступен: нет токена")).toBeTruthy();
   });
 });
 
