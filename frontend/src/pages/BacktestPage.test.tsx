@@ -16,7 +16,26 @@ vi.mock("../api", () => ({
     get: vi.fn(async (path: string) => {
       if (path === "/api/strategies") return [{ id: 1, name: "Стратегия 1", version: 1, active: true }];
       if (path === "/api/instruments?active=true") {
-        return [{ id: 1, ticker: "SBER", figi: "BBG004730N88", name: "Сбербанк", active: true }];
+        return [
+          {
+            id: 1,
+            ticker: "SBER",
+            figi: "BBG004730N88",
+            name: "Сбербанк",
+            active: true,
+            first_1min_candle_date: "2020-02-07T12:00:00Z",
+            first_1day_candle_date: "1998-01-01T12:00:00Z",
+          },
+          {
+            id: 2,
+            ticker: "GAZP",
+            figi: "BBG004730R89",
+            name: "Газпром",
+            active: true,
+            first_1min_candle_date: null,
+            first_1day_candle_date: null,
+          },
+        ];
       }
       if (path === "/api/strategies/1/versions") {
         return [{ id: 1, version: 1, config: { timeframe: "1h" } }];
@@ -105,5 +124,79 @@ describe("BacktestPage: U11 период", () => {
     expect(path).toBe("/api/backtests");
     expect(payload.from).toBe(fromExpected.toISOString());
     expect(payload.to).toBe(toExpected.toISOString());
+  });
+});
+
+describe("BacktestPage: MVP-7.6 U12 «портфель данных»", () => {
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+
+  /** Local date as DD.MM.YYYY (same conversion the page uses). */
+  function dayLabel(iso: string): string {
+    const d = new Date(iso);
+    return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`;
+  }
+
+  /**
+   * The Field wrapper renders the hint inside the label as a single span with
+   * a "ⓘ " prefix, so match the span by contained text (exact string matchers
+   * would fail on the prefix).
+   */
+  function hintContains(text: string) {
+    return (content: string, el: Element | null) =>
+      el !== null && el.tagName === "SPAN" && content.includes(text);
+  }
+
+  function toInline(json: string) {
+    fireEvent.click(screen.getByRole("radio", { name: "Инлайн-конфигурация" }));
+    const textarea = screen.getByPlaceholderText(
+      '{"name": "", "direction": "LONG", "entry": {...}, "exit": {...}}',
+    ) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: json } });
+  }
+
+  it("H4: 1h берёт дату первой минутной свечи; «Весь период» от earliest", async () => {
+    render(<BacktestPage />);
+    await screen.findByText("SBER · Сбербанк");
+
+    toInline('{"timeframe": "1h"}');
+    selectByLabel("Инструмент", "1");
+
+    // Подсказка под полем и в календаре зависит от (бумага, таймфрейм).
+    await screen.findByText(hintContains(`Данные для бэктеста доступны с: ${dayLabel("2020-02-07T12:00:00Z")}`));
+
+    // «Весь период» включён; выбор пресета ставит from = earliest.
+    fireEvent.click(screen.getByLabelText("Открыть календарь"));
+    fireEvent.click(screen.getByText("Быстрый выбор ▾"));
+    const all = screen.getByRole("button", { name: /Весь период/ }) as HTMLButtonElement;
+    expect(all.disabled).toBe(false);
+    fireEvent.click(all);
+    const summary = screen.getByLabelText("Период") as HTMLInputElement;
+    const e = new Date("2020-02-07T12:00:00Z");
+    expect(summary.value).toContain(`${pad2(e.getDate())}.${pad2(e.getMonth() + 1)}.${pad2(e.getFullYear() % 100)}`);
+  });
+
+  it("H4: смена таймфрейма на 1d переключает подсказку на дневную дату", async () => {
+    render(<BacktestPage />);
+    await screen.findByText("SBER · Сбербанк");
+
+    toInline('{"timeframe": "1h"}');
+    selectByLabel("Инструмент", "1");
+    await screen.findByText(hintContains(`Данные для бэктеста доступны с: ${dayLabel("2020-02-07T12:00:00Z")}`));
+
+    toInline('{"timeframe": "1d"}');
+    await screen.findByText(hintContains(`Данные для бэктеста доступны с: ${dayLabel("1998-01-01T12:00:00Z")}`));
+  });
+
+  it("NULL даты или невыбранный таймфрейм — «источника нет» (поведение MVP-7.5)", async () => {
+    render(<BacktestPage />);
+    await screen.findByText("SBER · Сбербанк");
+
+    toInline('{"timeframe": "1h"}');
+    selectByLabel("Инструмент", "1");
+    await screen.findByText(hintContains(`Данные для бэктеста доступны с: ${dayLabel("2020-02-07T12:00:00Z")}`));
+
+    // GAZP: обе даты NULL -> подсказка возвращается к «источника нет».
+    selectByLabel("Инструмент", "2");
+    await screen.findByText(hintContains("нет данных о доступном диапазоне"));
   });
 });

@@ -339,6 +339,8 @@ def _instrument_to_schema(item: Instrument) -> InstrumentResponse:
         trading_status=item.trading_status or "TRADING_AVAILABLE",
         exchange=item.exchange,
         is_active=item.is_active if item.is_active is not None else True,
+        first_1min_candle_date=item.first_1min_candle_date,
+        first_1day_candle_date=item.first_1day_candle_date,
     )
 
 

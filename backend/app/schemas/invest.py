@@ -97,6 +97,10 @@ class InstrumentResponse(BaseModel):
     trading_status: str = "TRADING_AVAILABLE"
     exchange: str | None = None
     is_active: bool = True
+    # MVP-7.6 (H3): earliest available candle history, UTC ISO. NULL when the
+    # broker does not report a date («источника нет» — см. H4).
+    first_1min_candle_date: datetime | None = None
+    first_1day_candle_date: datetime | None = None
 
 
 class SyncResponse(BaseModel):

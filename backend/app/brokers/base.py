@@ -171,6 +171,11 @@ class BrokerInstrument:
     # the display label or from `exchange`.
     real_exchange: str | None = None
     is_active: bool = True
+    # MVP-7.6 (H2): official broker facts about the earliest available candle
+    # history (T-Invest instruments.proto: first_1min_candle_date /
+    # first_1day_candle_date). UTC; None == the broker reports no such date.
+    first_1min_candle_date: datetime | None = None
+    first_1day_candle_date: datetime | None = None
 
 
 @dataclass

@@ -137,7 +137,11 @@ const { schemaFixture, instruments } = vi.hoisted(() => {
       name: { type: "string", default: "" },
       direction: { $ref: "#/$defs/Direction", default: "LONG" },
       timeframe: { anyOf: [{ $ref: "#/$defs/Timeframe" }, { type: "null" }], default: null },
-      lookback_bars: { anyOf: [{ type: "integer" }, { type: "null" }] },
+      lookback_bars: {
+        anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }],
+        // Real pydantic schema: Field(default=None) -> `default: null` (F1).
+        default: null,
+      },
       entry: { $ref: "#/$defs/EntryConfig" },
       dca_grid: { $ref: "#/$defs/DCAGridConfig" },
       exit: { $ref: "#/$defs/ExitConfig" },
@@ -160,6 +164,8 @@ const savedStrategy = {
     direction: "LONG",
     timeframe: "1m",
     instrument_id: 2,
+    // F1: explicit value in an old strategy must be preserved as-is.
+    lookback_bars: 7,
     entry: { method: "at_bar_close", groups: [] },
     dca_grid: { mode: "simple", levels: 1, overlap_percent: 0.0 },
     exit: { take_profit: { kind: "fixed_percentage", percent: 10.0 } },
@@ -364,5 +370,45 @@ describe("MVP-7.4 U5/U6: кнопка «Проверить»", () => {
       )
       .parentElement;
     expect(cell?.textContent).toContain("Field required");
+  });
+});
+
+describe("MVP-7.6 F1: lookback_bars", () => {
+  it("новая стратегия: JSON-режим и тело запроса без lookback_bars", async () => {
+    const post = vi.mocked(api.post);
+    post.mockResolvedValue({ valid: true, live_deal: { supported: true, reason: null } });
+    const { container } = renderNewStrategy();
+    await screen.findByRole("heading", { name: "Новая стратегия" });
+
+    // JSON-шаблон формы не содержит ключ (default: null из схемы выброшен).
+    fireEvent.click(screen.getByRole("button", { name: "JSON" }));
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    expect(textarea.value).not.toContain("lookback_bars");
+
+    fireEvent.click(screen.getByRole("button", { name: "Проверить" }));
+    await screen.findByText("Для живой торговли подходит.");
+    const body = post.mock.calls.find(([p]) => p === "/api/strategies/validate")?.[1] as
+      | Record<string, unknown>
+      | undefined;
+    expect(body).toBeDefined();
+    expect(body).not.toHaveProperty("lookback_bars");
+  });
+
+  it("редактирование: явное значение в старой стратегии сохраняется", async () => {
+    const put = vi.mocked(api.put);
+    render(
+      <MemoryRouter initialEntries={["/strategies/7/edit"]}>
+        <Routes>
+          <Route path="/strategies/:id/edit" element={<StrategyFormPage edit />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByRole("heading", { name: "Стратегия — редактирование" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Сохранить (новая версия)" }));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    const [path, payload] = put.mock.calls[0] as [string, { config: Record<string, unknown> }];
+    expect(path).toBe("/api/strategies/7");
+    expect(payload.config.lookback_bars).toBe(7);
   });
 });

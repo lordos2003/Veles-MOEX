@@ -113,6 +113,39 @@ def test_list_instruments_via_service() -> None:
         _clear()
 
 
+def test_list_instruments_includes_first_candle_dates() -> None:
+    # MVP-7.6 (H3): GET /api/instruments exposes the broker's earliest history
+    # dates (UTC, ISO); missing broker facts stay null in the response.
+    from datetime import UTC, datetime
+
+    instrument = Instrument(
+        figi="BBG004730N88",
+        ticker="SBER",
+        name="Sberbank",
+        instrument_type="SHARE",
+        currency="RUB",
+        first_1min_candle_date=datetime(2020, 2, 7, tzinfo=UTC),
+        first_1day_candle_date=datetime(1998, 1, 1, tzinfo=UTC),
+    )
+    bare = Instrument(figi="F2", ticker="GAZP", instrument_type="SHARE", currency="RUB")
+    _override_instruments(FakeInstrumentService([instrument, bare]))
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/instruments")
+        assert response.status_code == 200
+        body = response.json()
+
+        def parse(value: str) -> datetime:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+        assert parse(body[0]["first_1min_candle_date"]) == datetime(2020, 2, 7, tzinfo=UTC)
+        assert parse(body[0]["first_1day_candle_date"]) == datetime(1998, 1, 1, tzinfo=UTC)
+        assert body[1]["first_1min_candle_date"] is None
+        assert body[1]["first_1day_candle_date"] is None
+    finally:
+        _clear()
+
+
 def test_filter_instruments_by_type() -> None:
     share = Instrument(figi="F1", ticker="AAA", instrument_type="SHARE")
     bond = Instrument(figi="F2", ticker="BBB", instrument_type="BOND")

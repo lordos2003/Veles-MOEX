@@ -9,6 +9,7 @@ import {
   formFromConfig,
   initialValue,
   initialValueForVariant,
+  isPlainObject,
   metaOf,
   nullableOf,
   propertyMetas,
@@ -129,7 +130,15 @@ export function StrategyFormPage(props: { edit?: boolean }) {
   // above already set `loaded`, so this effect is a no-op there. ---
   useEffect(() => {
     if (!schema || loaded) return;
-    setForm(initialValue(schema, defs) as Config);
+    const form = initialValue(schema, defs) as Config;
+    // F1 (MVP-7.6, M1 from MVP-7.5): `lookback_bars` has `default: null` in
+    // the schema so old strategies keep working, but the UI must neither show
+    // nor send the key — the engine computes the depth (H1). Edit mode keeps
+    // whatever the stored config holds (explicit values are preserved).
+    if (isPlainObject(form) && form.lookback_bars === null) {
+      delete form.lookback_bars;
+    }
+    setForm(form);
     setLoaded(true);
   }, [schema, defs, loaded]);
 

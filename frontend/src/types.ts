@@ -367,6 +367,9 @@ export interface InstrumentInfo {
   trading_status: string;
   exchange: string | null;
   is_active: boolean;
+  /** MVP-7.6 (H3): earliest available history, UTC ISO; null = no data. */
+  first_1min_candle_date: string | null;
+  first_1day_candle_date: string | null;
 }
 
 export interface CandleInfo {

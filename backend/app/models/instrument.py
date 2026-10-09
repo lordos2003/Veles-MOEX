@@ -13,9 +13,10 @@ T-Invest values before they reach this model.
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Numeric, String
+from sqlalchemy import BigInteger, DateTime, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -43,6 +44,15 @@ class Instrument(TimestampMixin, Base):
     # Trading board / exchange, when provided by the broker.
     exchange: Mapped[str | None] = mapped_column(String(32), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    # MVP-7.6 (H2): earliest available candle history reported by the broker
+    # (T-Invest first_1min_candle_date / first_1day_candle_date). UTC; NULL when
+    # the broker has no such fact — nothing is substituted.
+    first_1min_candle_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    first_1day_candle_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f"<Instrument id={self.id} ticker={self.ticker!r} figi={self.figi!r}>"

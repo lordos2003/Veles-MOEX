@@ -14,6 +14,27 @@ import { PeriodPicker, PeriodRange } from "../components/PeriodPicker";
 
 const TF_CHOICES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1mo"];
 
+/** MVP-7.6 H4: intraday timeframes use the first 1-minute candle date. */
+const MINUTE_TFS = new Set(["1m", "5m", "15m", "30m", "1h", "4h"]);
+/** Daily and coarser timeframes use the first 1-day candle date. */
+const DAY_TFS = new Set(["1d", "1w", "1mo"]);
+
+/**
+ * MVP-7.6 U12: convert a UTC ISO instant from the API to the local calendar
+ * date key "YYYY-MM-DD" the picker expects. The boundary follows the browser
+ * timezone (the same one used when the period is submitted).
+ */
+function toLocalDateKey(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
 export function BacktestPage() {
   const [strategies, setStrategies] = useState<StrategyResponse[]>([]);
   const [versions, setVersions] = useState<StrategyVersionResponse[]>([]);
@@ -84,6 +105,29 @@ export function BacktestPage() {
   useEffect(() => {
     if (configTimeframe) setTimeframe(configTimeframe);
   }, [configTimeframe]);
+
+  /**
+   * MVP-7.6 U12: earliest history date for the selected instrument and
+   * timeframe (H4). No instrument / no timeframe / NULL date -> "no source"
+   * (behaviour of MVP-7.5: «Весь период» off, presets unfiltered).
+   */
+  const earliestAvailable = useMemo(() => {
+    const inst = instruments.find((i) => String(i.id) === instrumentId);
+    if (!inst || !timeframe) return null;
+    const iso = MINUTE_TFS.has(timeframe)
+      ? inst.first_1min_candle_date
+      : DAY_TFS.has(timeframe)
+        ? inst.first_1day_candle_date
+        : null;
+    return toLocalDateKey(iso);
+  }, [instruments, instrumentId, timeframe]);
+
+  const earliestHint = earliestAvailable
+    ? (() => {
+        const [y, m, d] = earliestAvailable.split("-").map(Number);
+        return `Данные для бэктеста доступны с: ${pad2(d)}.${pad2(m)}.${y}`;
+      })()
+    : "нет данных о доступном диапазоне";
 
   const run = async () => {
     setError(null);
@@ -242,12 +286,13 @@ export function BacktestPage() {
               label="Период"
               required
               error={fieldErrors.from}
-              hint="нет данных о доступном диапазоне"
+              hint={earliestHint}
             >
               <PeriodPicker
                 from={period.from}
                 to={period.to}
                 onChange={(from, to) => setPeriod({ from, to })}
+                earliestAvailable={earliestAvailable}
               />
             </Field>
             <Field label="Депозит сделки" required error={fieldErrors.deposit}>
