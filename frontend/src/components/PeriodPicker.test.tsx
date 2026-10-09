@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 /** Stateful wrapper: the picker is controlled, so chained clicks need state. */
-function Harness(props: { earliestAvailable?: string; onChange: ReturnType<typeof vi.fn> }) {
+function Harness(props: { earliestAvailable?: string; onChange: (from: Date | null, to: Date | null) => void }) {
   const [from, setFrom] = useState<Date | null>(null);
   const [to, setTo] = useState<Date | null>(null);
   return (
