@@ -9,10 +9,20 @@ import type {
   StrategyVersionResponse,
 } from "../types";
 import { Button, ErrorBanner, Field, Loading, SelectInput, TextInput } from "../components/FormControls";
+import { InstrumentPicker } from "../components/InstrumentPicker";
 import CandleChart, { ChartMarker } from "../components/CandleChart";
 import { PeriodPicker, PeriodRange } from "../components/PeriodPicker";
 
 const TF_CHOICES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1mo"];
+
+/**
+ * MVP-7.7 P3: значения по умолчанию для «Бэктеста» — константа интерфейса,
+ * не значение схемы и не Veles-семантика. Решение владельца 2026-10-09,
+ * тариф «Инвестор» Т-Инвестиций, акции.
+ */
+const MAKER_FEE_DEFAULT = "0.003";
+const TAKER_FEE_DEFAULT = "0.003";
+const SLIPPAGE_DEFAULT = "0.001";
 
 /** MVP-7.6 H4: intraday timeframes use the first 1-minute candle date. */
 const MINUTE_TFS = new Set(["1m", "5m", "15m", "30m", "1h", "4h"]);
@@ -49,9 +59,9 @@ export function BacktestPage() {
   const [instrumentId, setInstrumentId] = useState("");
   const [period, setPeriod] = useState<PeriodRange>({ from: null, to: null });
   const [deposit, setDeposit] = useState("");
-  const [makerFee, setMakerFee] = useState("");
-  const [takerFee, setTakerFee] = useState("");
-  const [slippage, setSlippage] = useState("");
+  const [makerFee, setMakerFee] = useState(MAKER_FEE_DEFAULT);
+  const [takerFee, setTakerFee] = useState(TAKER_FEE_DEFAULT);
+  const [slippage, setSlippage] = useState(SLIPPAGE_DEFAULT);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const [running, setRunning] = useState(false);
@@ -107,6 +117,17 @@ export function BacktestPage() {
   }, [configTimeframe]);
 
   /**
+   * MVP-7.7 P1/P2: the picker works by FIGI; the page keeps the local
+   * `instrument_id`. A paper without a local id cannot be selected.
+   */
+  const chosenInstrument = instruments.find((i) => String(i.id) === instrumentId);
+  const instrumentFigi = chosenInstrument?.figi ?? "";
+  const onSelectInstrument = (figi: string) => {
+    const inst = instruments.find((i) => i.figi === figi);
+    setInstrumentId(inst?.id != null ? String(inst.id) : "");
+  };
+
+  /**
    * MVP-7.6 U12: earliest history date for the selected instrument and
    * timeframe (H4). No instrument / no timeframe / NULL date -> "no source"
    * (behaviour of MVP-7.5: «Весь период» off, presets unfiltered).
@@ -149,10 +170,10 @@ export function BacktestPage() {
         return;
       }
     }
-    // B3: nothing is filled in for the user — empty required fields are
-    // reported at the field and the request is not sent.
+    // B3: empty required fields (except fees, prefilled per owner's decision
+    // of 2026-10-09) are reported at the field and the request is not sent.
     const errors: Record<string, string> = {};
-    if (!instrumentId) errors.instrument = "Выберите инструмент.";
+    if (!instrumentId) errors.instrument = "Выберите ценную бумагу.";
     if (!configTimeframe && !timeframe.trim()) errors.timeframe = "Выберите таймфрейм.";
     if (!period.from || !period.to) errors.from = "Укажите период.";
     if (!deposit.trim()) errors.deposit = "Укажите депозит сделки.";
@@ -255,17 +276,18 @@ export function BacktestPage() {
           )}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Инструмент" required error={fieldErrors.instrument}>
-              <SelectInput
-                value={instrumentId}
-                onChange={setInstrumentId}
-                allowEmpty
-                emptyLabel="— выберите —"
-                options={instruments.map((i) => ({
-                  value: String(i.id),
-                  label: `${i.ticker ?? i.figi} · ${i.name ?? ""}`,
-                }))}
-              />
+            <Field label="Ценная бумага" required error={fieldErrors.instrument}>
+              {instruments.length === 0 ? (
+                <p className="text-sm text-zinc-500">Инструменты не загружены.</p>
+              ) : (
+                <InstrumentPicker
+                  instruments={instruments}
+                  selectedFigi={instrumentFigi}
+                  onSelect={onSelectInstrument}
+                  fallbackLabel={instrumentId ? `#${instrumentId}` : ""}
+                  listId="backtest-instrument-results"
+                />
+              )}
             </Field>
             <Field label="Таймфрейм (из конфигурации)" error={fieldErrors.timeframe}>
               {configTimeframe ? (
@@ -304,18 +326,17 @@ export function BacktestPage() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Field label="Maker-комиссия" required error={fieldErrors.makerFee}>
-              <TextInput value={makerFee} onChange={setMakerFee} placeholder="например, 0.0003" />
+              <TextInput value={makerFee} onChange={setMakerFee} />
             </Field>
             <Field label="Taker-комиссия" required error={fieldErrors.takerFee}>
-              <TextInput value={takerFee} onChange={setTakerFee} placeholder="например, 0.0003" />
+              <TextInput value={takerFee} onChange={setTakerFee} />
             </Field>
             <Field label="Проскальзывание" required error={fieldErrors.slippage}>
-              <TextInput value={slippage} onChange={setSlippage} placeholder="например, 0.001" />
+              <TextInput value={slippage} onChange={setSlippage} />
             </Field>
           </div>
           <p className="text-xs text-zinc-500">
-            Комиссии задаются долей (например, 0.0003 = 0.03%). Значения не подставляются автоматически — их
-            необходимо указать явно.
+            Комиссии задаются долей (например, 0.003 = 0.3%). Для тарифа «Инвестор» в Т-Инвестициях, акции.
           </p>
           <div className="flex justify-end">
             <Button onClick={() => void run()} disabled={running}>

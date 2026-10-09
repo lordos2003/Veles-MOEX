@@ -32,11 +32,19 @@ export function InstrumentPicker(props: {
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
 
-  const selected = props.instruments.find((i) => i.figi === props.selectedFigi);
+  /**
+   * MVP-7.7 P2: papers without a local id cannot be selected (bot/backtest
+   * contracts need `instrument_id`), so they are not offered in the list.
+   */
+  const selectable = useMemo(
+    () => props.instruments.filter((inst) => inst.id !== null),
+    [props.instruments],
+  );
+  const selected = selectable.find((i) => i.figi === props.selectedFigi);
   const label = selected ? instrumentLabel(selected) : (props.fallbackLabel ?? "");
   const filtered = useMemo(
-    () => filterInstruments(query, props.instruments),
-    [query, props.instruments],
+    () => filterInstruments(query, selectable),
+    [query, selectable],
   );
 
   const pick = (figi: string) => {
@@ -98,7 +106,7 @@ export function InstrumentPicker(props: {
           className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded border border-zinc-700 bg-zinc-900"
         >
           <p className="px-3 py-1 text-xs text-zinc-500">
-            Найдено: {filtered.length} из {props.instruments.length}
+            Найдено: {filtered.length} из {selectable.length}
           </p>
           {filtered.length === 0 ? (
             <p className="px-3 py-2 text-sm text-zinc-500">Ничего не найдено</p>
