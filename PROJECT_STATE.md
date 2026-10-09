@@ -17,10 +17,12 @@
 
 ## Current task
 
-### Следующий MVP не назначен
-**Status: ожидает решения владельца.**
+### MVP-8.1 — Обновление Vite, Vitest и plugin-react (dev-инструменты)
+**Status: OPEN — назначено Кодеру (2026-10-09).**
 
-- MVP-8.0 опубликован (см. «Current accepted MVP»). Следующий шаг по аудиту (`.agent/AUDIT-FRONTEND-2026-10-09.md`): обновление Vite + Vitest + plugin-react (закрывает dev-уязвимости), затем дизайн-токены и доступность (контраст, подписи полей). Мелочь: добавить `text/javascript` в `gzip_types`.
+- Задание: `.agent/TASK-MVP-8.1-VITE-VITEST.md`; основание — аудит (этап 2.2); ветка `agent/review/mvp-8.1` от текущего `master`.
+- Ступенями до минимальных безопасных stable-версий; критерий — нет critical/high в цепочках vite/vitest/esbuild/tinypool; остаток цепочки Tailwind 3 — в отчёт (закрывается Tailwind 4 отдельным MVP); `npm audit --omit=dev` остаётся 0.
+- Мелочь на потом: `text/javascript` в `gzip_types` nginx; затем дизайн-токены и доступность (8.2).
 - MVP-7.4 (правки интерфейса) опубликован: PR #28, merge `8a9ad6a`; Issue #24 закрыт. Живой прогон U1–U4 — у владельца.
 - В `master` включены CI (`ci.yml`: ruff, pytest, alembic heads, vitest, build) и автослияние (`publish.yml`), 2026-10-08; SHA зеркала MVP-7.4 — `deda416`.
 - Проверить вручную при работе в песочнице: события `OrderStateStream`; поведение сделки, когда песочница удаляет неисполненные заявки после сессии.
