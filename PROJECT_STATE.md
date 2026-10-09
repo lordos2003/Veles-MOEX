@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-8.0 — Гигиена сборки и безопасность интерфейса (по аудиту 2026-10-09)
-**Status: OPEN — назначено Кодеру (2026-10-09).**
+**Status: ACCEPT (раунд 1, 2026-10-09), ожидает публикации.** PR #40; принятая реализация `e8e3149`; ревью `.agent/REVIEW-MVP-8.0.md`.
 
 - Задание: `.agent/TASK-MVP-8.0-TOOLING-HYGIENE.md`; основание — `.agent/AUDIT-FRONTEND-2026-10-09.md`; ветка `agent/review/mvp-8.0` от текущего `master`.
 - G1 `npm ci` + lock + Node 22 в образе; G2 nginx (gzip, кэш, заголовки, CSP); G3 `requirements.lock` на Python 3.12; G4 react-router 7; G5 независимая загрузка бумаг/счетов на «Боты → создать». Vite/Vitest/Tailwind/React/TypeScript — отдельными MVP.
