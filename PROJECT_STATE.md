@@ -18,7 +18,7 @@
 ## Current task
 
 ### MVP-7.6 — «Данные доступны с»: дата начала истории, «Весь период», фильтр пресетов
-**Status: OPEN — назначено Кодеру (2026-10-08).**
+**Status: ACCEPT (раунд 1, 2026-10-09), ожидает публикации.** PR #34; принятая реализация `9904b33`; ревью `.agent/REVIEW-MVP-7.6.md`.
 
 - Задание: `.agent/TASK-MVP-7.6-HISTORY-START.md`; ветка `agent/review/mvp-7.6` от текущего `master`.
 - Источник — поля `first_1min_candle_date` / `first_1day_candle_date` в `Share`/`Instrument` T-Invest (официальный `instruments.proto`); H4 (какая дата для какого таймфрейма) — проектное решение, на подтверждение.
