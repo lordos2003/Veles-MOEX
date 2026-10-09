@@ -20,13 +20,22 @@
 ### Следующий MVP не назначен
 **Status: ожидает решения владельца.**
 
-- MVP-8.0 опубликован (см. «Current accepted MVP»). Следующий шаг по аудиту (`.agent/AUDIT-FRONTEND-2026-10-09.md`): обновление Vite + Vitest + plugin-react (закрывает dev-уязвимости), затем дизайн-токены и доступность (контраст, подписи полей). Мелочь: добавить `text/javascript` в `gzip_types`.
+- MVP-8.1 опубликован (см. «Current accepted MVP»). Следующий шаг по аудиту: Tailwind 4 вместе с дизайн-токенами и доступностью (контраст серого текста, подписи полей, фокус) — закроет остаток из 7 dev-уязвимостей цепочки Tailwind 3. Мелочь: `text/javascript` в `gzip_types` nginx.
 - MVP-7.4 (правки интерфейса) опубликован: PR #28, merge `8a9ad6a`; Issue #24 закрыт. Живой прогон U1–U4 — у владельца.
 - В `master` включены CI (`ci.yml`: ruff, pytest, alembic heads, vitest, build) и автослияние (`publish.yml`), 2026-10-08; SHA зеркала MVP-7.4 — `deda416`.
 - Проверить вручную при работе в песочнице: события `OrderStateStream`; поведение сделки, когда песочница удаляет неисполненные заявки после сессии.
 - Остальные кандидаты: мульти-тейк / безубыток / сигнальный TP / сигнальный стоп / подтяжка / режим «Сигнал» в живой торговле; кэш свечей для M1; время свечей `HOUR_4`/`WEEK_1`/`MONTH_1`; перевыставление TP при перезапуске; ошибка `FILLED -> UNKNOWN`; политика единичного сбоя чтения `GetStopOrders`.
 
 ## Current accepted MVP
+
+### MVP-8.1 — Обновление Vite, Vitest и plugin-react (dev-инструменты)
+**Status: ACCEPTED (раунд 1, 2026-10-09) and published to master.**
+
+- Принятая реализация: `7d71c45`; Publication PR: #43; merge commit: `d974ecc3b50a48675feb14e707df06d50e50608d`; Issue #42 (закрыт)
+- Задание: `.agent/TASK-MVP-8.1-VITE-VITEST.md`; ревью: `.agent/REVIEW-MVP-8.1.md`; отчёт: `.agent/REPORT-MVP-8.1.md`
+- Содержание: Vite 5.4 → 6.4.4, Vitest 2.1 → 4.1.11 (ступенями), тип `Mock` в одном тесте; plugin-react 4.7 без изменений.
+- Проверка: `npm test 81 passed`; build ок; `npm audit` 14 → 7 (0 critical, остаток — цепочка Tailwind 3); `npm audit --omit=dev` = 0; dev-сервер и живой прогон в Docker; CI зелёный.
+- Не блокеры: остаток 7 dev-уязвимостей закрывается Tailwind 4; plugin-react не обновлялся.
 
 ### MVP-8.0 — Гигиена сборки и безопасность интерфейса (по аудиту 2026-10-09)
 **Status: ACCEPTED (раунд 1, 2026-10-09) and published to master.**
