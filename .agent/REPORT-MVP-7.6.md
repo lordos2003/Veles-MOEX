@@ -8,8 +8,8 @@
   - **`9904b33`** — H2, H3, H4, U12, F1 + тесты — **pushed, in sync with origin**
     (проверено `git ls-remote origin agent/review/mvp-7.6 agent/control`).
 - База: `origin/master @ c5903a6` (после публикации MVP-7.5). `master` не изменялся.
-- Отчёт: `agent/control:.agent/REPORT-MVP-7.6.md` — коммит **`<SHA>`**;
-  финальный HEAD `agent/control` — см. «Публикация».
+- Отчёт: `agent/control:.agent/REPORT-MVP-7.6.md` — pushed вместе со
+  скриншотами; финальный HEAD `agent/control` — см. «Публикация» (ls-remote).
 - Самостоятельная приёмка не объявлялась — ревью за независимым ревьюером.
 
 ## H2. Хранение и синхронизация
@@ -153,7 +153,7 @@ backend — `alembic upgrade head`, frontend), ключ песочницы вл�
 
 ```
 git push origin agent/review/mvp-7.6   # 9904b33 (проверено git ls-remote)
-git push origin agent/control          # <SHA> — HEAD после коммита отчёта
+git push origin agent/control          # HEAD = коммит этого отчёта (со скриншотами)
 ```
 
 Проверено `git ls-remote origin agent/review/mvp-7.6 agent/control`: remote SHAs
