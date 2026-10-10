@@ -150,7 +150,7 @@ describe("BacktestPage: U11 период", () => {
     const fromExpected = new Date(prev.getFullYear(), prev.getMonth(), 5);
     const toExpected = new Date(prev.getFullYear(), prev.getMonth(), 7);
 
-    fireEvent.click(screen.getByLabelText("Открыть календарь"));
+    fireEvent.click(screen.getByLabelText("Период"));
     fireEvent.click(screen.getByLabelText("Предыдущий месяц"));
     fireEvent.click(screen.getByRole("button", { name: `5.${prev.getMonth() + 1}.${prev.getFullYear()}` }));
     fireEvent.click(screen.getByRole("button", { name: `7.${prev.getMonth() + 1}.${prev.getFullYear()}` }));
@@ -200,8 +200,8 @@ describe("BacktestPage: MVP-7.6 U12 «портфель данных»", () => {
     await screen.findByText(hintContains(`Данные для бэктеста доступны с: ${dayLabel("2020-02-07T12:00:00Z")}`));
 
     // «Весь период» включён; выбор пресета ставит from = earliest.
-    fireEvent.click(screen.getByLabelText("Открыть календарь"));
-    fireEvent.click(screen.getByText("Быстрый выбор ▾"));
+    fireEvent.click(screen.getByLabelText("Период"));
+    fireEvent.click(screen.getByRole("button", { name: "Быстрый выбор периода" }));
     const all = screen.getByRole("button", { name: /Весь период/ }) as HTMLButtonElement;
     expect(all.disabled).toBe(false);
     fireEvent.click(all);
@@ -253,7 +253,7 @@ describe("MVP-7.7 P1/P2: «Ценная бумага» — единый поис
 
     const now = new Date();
     const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    fireEvent.click(screen.getByLabelText("Открыть календарь"));
+    fireEvent.click(screen.getByLabelText("Период"));
     fireEvent.click(screen.getByLabelText("Предыдущий месяц"));
     fireEvent.click(screen.getByRole("button", { name: `5.${prev.getMonth() + 1}.${prev.getFullYear()}` }));
     fireEvent.click(screen.getByRole("button", { name: `7.${prev.getMonth() + 1}.${prev.getFullYear()}` }));
@@ -340,7 +340,7 @@ describe("MVP-7.7 P3: комиссии и проскальзывание по у
 
     const now = new Date();
     const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    fireEvent.click(screen.getByLabelText("Открыть календарь"));
+    fireEvent.click(screen.getByLabelText("Период"));
     fireEvent.click(screen.getByLabelText("Предыдущий месяц"));
     fireEvent.click(screen.getByRole("button", { name: `5.${prev.getMonth() + 1}.${prev.getFullYear()}` }));
     fireEvent.click(screen.getByRole("button", { name: `7.${prev.getMonth() + 1}.${prev.getFullYear()}` }));

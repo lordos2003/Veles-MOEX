@@ -122,10 +122,12 @@ function applyTime(base: Date | null, h: number, min: number): Date {
 }
 
 /**
- * U11 (MVP-7.5): the «Период» field of the backtest form — one field with a
- * readable range value, a calendar popup with range selection and a quick
- * presets dropdown. The component is self-contained (no calendar library):
- * the project has no heavy UI dependencies yet.
+ * U11 (MVP-7.5) + U13 (MVP-8.2, раунд 2): the «Период» field — clicking the
+ * dated field opens the calendar popup (range selection, manual date/time),
+ * the calendar icon opens the quick presets dropdown (U13). Only one popup is
+ * open at a time; Esc closes either from any element inside the component,
+ * returning focus to the control that opened it. The component is
+ * self-contained (no calendar library): no heavy UI dependencies yet.
  */
 export function PeriodPicker(props: PeriodPickerProps) {
   const { from, to, onChange, earliestAvailable } = props;
@@ -159,18 +161,33 @@ export function PeriodPicker(props: PeriodPickerProps) {
   }, [from, to]);
 
   const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const iconRef = useRef<HTMLButtonElement>(null);
+  const presetsRef = useRef<HTMLDivElement>(null);
+  /** U13: the control that opened the open popup — Esc returns focus to it. */
+  const openerRef = useRef<"field" | "icon">("field");
 
   useEffect(() => {
-    if (!open) return;
+    if (!open && !presetsOpen) return;
     const onDocClick = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpen(false);
         setPresetsOpen(false);
       }
     };
+    const onDocFocus = (e: FocusEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setPresetsOpen(false);
+      }
+    };
     document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [open]);
+    document.addEventListener("focusin", onDocFocus);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("focusin", onDocFocus);
+    };
+  }, [open, presetsOpen]);
 
   const summary = from && to ? `${formatShort(from)} - ${formatShort(to)}` : "";
 
@@ -245,11 +262,43 @@ export function PeriodPicker(props: PeriodPickerProps) {
     }
   };
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      setOpen(false);
-      setPresetsOpen(false);
+  const closePopups = (returnFocus: boolean) => {
+    setOpen(false);
+    setPresetsOpen(false);
+    if (returnFocus) (openerRef.current === "icon" ? iconRef : inputRef).current?.focus();
+  };
+
+  /** U13.4: Esc closes any open popup from any element inside the component. */
+  const onRootKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape" && (open || presetsOpen)) {
+      e.stopPropagation();
+      closePopups(true);
     }
+  };
+
+  const openCalendar = () => {
+    setOpen(true);
+    setPresetsOpen(false);
+    openerRef.current = "field";
+  };
+
+  const openPresets = () => {
+    setPresetsOpen(true);
+    setOpen(false);
+    openerRef.current = "icon";
+  };
+
+  /** U13.4: ↓/↑ move focus across the preset options (Enter activates natively). */
+  const onPresetsKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const buttons = Array.from(
+      presetsRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
+    );
+    if (buttons.length === 0) return;
+    const idx = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const next = e.key === "ArrowDown" ? Math.min(idx + 1, buttons.length - 1) : Math.max(idx - 1, 0);
+    buttons[next]?.focus();
   };
 
   const shiftMonth = (delta: number) => {
@@ -283,29 +332,36 @@ export function PeriodPicker(props: PeriodPickerProps) {
   };
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative" onKeyDown={onRootKeyDown}>
       <div className="flex">
         <input
+          ref={inputRef}
           type="text"
           readOnly
           className="w-full rounded-l border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200"
           value={summary}
           placeholder="выберите период"
           onClick={() => {
-            setOpen((v) => !v);
-            setPresetsOpen(false);
+            if (open) setOpen(false);
+            else openCalendar();
           }}
-          onKeyDown={onKeyDown}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
+              e.preventDefault();
+              if (!open) openCalendar();
+            }
+          }}
           aria-label={fieldLabel ?? "Период"}
         />
         <button
+          ref={iconRef}
           type="button"
           className="min-h-8 rounded-r border border-l-0 border-zinc-700 bg-zinc-900 px-2 text-zinc-400 hover:text-zinc-200"
           onClick={() => {
-            setOpen((v) => !v);
-            setPresetsOpen(false);
+            if (presetsOpen) setPresetsOpen(false);
+            else openPresets();
           }}
-          aria-label="Открыть календарь"
+          aria-label="Быстрый выбор периода"
         >
           📅
         </button>
@@ -316,7 +372,6 @@ export function PeriodPicker(props: PeriodPickerProps) {
           className="absolute left-0 top-full z-20 mt-1 w-[320px] rounded-lg border border-zinc-700 bg-zinc-900 p-3 shadow-xl"
           role="dialog"
           aria-label="Выбор периода"
-          onKeyDown={onKeyDown}
         >
           <div className="mb-2 flex items-center justify-between">
             <button
@@ -409,56 +464,51 @@ export function PeriodPicker(props: PeriodPickerProps) {
             </div>
           </div>
 
-          <div className="relative mt-3">
-            <button
-              type="button"
-              className="min-h-8 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-left text-xs text-zinc-300"
-              onClick={() => setPresetsOpen((v) => !v)}
-            >
-              Быстрый выбор ▾
-            </button>
-            {presetsOpen ? (
-              <div className="absolute left-0 top-full z-30 mt-1 w-full rounded border border-zinc-700 bg-zinc-900 shadow-xl">
-                {visiblePresets.map((p) => {
-                  if (p.key === "all" && !earliest) {
-                    return (
-                      <button
-                        type="button"
-                        key={p.key}
-                        disabled
-                        title="нет данных о доступном диапазоне"
-                        className="min-h-8 w-full px-3 py-1.5 text-left text-xs text-zinc-600"
-                      >
-                        <span className="flex items-center justify-between">
-                          <span>Весь период</span>
-                          <span className="pl-3">нет данных о доступном диапазоне</span>
-                        </span>
-                      </button>
-                    );
-                  }
-                  return (
-                    <button
-                      type="button"
-                      key={p.key}
-                      onClick={() => applyPreset(p)}
-                      className="min-h-8 w-full px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
-                    >
-                      <span className="flex items-center justify-between">
-                        <span>{p.label}</span>
-                        <span className="pl-3 text-text-muted">{presetRange(p)}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
-
           <p className="mt-3 border-t border-zinc-800 pt-2 text-xs text-text-muted">
             {earliest
               ? `Данные для бэктеста доступны с: ${pad2(earliest.getDate())}.${pad2(earliest.getMonth() + 1)}.${earliest.getFullYear()}`
               : "нет данных о доступном диапазоне"}
           </p>
+        </div>
+      ) : null}
+
+      {presetsOpen ? (
+        <div
+          ref={presetsRef}
+          className="absolute right-0 top-full z-20 mt-1 w-80 rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl"
+          onKeyDown={onPresetsKeyDown}
+        >
+          {visiblePresets.map((p) => {
+            if (p.key === "all" && !earliest) {
+              return (
+                <button
+                  type="button"
+                  key={p.key}
+                  disabled
+                  title="нет данных о доступном диапазоне"
+                  className="min-h-8 w-full px-3 py-1.5 text-left text-xs text-zinc-600"
+                >
+                  <span className="flex items-center justify-between">
+                    <span>Весь период</span>
+                    <span className="pl-3">нет данных о доступном диапазоне</span>
+                  </span>
+                </button>
+              );
+            }
+            return (
+              <button
+                type="button"
+                key={p.key}
+                onClick={() => applyPreset(p)}
+                className="min-h-8 w-full px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
+              >
+                <span className="flex items-center justify-between">
+                  <span>{p.label}</span>
+                  <span className="pl-3 text-text-muted">{presetRange(p)}</span>
+                </span>
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>
