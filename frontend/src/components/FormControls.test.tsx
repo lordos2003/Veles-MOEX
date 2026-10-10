@@ -32,6 +32,18 @@ describe("FormControls: A2 программные подписи", () => {
     expect(wrapper!.className).toContain("min-h-8");
     expect(wrapper!.className).toContain("min-w-8");
   });
+
+  it("A4/B4 (раунд 3): обёртка inline-flex без justify-center — чекбокс слева", () => {
+    render(
+      <Field label="Аварийный стоп">
+        <CheckboxInput value={false} onChange={() => undefined} />
+      </Field>,
+    );
+    const wrapper = screen.getByRole("checkbox").closest("label");
+    expect(wrapper).toBeTruthy();
+    expect(wrapper!.className).toContain("inline-flex");
+    expect(wrapper!.className).not.toContain("justify-center");
+  });
 });
 
 describe("FormControls: heading-order", () => {

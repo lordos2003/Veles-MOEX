@@ -177,8 +177,10 @@ export function CheckboxInput(props: {
   return (
     /* A4 (MVP-8.2, раунд 2): Chromium ignores padding on a native checkbox,
        so box-content+p-2 gave 16x16; the wrapping label is the 32x32 target
-       (clicking it toggles the control) while the box stays 16x16 visually. */
-    <label className="flex min-h-8 min-w-8 cursor-pointer items-center justify-center">
+       (clicking it toggles the control) while the box stays 16x16 visually.
+       Раунд 3 (B4): inline-flex без justify-center — инлайн-обёртка тянется
+       только на чекбокс и оставляет его слева, как в раунде 1. */
+    <label className="inline-flex min-h-8 min-w-8 cursor-pointer items-center">
       <input
         type="checkbox"
         className="h-4 w-4 accent-zinc-400"
