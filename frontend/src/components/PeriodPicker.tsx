@@ -326,11 +326,11 @@ export function PeriodPicker(props: PeriodPickerProps) {
   const dayClass = (d: Date) => {
     if (isDisabled(d)) return "text-zinc-600";
     const cls = ["text-zinc-200 hover:bg-zinc-700"];
-    /* Sky-700 instead of sky-500/600: white text on those fails WCAG AA
-       (2.77:1 / 4.10:1); sky-700 gives 5.93:1. */
-    if (isEdge(d, "from")) cls.push("bg-sky-700 font-semibold text-white hover:bg-sky-700");
-    else if (isEdge(d, "to")) cls.push("bg-sky-700 text-white hover:bg-sky-700");
-    else if (between(d)) cls.push("bg-sky-900/60 text-sky-100");
+    /* accent-strong (indigo-700) instead of lighter shades: white text on those fails WCAG AA
+       (2.77:1 / 4.10:1); it gives 8.6:1 with white. */
+    if (isEdge(d, "from")) cls.push("bg-accent-strong font-semibold text-white hover:bg-accent-strong");
+    else if (isEdge(d, "to")) cls.push("bg-accent-strong text-white hover:bg-accent-strong");
+    else if (between(d)) cls.push("bg-accent-soft/70 text-zinc-100");
     return cls.join(" ");
   };
 

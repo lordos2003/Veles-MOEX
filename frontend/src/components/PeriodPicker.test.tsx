@@ -61,7 +61,7 @@ describe("PeriodPicker: календарь", () => {
     const { container } = render(<PeriodPicker from={new Date(2026, 9, 5)} to={new Date(2026, 9, 7)} onChange={onChange} />);
     openPanel();
 
-    const between = container.querySelector(".bg-sky-900\\/60");
+    const between = container.querySelector(".bg-accent-soft\\/70");
     expect(between).toBeTruthy();
 
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });

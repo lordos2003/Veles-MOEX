@@ -22,14 +22,31 @@ import { readFileSync } from "node:fs";
 import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const PAGE = "#09090b"; // --color-page (zinc-950)
+// MVP-8.3: палитра zinc и семантические токены читаются из @theme в
+// src/index.css (единственный источник правды); значения вида var(--color-x)
+// разворачиваются. Остальные семейства (red/amber/emerald/sky) — стандартные
+// значения Tailwind 4.
+function loadTheme() {
+  const css = readFileSync("src/index.css", "utf8");
+  const raw = new Map();
+  for (const m of css.matchAll(/--color-([a-z0-9-]+):\s*([^;]+);/g)) raw.set(m[1], m[2].trim());
+  const resolveVar = (name, depth = 0) => {
+    const v = raw.get(name);
+    if (v === undefined || depth > 5) return undefined;
+    const ref = /^var\(--color-([a-z0-9-]+)\)$/.exec(v);
+    return ref ? resolveVar(ref[1], depth + 1) : v;
+  };
+  const out = new Map();
+  for (const name of raw.keys()) out.set(name, resolveVar(name));
+  return out;
+}
+const THEME = loadTheme();
+const PAGE = THEME.get("page");
 
 const PALETTE = {
-  zinc: {
-    50: "#fafafa", 100: "#f4f4f5", 200: "#e4e4e7", 300: "#d4d4d8",
-    400: "#a1a1aa", 500: "#71717a", 600: "#52525b", 700: "#3f3f46",
-    800: "#27272a", 900: "#18181b", 950: "#09090b",
-  },
+  zinc: Object.fromEntries(
+    [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map((n) => [n, THEME.get(`zinc-${n}`)]),
+  ),
   sky: {
     50: "#f0f9ff", 100: "#e0f2fe", 200: "#bae6fd", 300: "#7dd3fc",
     400: "#38bdf8", 500: "#0ea5e9", 600: "#0284c7", 700: "#0369a1",
@@ -50,22 +67,10 @@ const PALETTE = {
     400: "#34d399", 500: "#10b981", 600: "#059669", 700: "#047857",
     800: "#065f46", 900: "#064e3b", 950: "#022c22",
   },
-  // Токены @theme (index.css); суффиксы читаются по порядку от бо́льших.
-  tokens: {
-    "text": "#f4f4f5",
-    "text-secondary": "#d4d4d8",
-    "text-muted": "#a1a1aa",
-    "page": "#09090b",
-    "surface": "#18181b",
-    "surface-raised": "#27272a",
-    "border": "#3f3f46",
-    "border-soft": "#27272a",
-    "accent": "#0369a1",
-    "accent-bright": "#38bdf8",
-    "error": "#f87171",
-    "warning": "#fbbf24",
-    "success": "#34d399",
-  },
+  // Токены @theme без числового суффикса (page, surface, accent-bright, …).
+  tokens: Object.fromEntries(
+    [...THEME.entries()].filter(([k, v]) => !/^(zinc|red|amber|emerald|sky)-\d+$/.test(k) && /^#/.test(v ?? "")),
+  ),
 };
 
 function hexToRgb(hex) {
@@ -122,8 +127,8 @@ function walk(dir, out = []) {
   return out;
 }
 
-const TEXT_RE = /\btext-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|white|black|text(?:-secondary|-muted)?)\b/g;
-const BG_RE = /\bbg-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|page|surface|surface-raised)\b/g;
+const TEXT_RE = /\btext-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|white|black|text-secondary|text-muted|text|accent-bright|accent-strong|accent-soft|accent|error|warning|success)(?![\w-])/g;
+const BG_RE = /\bbg-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|page|surface-raised|surface|accent-strong|accent-soft|accent(?:\/\d+)?|error|warning|success)(?![\w-])/g;
 const CLASS_RE = /\b(?:className|class)\s*=\s*["'`]([^"'`]*)["'`]/g;
 
 const MIN_RATIO = 4.5;
@@ -139,9 +144,9 @@ for (const file of walk("src")) {
     // Динамические вставки ${...} не разбираем; пропускаем такие строки.
     if (classStr.includes("${") || classStr.includes("}")) continue;
 
-    const textTokens = [...classStr.matchAll(/\btext-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|white|black|text(?:-secondary|-muted)?)\b/g)].map((x) => x[1]);
+    const textTokens = [...classStr.matchAll(/\btext-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|white|black|text-secondary|text-muted|text|accent-bright|accent-strong|accent-soft|accent|error|warning|success)(?![\w-])/g)].map((x) => x[1]);
     if (textTokens.length === 0) continue;
-    const bgTokens = [...classStr.matchAll(/\bbg-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|page|surface|surface-raised)\b/g)].map((x) => x[1]);
+    const bgTokens = [...classStr.matchAll(/\bbg-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|page|surface-raised|surface|accent-strong|accent-soft|accent(?:\/\d+)?|error|warning|success)(?![\w-])/g)].map((x) => x[1]);
     const text = textTokens[textTokens.length - 1];
     const bgName = bgTokens.length > 0 ? bgTokens[bgTokens.length - 1] : "page";
 
@@ -162,7 +167,7 @@ for (const file of walk("src")) {
 // Пары из условных классов (склеиваются конкатенацией строк, напр. день
 // календаря в PeriodPicker) — держим их здесь как явные инварианты.
 const EXTRA_PAIRS = [
-  ["white", "sky-700"], // край диапазона календаря (было 2.77:1 на sky-500)
+  ["white", "accent-strong"], // край диапазона календаря
 ];
 
 for (const [text, bgName] of EXTRA_PAIRS) {

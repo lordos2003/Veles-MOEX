@@ -373,8 +373,8 @@ export function BacktestPage() {
               <h3 className="mb-2 font-medium text-zinc-200">График свечей и сделки</h3>
               <CandleChart candles={chart.candles} markers={chart.markers} />
               <div className="mt-1 flex gap-4 text-xs text-text-muted">
-                <span><span className="text-yellow-400">●</span> вход</span>
-                <span><span className="text-sky-400">●</span> выход</span>
+                <span><span className="text-warning">●</span> вход</span>
+                <span><span className="text-accent-bright">●</span> выход</span>
               </div>
             </section>
           ) : null}
