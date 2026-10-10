@@ -75,6 +75,14 @@ describe("ThemeSwitcher", () => {
 
   it("используется в шапке (desktop) и в мобильном меню — без дублей на одном экране", () => {
     const { container } = render(<ThemeSwitcher className="hidden lg:inline-flex" />);
+    // «Голого» inline-flex быть не должно: в CSS Tailwind .inline-flex идёт после
+    // .hidden и перебивает его (layout: переключатель был бы виден и на мобильном).
     expect(container.querySelector(".hidden")).toBeTruthy();
+    expect(container.querySelector(".hidden")?.className).not.toMatch(/(^|\s)inline-flex(\s|$)/);
+  });
+
+  it("без собственного className сохраняет дефолтный display inline-flex", () => {
+    const { container } = render(<ThemeSwitcher />);
+    expect(container.querySelector("[role='radiogroup']")?.className).toContain("inline-flex");
   });
 });

@@ -58,7 +58,11 @@ export function ThemeSwitcher({ size = "md", className = "" }: { size?: "md" | "
       aria-label="Тема оформления"
       onKeyDown={onKeyDown}
       className={
-        "inline-flex items-center gap-0.5 rounded-control border border-border-soft bg-page/60 p-0.5 " + className
+        // display-утилиту задаёт один источник: кастомный className (hidden lg:inline-flex)
+        // или дефолт inline-flex. Два display-класса конфликтуют: в CSS Tailwind
+        // .inline-flex идёт после .hidden и всегда перебивает его.
+        "items-center gap-0.5 rounded-control border border-border-soft bg-page/60 p-0.5 " +
+        (className === "" ? "inline-flex" : className)
       }
     >
       {OPTIONS.map((option, i) => {
