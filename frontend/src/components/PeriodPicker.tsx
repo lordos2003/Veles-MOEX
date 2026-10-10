@@ -230,6 +230,9 @@ export function PeriodPicker(props: PeriodPickerProps) {
       onChange(new Date(now.getTime() - (p.daysBack ?? 0) * 86_400_000), now);
     }
     setPresetsOpen(false);
+    /* M7 (MVP-8.2, раунд 3): фокус после монтажа панели теряется (activeElement
+       = body), возвращаем его на значок, открывший пресеты, как при Esc. */
+    iconRef.current?.focus();
   };
 
   const presetRange = (p: Preset): string => {

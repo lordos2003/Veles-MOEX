@@ -388,4 +388,13 @@ describe("MVP-8.2 A2: программные подписи всех полей 
     fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(input.getAttribute("aria-activedescendant")).toBeTruthy();
   });
+
+  it("M6 (раунд 3): label радиокнопок источника конфигурации — min-h-8", () => {
+    render(<BacktestPage />);
+    for (const text of ["По версии стратегии", "Инлайн-конфигурация"]) {
+      const label = screen.getByText(text).closest("label");
+      expect(label).toBeTruthy();
+      expect(label!.className).toContain("min-h-8");
+    }
+  });
 });

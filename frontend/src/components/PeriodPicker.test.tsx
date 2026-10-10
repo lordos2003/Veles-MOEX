@@ -240,4 +240,15 @@ describe("PeriodPicker: U13 (раунд 2) — календарь по дата�
     fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowUp" });
     expect(document.activeElement).toBe(first);
   });
+
+  it("M7 (раунд 3): выбор пресета возвращает фокус на значок", () => {
+    render(<PeriodPicker from={null} to={null} onChange={() => {}} />);
+    const icon = screen.getByRole("button", { name: "Быстрый выбор периода" });
+    fireEvent.click(icon);
+    expect(screen.getByRole("button", { name: /Месяц/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Месяц/ }));
+    expect(screen.queryByRole("button", { name: /Месяц/ })).toBeNull();
+    expect(document.activeElement).toBe(icon);
+  });
 });

@@ -226,11 +226,12 @@ export function BacktestPage() {
       <div className="grid grid-cols-1 gap-4 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 lg:grid-cols-2">
         <div className="space-y-4">
           <div className="flex items-center gap-2 text-sm">
-            <label className="flex items-center gap-1">
+            {/* M6 (MVP-8.2, раунд 3): label min-h-8 — интерактивная область радио ≥32px */}
+            <label className="flex min-h-8 items-center gap-1">
               <input type="radio" checked={useVersion} onChange={() => setUseVersion(true)} />
               По версии стратегии
             </label>
-            <label className="flex items-center gap-1">
+            <label className="flex min-h-8 items-center gap-1">
               <input type="radio" checked={!useVersion} onChange={() => setUseVersion(false)} />
               Инлайн-конфигурация
             </label>
