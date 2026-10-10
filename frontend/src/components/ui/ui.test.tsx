@@ -4,6 +4,7 @@
  * появление с учётом prefers-reduced-motion (R10), ConfirmDialog на Radix (R4).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { LazyMotion, MotionConfig, domAnimation } from "motion/react";
 import { SpotlightCard } from "./SpotlightCard";
@@ -152,5 +153,35 @@ describe("ConfirmDialog на Radix Dialog (R4)", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
     rerender(<ConfirmDialog open={false} title="Стоп?" message="сообщение" confirmLabel="Да" onConfirm={onConfirm} onCancel={onCancel} />);
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("закрытие по Esc возвращает фокус на элемент, открывший диалог (MVP-8.3 LIVE, L9)", async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>Открыть</button>
+          <ConfirmDialog
+            open={open}
+            title="Удалить?"
+            message="сообщение"
+            confirmLabel="Удалить"
+            onConfirm={() => undefined}
+            onCancel={() => setOpen(false)}
+          />
+        </>
+      );
+    }
+    render(<Harness />);
+    const trigger = screen.getByRole("button", { name: "Открыть" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    const dlg = await screen.findByRole("dialog", { name: "Удалить?" });
+
+    fireEvent.keyDown(dlg, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Без возврата фокуса активным оставался бы body (Radix Modal фокусит
+    // DialogTrigger, которого при управляемом open нет).
+    expect(document.activeElement).toBe(trigger);
   });
 });

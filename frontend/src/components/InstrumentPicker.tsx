@@ -75,6 +75,10 @@ export function InstrumentPicker(props: {
       if (open && pickItem) pick(pickItem.figi);
     } else if (event.key === "Escape") {
       setOpen(false);
+    } else if (event.key === "Tab") {
+      // MVP-8.3 LIVE (L9): закрыть список ДО перехода фокуса по Tab — иначе
+      // фокус уходит на body, пока открытый список удаляется из DOM.
+      setOpen(false);
     }
   };
 

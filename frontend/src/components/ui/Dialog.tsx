@@ -1,5 +1,5 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import { useRef, type ComponentPropsWithoutRef, type ReactNode } from "react";
 
 /**
  * Диалог на Radix Dialog (паттерн shadcn/ui, MIT): фокус-ловушка, Esc,
@@ -27,10 +27,26 @@ export function DialogOverlay(props: ComponentPropsWithoutRef<typeof DialogPrimi
 
 /** Центральное модальное окно. */
 export function DialogContent(props: { children: ReactNode }) {
+  const lastFocused = useRef<HTMLElement | null>(null);
   return (
     <DialogPrimitive.Portal>
       <DialogOverlay />
       <DialogPrimitive.Content
+        onOpenAutoFocus={() => {
+          // Триггер ещё в фокусе: FocusScope уведёт его внутрь диалога только
+          // после этого обработчика (его дефолт — focusFirst). Запоминаем
+          // элемент, открывший диалог, чтобы вернуть фокус при закрытии
+          // (наблюдение MVP-8.3 LIVE, L9).
+          lastFocused.current = document.activeElement as HTMLElement;
+        }}
+        onCloseAutoFocus={(event) => {
+          // Radix Modal по умолчанию фокусит DialogTrigger (context.triggerRef);
+          // при управляемом open без DialogTrigger он пуст — фокус теряется на
+          // body. Возвращаем его сами на элемент, открывший диалог
+          // (наблюдение MVP-8.3 LIVE, L9).
+          event.preventDefault();
+          lastFocused.current?.focus();
+        }}
         className={
           "fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 " +
           "rounded-card border border-border bg-surface p-5 shadow-pop " +

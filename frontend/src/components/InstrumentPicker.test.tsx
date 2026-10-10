@@ -86,4 +86,22 @@ describe("InstrumentPicker (MVP-8.2 A6): ARIA combobox и клавиатура",
     expect(input.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByRole("listbox")).toBeNull();
   });
+
+  it("Tab закрывает список до перехода фокуса (MVP-8.3 LIVE, L9)", () => {
+    const onSelect = vi.fn();
+    render(
+      <InstrumentPicker
+        instruments={INSTS}
+        selectedFigi=""
+        onSelect={onSelect}
+      />,
+    );
+    const input = screen.getByRole("combobox") as HTMLInputElement;
+    fireEvent.focus(input);
+    expect(screen.getByRole("listbox")).toBeTruthy();
+
+    fireEvent.keyDown(input, { key: "Tab" });
+    expect(input.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
 });
