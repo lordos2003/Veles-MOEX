@@ -19,7 +19,7 @@ export function Wordmark() {
   return (
     <span className="inline-flex items-center gap-2.5">
       <Logo />
-      <span className="text-xl font-semibold tracking-tight text-text">
+      <span className="whitespace-nowrap text-xl font-semibold tracking-tight text-text">
         Veles<span className="text-accent-bright">-MOEX</span>
       </span>
     </span>

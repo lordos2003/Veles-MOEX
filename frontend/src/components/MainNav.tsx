@@ -11,7 +11,7 @@ export const NAV = [
 ];
 
 const desktopLink = ({ isActive }: { isActive: boolean }) =>
-  "relative inline-flex min-h-9 items-center rounded-control px-3 text-sm transition-colors " +
+  "relative inline-flex min-h-9 items-center whitespace-nowrap rounded-control px-3 text-sm transition-colors " +
   "duration-(--duration-fast) " +
   (isActive
     ? "bg-surface-raised font-medium text-text after:absolute after:inset-x-3 after:-bottom-px after:h-px after:bg-accent-bright"
@@ -26,7 +26,7 @@ export function MainNav() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <nav aria-label="Основная навигация" className="hidden items-center gap-1 md:flex">
+      <nav aria-label="Основная навигация" className="hidden items-center gap-1 lg:flex">
         {NAV.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.end} className={desktopLink}>
             {item.label}
@@ -39,7 +39,7 @@ export function MainNav() {
           <button
             type="button"
             aria-label="Открыть меню"
-            className="inline-flex h-11 w-11 items-center justify-center rounded-control border border-zinc-700 text-text-secondary hover:bg-surface-raised md:hidden"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-control border border-zinc-700 text-text-secondary hover:bg-surface-raised lg:hidden"
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
               <path d="M4 7h16M4 12h16M4 17h16" />

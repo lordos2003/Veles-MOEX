@@ -211,7 +211,7 @@ export function TableWrap(props: { children: ReactNode; label?: string }) {
   return (
     <div
       className="-mx-1 overflow-x-auto px-1"
-      role={props.label ? "region" : undefined}
+      role={props.label ? "group" : undefined}
       aria-label={props.label}
       tabIndex={props.label ? 0 : undefined}
     >
