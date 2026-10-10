@@ -18,7 +18,7 @@
 ## Current task
 
 ### Задание Кодеру: MVP-8.3-LIVE — живой прогон интерфейса на Docker-стеке (назначено 2026-10-10)
-**Status: назначено Кодеру.** Контракт L1–L10 в `.agent/TASK-MVP-8.3-LIVE.md`; результат — `.agent/REPORT-MVP-8.3-LIVE.md` в `agent/control`. Ветка `agent/review/mvp-8.3-live` создаётся только при найденном дефекте. Код MVP-8.3 уже в master (PR #49); следующий MVP не назначен.
+**Status: REV1 назначен Кодеру** (ревью раунда 1 — REJECT: D3, CSP-ошибка при открытии модальных окон; фиксы D1/D2 приняты). Контракт L1–L10 и раздел «REV1» в `.agent/TASK-MVP-8.3-LIVE.md`; ревью `.agent/REVIEW-MVP-8.3-LIVE.md`; отчёт — `.agent/REPORT-MVP-8.3-LIVE.md`. Ветка `agent/review/mvp-8.3-live` создаётся только при найденном дефекте. Код MVP-8.3 уже в master (PR #49); следующий MVP не назначен.
 
 - Мелочи после MVP-8.2 (не блокеры): ↓ на значке «Быстрый выбор периода» не переводит фокус в список пресетов (Tab → первый пресет); строка «Весь период» без данных переносится на две строки; `text/javascript` в `gzip_types` nginx; пресет «Весь период» показывает «—»; фильтр `id !== null` в `InstrumentPicker`; в CI не хватает `npm audit` и Playwright smoke; Dependabot; React 19 / TypeScript 7 — отдельными задачами.
 - MVP-7.4 (правки интерфейса) опубликован: PR #28, merge `8a9ad6a`; Issue #24 закрыт. Живой прогон U1–U4 — у владельца.
