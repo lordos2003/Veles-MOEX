@@ -1,5 +1,25 @@
 @import "tailwindcss";
 
+/* A0 (MVP-8.2): design tokens. Values are the exact zinc/sky/red/amber/emerald
+   hexes the v3 config used, so the migration keeps the same palette and only
+   names it. `--color-accent` is sky-700: white text on sky-600/sky-500 fails
+   WCAG AA (4.10:1 / 2.77:1), sky-700 gives 5.93:1. */
+@theme {
+  --color-page: #09090b; /* zinc-950 */
+  --color-surface: #18181b; /* zinc-900 */
+  --color-surface-raised: #27272a; /* zinc-800 */
+  --color-border: #3f3f46; /* zinc-700 */
+  --color-border-soft: #27272a; /* zinc-800 */
+  --color-text: #f4f4f5; /* zinc-100 */
+  --color-text-secondary: #d4d4d8; /* zinc-300 */
+  --color-text-muted: #a1a1aa; /* zinc-400 (was zinc-500: 3.67:1 on surfaces) */
+  --color-accent: #0369a1; /* sky-700 */
+  --color-accent-bright: #38bdf8; /* sky-400 — focus ring */
+  --color-error: #f87171; /* red-400 */
+  --color-warning: #fbbf24; /* amber-400 */
+  --color-success: #34d399; /* emerald-400 */
+}
+
 /* Tailwind 3 -> 4 upgrade (official guide): v4 defaults the border color to
    currentColor (v3 used gray-200) and buttons to cursor:default (v3: pointer).
    Every border usage in the app sets a color explicitly; the rules below keep
@@ -16,13 +36,26 @@
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
+
+  /* A3 (MVP-8.2): one visible focus indicator for every interactive element.
+     Native outlines were suppressed in components; this rule replaces them. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-bright);
+    outline-offset: 2px;
+  }
 }
 
 :root {
-  color-scheme: light dark;
+  /* A5 (MVP-8.2): the UI is dark-only; dark mode also styles native
+     scrollbars/form controls (Chrome). */
+  color-scheme: dark;
 }
 
+/* A5 (MVP-8.2): page background and default text live on body, not only on
+   <main>, so every surface (overflow areas, popups) is dark. */
 body {
   margin: 0;
+  background-color: var(--color-page);
+  color: var(--color-text);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
