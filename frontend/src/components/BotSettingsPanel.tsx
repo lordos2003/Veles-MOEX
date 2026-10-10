@@ -273,7 +273,7 @@ export function BotSettingsPanel(props: {
 
   return (
     <div className="rounded-control border border-zinc-800 bg-zinc-950/50 p-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs font-medium text-zinc-400">Настройки бота</span>
         <Button variant="ghost" onClick={() => setOpen(!open)}>
           {open ? "Скрыть" : "Изменить (депозит, версия, удалить)"}
@@ -293,7 +293,7 @@ export function BotSettingsPanel(props: {
                 placeholder="например, 100000"
                 onChange={setDeposit}
               />
-              <div className="mt-2 flex gap-2">
+              <div className="mt-2 flex flex-wrap gap-2">
                 <Button onClick={() => void saveDeposit()} disabled={depositBusy || deposit === null}>
                   Сохранить депозит
                 </Button>
@@ -317,7 +317,7 @@ export function BotSettingsPanel(props: {
                 options={versionOptions}
                 disabled={lifecycleDisabled || versionBusy || current === undefined}
               />
-              <div className="mt-2 flex items-center gap-2">
+              <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Button
                   onClick={() => void saveVersion()}
                   disabled={versionBusy || !versionId || lifecycleDisabled}
@@ -328,7 +328,7 @@ export function BotSettingsPanel(props: {
               </div>
             </Field>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={deleteBusy || lifecycleDisabled}>
               Удалить бота
             </Button>

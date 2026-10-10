@@ -39,6 +39,7 @@ import {
 } from "../components/FormControls";
 import { FilterGroupEditor, collectMissingIndicatorArgs } from "../components/FilterGroupEditor";
 import { InstrumentPicker } from "../components/InstrumentPicker";
+import { PageHeader } from "../components/PageHeader";
 
 type Config = Record<string, unknown>;
 type Defs = Record<string, SchemaNode>;
@@ -272,23 +273,25 @@ export function StrategyFormPage(props: { edit?: boolean }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{edit ? "Стратегия — редактирование" : "Новая стратегия"}</h2>
-        <div className="flex gap-2">
-          <Button variant="ghost" onClick={() => navigate(edit && strategyId !== null ? `/strategies/${strategyId}` : "/strategies")}>
-            Назад
-          </Button>
-          <Button variant="ghost" onClick={() => setJsonMode(!jsonMode)}>
-            {jsonMode ? "Форма" : "JSON"}
-          </Button>
-          <Button variant="ghost" onClick={() => void runValidate()} disabled={jsonError !== null}>
-            Проверить
-          </Button>
-          <Button onClick={() => void save()} disabled={saving || jsonError !== null}>
-            {saving ? "Сохранение…" : edit ? "Сохранить (новая версия)" : "Создать"}
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title={edit ? "Стратегия — редактирование" : "Новая стратегия"}
+        actions={
+          <>
+              <Button variant="ghost" onClick={() => navigate(edit && strategyId !== null ? `/strategies/${strategyId}` : "/strategies")}>
+                Назад
+              </Button>
+              <Button variant="ghost" onClick={() => setJsonMode(!jsonMode)}>
+                {jsonMode ? "Форма" : "JSON"}
+              </Button>
+              <Button variant="ghost" onClick={() => void runValidate()} disabled={jsonError !== null}>
+                Проверить
+              </Button>
+              <Button onClick={() => void save()} disabled={saving || jsonError !== null}>
+                {saving ? "Сохранение…" : edit ? "Сохранить (новая версия)" : "Создать"}
+              </Button>
+          </>
+        }
+      />
 
       <ErrorBanner text={saveError} />
 

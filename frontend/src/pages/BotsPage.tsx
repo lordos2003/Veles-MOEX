@@ -10,7 +10,7 @@ import type {
   StrategyResponse,
   StrategyVersionOption,
 } from "../types";
-import { Button, ErrorBanner, Field, Loading, SelectInput, TextInput } from "../components/FormControls";
+import { Button, ErrorBanner, Field, Loading, SelectInput, TextInput, TableWrap } from "../components/FormControls";
 import { InstrumentPicker } from "../components/InstrumentPicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PageHeader } from "../components/PageHeader";
@@ -169,10 +169,10 @@ export function BotsPage() {
             <div key={bot.id} className="rounded-card border border-zinc-800 bg-surface/60 p-4 shadow-card">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <Link to={`/bots/${bot.id}`} className="font-medium text-zinc-100 hover:underline">
+                  <Link to={`/bots/${bot.id}`} className="inline-flex min-h-8 items-center text-base font-medium text-text hover:underline">
                     {bot.name}
                   </Link>
-                  <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-text-muted">
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
                     <StatusBadge status={bot.status} />
                     <span>Счёт: {accountLabel(meta, bot.account_id) ?? "—"}<AccountErrorNote meta={meta} /></span>
                     <span>Инструмент: {instrumentLabel(meta, bot.instrument_id) ?? "—"}</span>
@@ -508,7 +508,7 @@ function DealCard(props: { deal: DealResponse }) {
         ) : null}
         {d.stop_bot_after === true ? <span>бот остановлен после срабатывания</span> : null}
       </div>
-      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Info label="Опорная цена" value={d.reference_price} />
         <Info label="Средняя цена" value={d.average_price} />
         <Info label="Позиция" value={d.position_quantity} />
@@ -519,7 +519,8 @@ function DealCard(props: { deal: DealResponse }) {
         <Info label="SL активен" value={d.sl_active === null ? "—" : d.sl_active ? "да" : "нет"} />
       </div>
       {d.levels.length > 0 ? (
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3">
+          <TableWrap label="Таблица уровней сетки">
           <table className="data-table num">
             <thead>
               <tr>
@@ -550,6 +551,7 @@ function DealCard(props: { deal: DealResponse }) {
               ))}
             </tbody>
           </table>
+          </TableWrap>
         </div>
       ) : null}
     </div>

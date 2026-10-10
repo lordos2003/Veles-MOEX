@@ -8,7 +8,7 @@ import type {
   StrategyResponse,
   StrategyVersionResponse,
 } from "../types";
-import { Button, ErrorBanner, Field, Loading, SelectInput, TextareaInput, TextInput } from "../components/FormControls";
+import { Button, ErrorBanner, Field, Loading, SelectInput, TableWrap, TextareaInput, TextInput } from "../components/FormControls";
 import { InstrumentPicker } from "../components/InstrumentPicker";
 import { PageHeader } from "../components/PageHeader";
 import CandleChart, { ChartMarker } from "../components/CandleChart";
@@ -388,7 +388,7 @@ export function BacktestPage() {
             {result.deals.length === 0 ? (
               <p className="text-sm text-text-muted">Сделок за период нет.</p>
             ) : (
-              <div className="overflow-x-auto">
+              <TableWrap label="Таблица сделок бэктеста">
                 <table className="data-table">
                   <thead>
                     <tr>
@@ -417,7 +417,7 @@ export function BacktestPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </TableWrap>
             )}
           </section>
         </div>

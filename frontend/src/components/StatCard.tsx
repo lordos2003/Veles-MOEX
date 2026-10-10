@@ -25,7 +25,7 @@ export function StatCard(props: {
         </>
       ) : (
         <>
-          <p className="num mt-2 text-3xl font-semibold tracking-tight text-text">{props.value}</p>
+          <p className={(typeof props.value === "number" ? "num " : "") + "mt-2 text-3xl font-semibold tracking-tight text-text"}>{props.value}</p>
           {props.hint ? <p className="mt-1 text-xs text-text-muted">{props.hint}</p> : null}
         </>
       )}

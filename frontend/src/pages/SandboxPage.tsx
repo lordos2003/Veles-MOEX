@@ -8,7 +8,7 @@ import type {
   SandboxPayInResponse,
   SyncResponse,
 } from "../types";
-import { Button, ErrorBanner, Field, Loading, SelectInput, SuccessBanner, TextInput } from "../components/FormControls";
+import { Button, ErrorBanner, Field, Loading, SelectInput, SuccessBanner, TextInput, TableWrap } from "../components/FormControls";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { PageHeader } from "../components/PageHeader";
 import { ORDER_STATUS_LABELS } from "../lib/labels";
@@ -228,7 +228,7 @@ export function SandboxPage() {
             {positions.length === 0 ? (
               <p className="text-sm text-text-muted">Нет открытых позиций.</p>
             ) : (
-              <div className="overflow-x-auto">
+              <TableWrap label="Таблица позиций счёта">
                 <table className="data-table">
                   <thead>
                     <tr>
@@ -252,8 +252,7 @@ export function SandboxPage() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
+                </table></TableWrap>
             )}
           </section>
 
@@ -262,7 +261,7 @@ export function SandboxPage() {
             {orders.length === 0 ? (
               <p className="text-sm text-text-muted">Заявок нет.</p>
             ) : (
-              <div className="overflow-x-auto">
+              <TableWrap label="Таблица заявок">
                 <table className="data-table">
                   <thead>
                     <tr>
@@ -288,8 +287,7 @@ export function SandboxPage() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
+                </table></TableWrap>
             )}
           </section>
 
@@ -298,7 +296,7 @@ export function SandboxPage() {
             {deals.length === 0 ? (
               <p className="text-sm text-text-muted">Сделок нет.</p>
             ) : (
-              <div className="overflow-x-auto">
+              <TableWrap label="Таблица сделок">
                 <table className="data-table">
                   <thead>
                     <tr>
@@ -324,8 +322,7 @@ export function SandboxPage() {
                       </tr>
                     ))}
                   </tbody>
-                </table>
-              </div>
+                </table></TableWrap>
             )}
           </section>
         </div>
