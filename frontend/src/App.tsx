@@ -2,6 +2,7 @@ import { Suspense, lazy } from "react";
 import { Link, Route, Routes } from "react-router-dom";
 import { MainNav } from "./components/MainNav";
 import { ModeBadge } from "./components/ModeBadge";
+import { ThemeSwitcher } from "./components/ThemeSwitcher";
 import { PageTransition } from "./components/PageTransition";
 import { PageSkeleton } from "./components/ui/Skeleton";
 import { Wordmark } from "./components/Wordmark";
@@ -31,6 +32,7 @@ function App() {
           </h1>
           <div className="flex items-center gap-3">
             <MainNav />
+            <ThemeSwitcher className="hidden lg:inline-flex" />
             <ModeBadge />
           </div>
         </div>

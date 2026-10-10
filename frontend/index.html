@@ -1,8 +1,11 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- MVP-8.3 (T4): тема применяется до отрисовки — внешний синхронный скрипт
+         (CSP запрещает инлайн), без вспышки тёмной темы при светлой. -->
+    <script src="/theme-init.js"></script>
     <title>Veles-MOEX — панель торговых ботов для MOEX</title>
     <meta
       name="description"

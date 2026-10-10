@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
 import { Dialog, DialogClose, DialogTitle, DialogTrigger, SheetContent } from "./ui/Dialog";
+import { ThemeSwitcher } from "./ThemeSwitcher";
 
 export const NAV = [
   { to: "/", label: "Обзор", end: true },
@@ -68,6 +69,10 @@ export function MainNav() {
               </NavLink>
             ))}
           </nav>
+          <div className="mt-4 flex items-center justify-between gap-3 border-t border-border-soft pt-4">
+            <span className="text-sm text-text-secondary">Тема оформления</span>
+            <ThemeSwitcher size="lg" />
+          </div>
         </SheetContent>
       </Dialog>
     </>
