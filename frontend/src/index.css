@@ -69,11 +69,13 @@
   --color-zinc-900: #171b2a;
   --color-zinc-950: #0c0e16;
 
-  /* Семантические токены (имена MVP-8.2 сохранены). */
+  /* Семантические токены (имена MVP-8.2 сохранены).
+     border = zinc-500, а не zinc-700: границы интерактивных элементов должны
+     давать >=3:1 (WCAG 1.4.11) на поверхностях темы — проверяет check:contrast. */
   --color-page: var(--color-zinc-950);
   --color-surface: var(--color-zinc-900);
   --color-surface-raised: var(--color-zinc-800);
-  --color-border: var(--color-zinc-700);
+  --color-border: var(--color-zinc-500);
   --color-border-soft: var(--color-zinc-800);
   --color-text: var(--color-zinc-100);
   --color-text-secondary: var(--color-zinc-300);
@@ -202,7 +204,7 @@
   --color-page: #f6f7fc;
   --color-surface: #ffffff;
   --color-surface-raised: #eef0f8;
-  --color-border: #858dae;
+  --color-border: #7d87a1;
   --color-border-soft: #e4e7f2;
   --color-border-strong: #6b7394;
   --color-text: #191d33;
@@ -217,7 +219,7 @@
   --color-error: #b91c1c;
   --color-error-soft: #fee2e2;
   --color-error-border: #fca5a5;
-  --color-warning: #a16207;
+  --color-warning: #92400e;
   --color-warning-soft: #fef3c7;
   --color-warning-border: #fcd34d;
   --color-success: #047857;
