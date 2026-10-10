@@ -39,7 +39,7 @@ export function MainNav() {
           <button
             type="button"
             aria-label="Открыть меню"
-            className="inline-flex h-11 w-11 items-center justify-center rounded-control border border-zinc-700 text-text-secondary hover:bg-surface-raised lg:hidden"
+            className="inline-flex h-11 w-11 items-center justify-center rounded-control border border-border text-text-secondary hover:bg-surface-raised lg:hidden"
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
               <path d="M4 7h16M4 12h16M4 17h16" />

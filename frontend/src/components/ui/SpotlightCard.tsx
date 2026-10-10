@@ -32,7 +32,7 @@ export function SpotlightCard(props: { children: ReactNode; className?: string }
     <div
       ref={ref}
       onPointerMove={onPointerMove}
-      className={"spotlight rounded-card border border-zinc-800 bg-surface/70 shadow-card " + (props.className ?? "")}
+      className={"spotlight rounded-card border border-border-soft bg-surface/70 shadow-card " + (props.className ?? "")}
     >
       {props.children}
     </div>

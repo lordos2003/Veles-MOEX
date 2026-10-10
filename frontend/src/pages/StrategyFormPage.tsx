@@ -297,11 +297,11 @@ export function StrategyFormPage(props: { edit?: boolean }) {
 
       {liveVerdict && validated ? (
         liveVerdict.supported ? (
-          <div className="rounded-control border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300">
+          <div className="rounded-control border border-success-border bg-success-soft/70 px-3 py-2 text-sm text-success">
             Для живой торговли подходит.
           </div>
         ) : (
-          <div className="rounded-control border border-amber-800 bg-amber-950/40 px-3 py-2 text-sm text-amber-300">
+          <div className="rounded-control border border-warning-border bg-warning-soft/70 px-3 py-2 text-sm text-warning">
             Только бэктест: {liveVerdict.reason ?? "конфигурация не поддерживается живым циклом"}
           </div>
         )
@@ -314,13 +314,13 @@ export function StrategyFormPage(props: { edit?: boolean }) {
             сохраняется.
           </p>
           <textarea
-            className="min-h-8 h-[28rem] w-full rounded-control border border-zinc-700 bg-zinc-950 p-3 font-mono text-xs text-zinc-200"
+            className="min-h-8 h-[28rem] w-full rounded-control border border-border bg-sunken p-3 font-mono text-xs text-text"
             value={jsonText}
             onChange={(e) => onJsonChange(e.target.value)}
             spellCheck={false}
             aria-label="Конфигурация (JSON)"
           />
-          {jsonError ? <p className="text-xs text-red-400">JSON: {jsonError}</p> : null}
+          {jsonError ? <p className="text-xs text-error">JSON: {jsonError}</p> : null}
         </div>
       ) : (
         <div className="space-y-4">
@@ -634,9 +634,9 @@ function CustomLevelsEditor(props: {
   };
   return (
     <div className="space-y-2">
-      <p className="text-sm font-medium text-zinc-300">{labelFor("dca_grid.custom_levels")}</p>
+      <p className="text-sm font-medium text-text-secondary">{labelFor("dca_grid.custom_levels")}</p>
       {levels.map((level, i) => (
-        <div key={i} className="flex items-end gap-2 rounded-control border border-zinc-800 p-2">
+        <div key={i} className="flex items-end gap-2 rounded-control border border-border-soft p-2">
           <Field label={`Уровень ${i + 1} — ${labelFor("offset_percent")}`} error={pathError(props.errors, `dca_grid.custom_levels.${i}.offset_percent`)} required>
             <NumberInput
               value={level.offset_percent as number | null}
@@ -671,13 +671,13 @@ function StopItem(props: {
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-control border border-zinc-800 p-3">
-      <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm font-medium text-zinc-200">
+    <div className="rounded-control border border-border-soft p-3">
+      <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm font-medium text-text">
         <input
           type="checkbox"
           checked={props.enabled}
           onChange={(e) => props.onEnable(e.target.checked)}
-          className="h-4 w-4 accent-zinc-400"
+          className="h-4 w-4 accent-accent-bright"
         />
         {props.title}
       </label>
@@ -706,7 +706,7 @@ function TakeProfitEditor(props: {
   };
 
   return (
-    <div className="rounded-control border border-zinc-800 p-3">
+    <div className="rounded-control border border-border-soft p-3">
       <Field label={labelFor("exit.take_profit")} required error={pathError(props.errors, "exit.take_profit")}>
         <SelectInput value={kind} options={TP_KIND_OPTIONS} allowEmpty onChange={setKind} />
       </Field>
@@ -725,9 +725,9 @@ function TakeProfitEditor(props: {
       ) : null}
       {kind === "multi_take" ? (
         <div className="mt-3 space-y-2">
-          <p className="text-sm font-medium text-zinc-300">{labelFor("takes")}</p>
+          <p className="text-sm font-medium text-text-secondary">{labelFor("takes")}</p>
           {((value.takes as Config[]) ?? []).map((take, i) => (
-            <div key={i} className="flex items-end gap-2 rounded-control border border-zinc-800 p-2">
+            <div key={i} className="flex items-end gap-2 rounded-control border border-border-soft p-2">
               <Field label={labelFor("offset_percent")} error={pathError(props.errors, `exit.take_profit.takes.${i}.offset_percent`)} required>
                 <NumberInput
                   value={take.offset_percent as number | null}
@@ -935,8 +935,8 @@ function GenericField(props: {
   if (meta.kind === "object") {
     const subs = propertyMetas(resolved, defs);
     return (
-      <div className="space-y-2 rounded-control border border-zinc-800 p-2">
-        <p className="text-sm font-medium text-zinc-300">{labelFor(path)}</p>
+      <div className="space-y-2 rounded-control border border-border-soft p-2">
+        <p className="text-sm font-medium text-text-secondary">{labelFor(path)}</p>
         {subs.map((sub) => (
           <GenericField
             key={sub.name}
@@ -956,7 +956,7 @@ function GenericField(props: {
     const items = Array.isArray(value) ? value : [];
     return (
       <div className="space-y-2">
-        <p className="text-sm font-medium text-zinc-300">{labelFor(path)}</p>
+        <p className="text-sm font-medium text-text-secondary">{labelFor(path)}</p>
         {items.map((item, i) => (
           <div key={i} className="flex items-start gap-2">
             <div className="flex-1">

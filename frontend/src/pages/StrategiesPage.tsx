@@ -43,7 +43,7 @@ export function StrategiesListPage() {
               <Link to={`/strategies/${s.id}`} className="block rounded-card p-4 sm:p-5">
                 <div className="flex items-start justify-between gap-3">
                   <span className="min-w-0 break-words text-base font-medium text-text">{s.name}</span>
-                  <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-text-secondary">
+                  <span className="shrink-0 rounded-full bg-surface-raised px-2 py-0.5 text-xs text-text-secondary">
                     версия {s.versions}
                   </span>
                 </div>
@@ -108,14 +108,14 @@ export function StrategyDetailPage() {
       </p>
 
       {viewVersion ? (
-        <p className="text-xs text-amber-400">
+        <p className="text-xs text-warning">
           Просмотр версии {viewVersion.version} от{" "}
           {new Date(viewVersion.created_at).toLocaleString("ru-RU")} (только чтение)
         </p>
       ) : null}
 
-      <div className="rounded-card border border-zinc-800 bg-zinc-950/70 p-4">
-        <pre className="num max-h-[32rem] overflow-auto text-xs leading-relaxed text-zinc-300" tabIndex={0} aria-label="Конфигурация стратегии (JSON)">
+      <div className="rounded-card border border-border-soft bg-sunken/70 p-4">
+        <pre className="num max-h-[32rem] overflow-auto text-xs leading-relaxed text-text-secondary" tabIndex={0} aria-label="Конфигурация стратегии (JSON)">
           {JSON.stringify(shown, null, 2)}
         </pre>
       </div>

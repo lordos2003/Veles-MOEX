@@ -17,7 +17,7 @@ export function DialogOverlay(props: ComponentPropsWithoutRef<typeof DialogPrimi
     <DialogPrimitive.Overlay
       {...props}
       className={
-        "fixed inset-0 z-50 bg-black/65 backdrop-blur-[2px] " +
+        "fixed inset-0 z-50 bg-overlay backdrop-blur-[2px] " +
         "data-[state=open]:animate-[dialog-fade_var(--duration-base)_var(--ease-standard)] " +
         (props.className ?? "")
       }
@@ -33,7 +33,7 @@ export function DialogContent(props: { children: ReactNode }) {
       <DialogPrimitive.Content
         className={
           "fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 " +
-          "rounded-card border border-zinc-700 bg-surface p-5 shadow-pop " +
+          "rounded-card border border-border bg-surface p-5 shadow-pop " +
           "data-[state=open]:animate-[dialog-pop_var(--duration-base)_var(--ease-out-expo)]"
         }
       >
@@ -52,7 +52,7 @@ export function SheetContent(props: { children: ReactNode }) {
         aria-describedby={undefined}
         className={
           "fixed inset-y-0 right-0 z-50 flex w-[min(20rem,calc(100%-2.5rem))] flex-col " +
-          "border-l border-zinc-800 bg-surface p-4 shadow-pop " +
+          "border-l border-border-soft bg-surface p-4 shadow-pop " +
           "data-[state=open]:animate-[sheet-in_var(--duration-base)_var(--ease-out-expo)]"
         }
       >

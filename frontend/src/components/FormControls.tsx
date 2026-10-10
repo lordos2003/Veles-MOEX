@@ -26,7 +26,7 @@ export function Field(props: {
     <div className="space-y-1">
       <label className="block text-sm font-medium text-text-secondary">
         {props.label}
-        {props.required ? <span className="ml-1 text-amber-400">*</span> : null}
+        {props.required ? <span className="ml-1 text-warning">*</span> : null}
         {props.hint ? (
           <span className="ml-2 text-xs font-normal text-text-muted" title={props.hint}>
             ⓘ {props.hint}
@@ -34,14 +34,14 @@ export function Field(props: {
         ) : null}
       </label>
       <FieldLabelContext.Provider value={props.label}>{props.children}</FieldLabelContext.Provider>
-      {props.error ? <p className="text-xs text-red-400">{props.error}</p> : null}
+      {props.error ? <p className="text-xs text-error">{props.error}</p> : null}
     </div>
   );
 }
 
 const inputClass =
-  "min-h-9 w-full rounded-control border border-zinc-700 bg-zinc-900/70 px-3 py-1.5 text-sm text-text " +
-  "transition-colors duration-(--duration-fast) hover:border-zinc-600 focus:border-accent-bright disabled:opacity-50";
+  "min-h-9 w-full rounded-control border border-border bg-control/70 px-3 py-1.5 text-sm text-text " +
+  "transition-colors duration-(--duration-fast) hover:border-border-strong focus:border-accent-bright disabled:opacity-50";
 
 export function TextInput(props: {
   value: string;
@@ -73,7 +73,7 @@ export function TextareaInput(props: {
   const fieldLabel = useFieldLabel();
   return (
     <textarea
-      className={`min-h-9 w-full rounded-control border border-zinc-700 bg-zinc-950 p-3 text-xs font-mono text-zinc-200 transition-colors duration-(--duration-fast) hover:border-zinc-600 focus:border-accent-bright ${props.className ?? ""}`}
+      className={`min-h-9 w-full rounded-control border border-border bg-sunken p-3 text-xs font-mono text-text transition-colors duration-(--duration-fast) hover:border-border-strong focus:border-accent-bright ${props.className ?? ""}`}
       value={props.value}
       placeholder={props.placeholder}
       spellCheck={props.spellCheck ?? false}
@@ -197,7 +197,7 @@ export function Section(props: { title: string; children: ReactNode; className?:
   return (
     <section
       className={
-        "rounded-card border border-zinc-800 bg-surface/60 p-4 shadow-card sm:p-5 " + (props.className ?? "")
+        "rounded-card border border-border-soft bg-surface/60 p-4 shadow-card sm:p-5 " + (props.className ?? "")
       }
     >
       <h2 className="mb-3 text-base font-semibold tracking-tight text-text">{props.title}</h2>
@@ -223,7 +223,7 @@ export function TableWrap(props: { children: ReactNode; label?: string }) {
 export function ErrorBanner(props: { text: string | null }) {
   if (!props.text) return null;
   return (
-    <div role="alert" className="rounded-control border border-red-800/80 bg-red-950/40 px-3 py-2 text-sm text-red-300">
+    <div role="alert" className="rounded-control border border-error-border/70 bg-error-soft/70 px-3 py-2 text-sm text-error">
       {props.text}
     </div>
   );
@@ -232,7 +232,7 @@ export function ErrorBanner(props: { text: string | null }) {
 export function SuccessBanner(props: { text: string | null }) {
   if (!props.text) return null;
   return (
-    <div role="status" className="rounded-control border border-emerald-800/80 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300">
+    <div role="status" className="rounded-control border border-success-border/70 bg-success-soft/70 px-3 py-2 text-sm text-success">
       {props.text}
     </div>
   );
@@ -251,10 +251,10 @@ export function Button(props: {
 }) {
   const variantClass =
     props.variant === "danger"
-      ? "border-red-800 bg-red-950/40 text-red-300 hover:bg-red-900/40"
+      ? "border-error-border bg-error-soft/70 text-error hover:bg-error-soft"
       : props.variant === "ghost"
-        ? "border-zinc-700 text-text-secondary hover:border-zinc-600 hover:bg-zinc-800 hover:text-text"
-        : "border-accent-bright/20 bg-accent text-white shadow-[0_6px_18px_-8px_rgb(79_70_229/0.9)] hover:bg-accent-strong";
+        ? "border-border text-text-secondary hover:border-border-strong hover:bg-surface-raised hover:text-text"
+        : "border-accent-bright/20 bg-accent text-white shadow-button hover:bg-accent-strong";
   return (
     <button
       type="button"

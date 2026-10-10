@@ -163,18 +163,18 @@ export function SandboxPage() {
             <button
               key={a.account_id}
               onClick={() => void openAccount(a.account_id)}
-              className={`rounded-card border p-4 text-left shadow-card transition-[border-color,background-color,box-shadow] duration-(--duration-fast) hover:border-zinc-600 ${
+              className={`rounded-card border p-4 text-left shadow-card transition-[border-color,background-color,box-shadow] duration-(--duration-fast) hover:border-border-strong ${
                 a.account_id === selectedId
                   ? "border-accent-bright/60 bg-surface shadow-glow"
-                  : "border-zinc-800 bg-surface/60"
+                  : "border-border-soft bg-surface/60"
               }`}
             >
               <div className="flex items-center justify-between">
-                <span className="font-medium text-zinc-100">{a.name ?? a.account_id}</span>
+                <span className="font-medium text-text">{a.name ?? a.account_id}</span>
                 {a.is_saved ? (
-                  <span className="rounded-full bg-emerald-900/40 px-2 py-0.5 text-xs text-emerald-300">сохранён</span>
+                  <span className="rounded-full bg-success-soft/70 px-2 py-0.5 text-xs text-success">сохранён</span>
                 ) : (
-                  <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">не сохранён</span>
+                  <span className="rounded-full bg-surface-raised px-2 py-0.5 text-xs text-text-muted">не сохранён</span>
                 )}
               </div>
               <div className="num mt-2 grid grid-cols-1 gap-1 break-words text-xs text-text-muted sm:grid-cols-2">
@@ -185,7 +185,7 @@ export function SandboxPage() {
                 <span>Баланс: {a.portfolio_available ? a.available_cash : "—"}</span>
                 <span>Капитал: {a.portfolio_available ? a.equity : "—"}</span>
                 {a.portfolio_available === false ? (
-                  <span className="text-amber-400">портфель недоступен</span>
+                  <span className="text-warning">портфель недоступен</span>
                 ) : null}
               </div>
             </button>
@@ -194,11 +194,11 @@ export function SandboxPage() {
       )}
 
       {selected ? (
-        <div className="space-y-4 rounded-card border border-zinc-800 bg-surface/60 p-4 shadow-card sm:p-5">
+        <div className="space-y-4 rounded-card border border-border-soft bg-surface/60 p-4 shadow-card sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h3 className="font-medium text-text">{selected.name ?? selected.account_id}</h3>
             <button
-              className="inline-flex min-h-8 items-center rounded-control px-2 text-xs text-red-400 hover:bg-red-950/40 hover:underline"
+              className="inline-flex min-h-8 items-center rounded-control px-2 text-xs text-error hover:bg-error-soft/70 hover:underline"
               onClick={() => setClosing(true)}
               disabled={busy}
             >

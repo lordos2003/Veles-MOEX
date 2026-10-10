@@ -66,13 +66,13 @@ export default function CandleChart({ candles, markers = [] }: CandleChartProps)
     <svg
       width="100%"
       viewBox={`0 0 ${W} ${H}`}
-      className="block rounded-control border border-zinc-800 bg-zinc-950/60"
+      className="block rounded-control border border-border-soft bg-chart-bg"
       role="img"
       aria-label="График свечей"
     >
-      {/* R7: горизонтальная сетка (токен границы) для ориентира по цене. */}
+      {/* R7: горизонтальная сетка для ориентира по цене (токен, светлая тема — своя). */}
       {[0.25, 0.5, 0.75].map((f) => (
-        <line key={f} x1="0" x2={W} y1={H * f} y2={H * f} className="stroke-zinc-800" strokeWidth="1" strokeDasharray="3 5" />
+        <line key={f} x1="0" x2={W} y1={H * f} y2={H * f} className="stroke-chart-grid" strokeWidth="1" strokeDasharray="3 5" />
       ))}
       {bars.map((bar, i) => (
         <g key={i} className={bar.up ? "fill-success stroke-success" : "fill-error stroke-error"}>
@@ -94,7 +94,7 @@ export default function CandleChart({ candles, markers = [] }: CandleChartProps)
             cy={m.y}
             r="4"
             className={m.kind === "entry" ? "fill-warning" : "fill-accent-bright"}
-            stroke="#0c0e16"
+            stroke="var(--color-chart-stroke)"
             strokeWidth="1"
           />
           <title>{m.kind === "entry" ? "Вход" : "Выход"}</title>

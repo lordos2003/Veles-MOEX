@@ -146,7 +146,7 @@ export function instrumentLabel(meta: BotDisplayMeta, instrumentId: number | nul
 export function AccountErrorNote(props: { meta: BotDisplayMeta }) {
   if (props.meta.accountsError === null) return null;
   return (
-    <span className="ml-1 text-red-400" title={props.meta.accountsError}>
+    <span className="ml-1 text-error" title={props.meta.accountsError}>
       счета недоступны
     </span>
   );
@@ -272,9 +272,9 @@ export function BotSettingsPanel(props: {
   };
 
   return (
-    <div className="rounded-control border border-zinc-800 bg-zinc-950/50 p-3">
+    <div className="rounded-control border border-border-soft bg-sunken/50 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-medium text-zinc-400">Настройки бота</span>
+        <span className="text-xs font-medium text-text-muted">Настройки бота</span>
         <Button variant="ghost" onClick={() => setOpen(!open)}>
           {open ? "Скрыть" : "Изменить (депозит, версия, удалить)"}
         </Button>
@@ -324,7 +324,7 @@ export function BotSettingsPanel(props: {
                 >
                   Сменить версию
                 </Button>
-                {lifecycleBlocked ? <span className="text-xs text-amber-400">{lifecycleBlocked}</span> : null}
+                {lifecycleBlocked ? <span className="text-xs text-warning">{lifecycleBlocked}</span> : null}
               </div>
             </Field>
           </div>
@@ -332,7 +332,7 @@ export function BotSettingsPanel(props: {
             <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={deleteBusy || lifecycleDisabled}>
               Удалить бота
             </Button>
-            {lifecycleBlocked ? <span className="text-xs text-amber-400">{lifecycleBlocked}</span> : null}
+            {lifecycleBlocked ? <span className="text-xs text-warning">{lifecycleBlocked}</span> : null}
           </div>
         </div>
       ) : null}

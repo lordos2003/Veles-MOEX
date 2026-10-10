@@ -22,7 +22,7 @@ function App() {
       <a href="#main" className="skip-link">
         К содержимому
       </a>
-      <header className="sticky top-0 z-40 border-b border-zinc-800/80 bg-page/80 backdrop-blur-md">
+      <header className="sticky top-0 z-40 border-b border-border-soft/80 bg-page/80 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <h1 className="m-0">
             <Link to="/" aria-label="Veles-MOEX — на главную" className="inline-flex rounded-control">

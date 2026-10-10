@@ -151,10 +151,10 @@ export function OverviewPage() {
           <span
             className={
               status?.status === "connected"
-                ? "text-emerald-400"
+                ? "text-success"
                 : status?.status === "not_configured"
-                  ? "text-amber-400"
-                  : "text-red-400"
+                  ? "text-warning"
+                  : "text-error"
             }
           >
             {statusLabel}
@@ -177,11 +177,11 @@ export function OverviewPage() {
         ) : (
           <ul className="grid gap-3 text-sm md:grid-cols-2">
             {accounts.map((acc) => (
-              <li key={acc.account_id} className="rounded-control border border-zinc-800 bg-zinc-950/40 p-3">
+              <li key={acc.account_id} className="rounded-control border border-border-soft bg-sunken/40 p-3">
                 <span className="font-medium">{acc.name ?? acc.account_id}</span>{" "}
-                <span className="break-all text-zinc-400">{acc.status ?? ""}</span>
+                <span className="break-all text-text-muted">{acc.status ?? ""}</span>
                 {acc.is_saved ? (
-                  <span className="ml-2 rounded-full bg-emerald-900/50 px-2 py-0.5 text-xs text-emerald-300">
+                  <span className="ml-2 rounded-full bg-success-soft/70 px-2 py-0.5 text-xs text-success">
                     сохранён
                   </span>
                 ) : null}
@@ -190,7 +190,7 @@ export function OverviewPage() {
                   {acc.portfolio_available ? acc.available_cash : "—"} · эквити:{" "}
                   {acc.portfolio_available ? acc.equity : "—"}
                   {acc.portfolio_available === false ? (
-                    <span className="ml-1 rounded-full bg-amber-900/50 px-2 py-0.5 text-xs text-amber-300">
+                    <span className="ml-1 rounded-full bg-warning-soft/70 px-2 py-0.5 text-xs text-warning">
                       портфель недоступен
                     </span>
                   ) : null}
@@ -208,7 +208,7 @@ export function OverviewPage() {
           <TableWrap label="Таблица позиций">
             <table className="w-full min-w-[28rem] text-left text-sm">
               <thead>
-                <tr className="border-b border-zinc-800 text-xs uppercase tracking-[0.06em] text-text-muted">
+                <tr className="border-b border-border-soft text-xs uppercase tracking-[0.06em] text-text-muted">
                   <th className="py-2 pr-3 font-medium">тикер</th>
                   <th className="px-3 text-right font-medium">объём</th>
                   <th className="px-3 text-right font-medium">средняя</th>
@@ -218,7 +218,7 @@ export function OverviewPage() {
               </thead>
               <tbody>
                 {positions.map((p) => (
-                  <tr key={p.figi} className="border-b border-zinc-800/60 transition-colors hover:bg-zinc-800/40">
+                  <tr key={p.figi} className="border-b border-border-soft/60 transition-colors hover:bg-surface-raised/40">
                     <td className="py-2.5 pr-3 font-medium">{p.ticker ?? p.figi}</td>
                     <td className="num px-3 text-right">{p.quantity}</td>
                     <td className="num px-3 text-right">{p.average_price}</td>
@@ -266,7 +266,7 @@ export function OverviewPage() {
                   ["Статус", sel.trading_status],
                   ["Биржа", sel.exchange ?? "—"],
                 ].map(([k, v]) => (
-                  <div key={k} className="rounded-control border border-zinc-800 bg-zinc-950/40 px-3 py-2">
+                  <div key={k} className="rounded-control border border-border-soft bg-sunken/40 px-3 py-2">
                     <dt className="text-xs text-text-muted">{k}</dt>
                     <dd className="num mt-0.5 break-words text-sm">{v}</dd>
                   </div>

@@ -227,7 +227,7 @@ export function BacktestPage() {
       />
       <ErrorBanner text={error} />
 
-      <div className="grid grid-cols-1 gap-4 rounded-card border border-zinc-800 bg-surface/60 p-4 shadow-card sm:p-5 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 rounded-card border border-border-soft bg-surface/60 p-4 shadow-card sm:p-5 lg:grid-cols-2">
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
             {/* M6 (MVP-8.2, раунд 3): label min-h-8 — интерактивная область радио ≥32px */}
@@ -295,7 +295,7 @@ export function BacktestPage() {
             </Field>
             <Field label="Таймфрейм (из конфигурации)" error={fieldErrors.timeframe}>
               {configTimeframe ? (
-                <p className="num rounded-control border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-sm text-zinc-200">
+                <p className="num rounded-control border border-border-soft bg-control/70 px-3 py-2 text-sm text-text">
                   {configTimeframe}
                 </p>
               ) : (
@@ -354,7 +354,7 @@ export function BacktestPage() {
 
       {result ? (
         <div className="space-y-4">
-          <section className="rounded-card border border-zinc-800 bg-surface/60 p-4 shadow-card sm:p-5">
+          <section className="rounded-card border border-border-soft bg-surface/60 p-4 shadow-card sm:p-5">
             <h3 className="mb-3 text-base font-medium text-text">Результат</h3>
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:grid-cols-6">
               <Metric label="Начальный капитал" value={result.initial_capital} />
@@ -373,7 +373,7 @@ export function BacktestPage() {
           </section>
 
           {chart ? (
-            <section className="rounded-card border border-zinc-800 bg-surface/60 p-4 shadow-card sm:p-5">
+            <section className="rounded-card border border-border-soft bg-surface/60 p-4 shadow-card sm:p-5">
               <h3 className="mb-2 text-base font-medium text-text">График свечей и сделки</h3>
               <CandleChart candles={chart.candles} markers={chart.markers} />
               <div className="mt-1 flex gap-4 text-xs text-text-muted">
@@ -383,7 +383,7 @@ export function BacktestPage() {
             </section>
           ) : null}
 
-          <section className="rounded-card border border-zinc-800 bg-surface/60 p-4 shadow-card sm:p-5">
+          <section className="rounded-card border border-border-soft bg-surface/60 p-4 shadow-card sm:p-5">
             <h3 className="mb-2 text-base font-medium text-text">Сделки ({result.deals.length})</h3>
             {result.deals.length === 0 ? (
               <p className="text-sm text-text-muted">Сделок за период нет.</p>
@@ -428,7 +428,7 @@ export function BacktestPage() {
 
 function Metric(props: { label: string; value: string }) {
   return (
-    <div className="rounded-control border border-zinc-800 bg-zinc-950/40 px-3 py-2">
+    <div className="rounded-control border border-border-soft bg-sunken/40 px-3 py-2">
       <p className="text-xs text-text-muted">{props.label}</p>
       <p className="num mt-0.5 break-words text-sm font-medium text-text">{props.value}</p>
     </div>
