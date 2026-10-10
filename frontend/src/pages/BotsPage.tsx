@@ -134,10 +134,10 @@ export function BotsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-semibold">Боты</h2>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-zinc-500">
+          <label className="text-xs text-text-muted">
             Автообновление:{" "}
             <select
-              className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs"
+              className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs min-h-8"
               value={String(pollMs)}
               onChange={(e) => {
                 const v = Number(e.target.value);
@@ -158,7 +158,7 @@ export function BotsPage() {
       {!bots ? (
         <Loading />
       ) : bots.length === 0 ? (
-        <p className="text-sm text-zinc-500">Ботов пока нет.</p>
+        <p className="text-sm text-text-muted">Ботов пока нет.</p>
       ) : (
         <div className="space-y-2">
           {bots.map((bot) => (
@@ -168,7 +168,7 @@ export function BotsPage() {
                   <Link to={`/bots/${bot.id}`} className="font-medium text-zinc-100 hover:underline">
                     {bot.name}
                   </Link>
-                  <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
+                  <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-text-muted">
                     <StatusBadge status={bot.status} />
                     <span>Счёт: {accountLabel(meta, bot.account_id) ?? "—"}<AccountErrorNote meta={meta} /></span>
                     <span>Инструмент: {instrumentLabel(meta, bot.instrument_id) ?? "—"}</span>
@@ -356,7 +356,7 @@ function CreateBotPanel(props: { onCreated: () => void }) {
           {instrumentsError ? (
             <p className="text-sm text-red-400">{instrumentsError}</p>
           ) : !instruments || instruments.length === 0 ? (
-            <p className="text-sm text-zinc-500">Инструменты не загружены.</p>
+            <p className="text-sm text-text-muted">Инструменты не загружены.</p>
           ) : (
             <InstrumentPicker
               instruments={instruments}
@@ -430,7 +430,7 @@ export function BotDetailPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold">{bot.name}</h2>
-          <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
+          <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-text-muted">
             <StatusBadge status={bot.status} />
             <span>Стратегия: {versionLabel(meta, bot.strategy_version_id) ?? "—"}</span>
             <span>Счёт: {accountLabel(meta, bot.account_id) ?? "—"}<AccountErrorNote meta={meta} /></span>
@@ -469,13 +469,13 @@ export function BotDetailPage() {
 
       <section>
         <h3 className="mb-2 font-medium text-zinc-200">Текущая сделка</h3>
-        {openDeal ? <DealCard deal={openDeal} /> : <p className="text-sm text-zinc-500">Открытых сделок нет.</p>}
+        {openDeal ? <DealCard deal={openDeal} /> : <p className="text-sm text-text-muted">Открытых сделок нет.</p>}
       </section>
 
       <section>
         <h3 className="mb-2 font-medium text-zinc-200">История сделок</h3>
         {deals.length === 0 ? (
-          <p className="text-sm text-zinc-500">Закрытых сделок нет.</p>
+          <p className="text-sm text-text-muted">Закрытых сделок нет.</p>
         ) : (
           <div className="space-y-2">
             {deals.map((d) => <DealCard key={d.id} deal={d} />)}
@@ -490,7 +490,7 @@ function DealCard(props: { deal: DealResponse }) {
   const d = props.deal;
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 text-sm">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-500">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-text-muted">
         <span>Сделка #{d.id}</span>
         <span>FIGI: {d.instrument_figi}</span>
         <span>Направление: {d.direction === "LONG" ? "Лонг" : "Шорт"}</span>
@@ -516,7 +516,7 @@ function DealCard(props: { deal: DealResponse }) {
         <div className="mt-2 overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
-              <tr className="border-b border-zinc-800 text-zinc-500">
+              <tr className="border-b border-zinc-800 text-text-muted">
                 <th className="py-1 pr-3">№</th>
                 <th className="pr-3">Сторона</th>
                 <th className="pr-3">Цена</th>
@@ -553,7 +553,7 @@ function DealCard(props: { deal: DealResponse }) {
 function Info(props: { label: string; value: unknown }) {
   return (
     <div>
-      <p className="text-xs text-zinc-500">{props.label}</p>
+      <p className="text-xs text-text-muted">{props.label}</p>
       <p className="font-mono text-xs text-zinc-200">{String(props.value ?? "—")}</p>
     </div>
   );

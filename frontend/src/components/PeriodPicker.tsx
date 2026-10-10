@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useFieldLabel } from "./FormControls";
 
 export interface PeriodRange {
   from: Date | null;
@@ -121,15 +122,18 @@ function applyTime(base: Date | null, h: number, min: number): Date {
 }
 
 /**
- * U11 (MVP-7.5): the «Период» field of the backtest form — one field with a
- * readable range value, a calendar popup with range selection and a quick
- * presets dropdown. The component is self-contained (no calendar library):
- * the project has no heavy UI dependencies yet.
+ * U11 (MVP-7.5) + U13 (MVP-8.2, раунд 2): the «Период» field — clicking the
+ * dated field opens the calendar popup (range selection, manual date/time),
+ * the calendar icon opens the quick presets dropdown (U13). Only one popup is
+ * open at a time; Esc closes either from any element inside the component,
+ * returning focus to the control that opened it. The component is
+ * self-contained (no calendar library): no heavy UI dependencies yet.
  */
 export function PeriodPicker(props: PeriodPickerProps) {
   const { from, to, onChange, earliestAvailable } = props;
   const [open, setOpen] = useState(false);
   const [presetsOpen, setPresetsOpen] = useState(false);
+  const fieldLabel = useFieldLabel();
 
   const earliest = useMemo(() => (earliestAvailable ? parseEarliest(earliestAvailable) : null), [earliestAvailable]);
   const today = dateOnly(new Date());
@@ -157,18 +161,33 @@ export function PeriodPicker(props: PeriodPickerProps) {
   }, [from, to]);
 
   const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const iconRef = useRef<HTMLButtonElement>(null);
+  const presetsRef = useRef<HTMLDivElement>(null);
+  /** U13: the control that opened the open popup — Esc returns focus to it. */
+  const openerRef = useRef<"field" | "icon">("field");
 
   useEffect(() => {
-    if (!open) return;
+    if (!open && !presetsOpen) return;
     const onDocClick = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpen(false);
         setPresetsOpen(false);
       }
     };
+    const onDocFocus = (e: FocusEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setPresetsOpen(false);
+      }
+    };
     document.addEventListener("mousedown", onDocClick);
-    return () => document.removeEventListener("mousedown", onDocClick);
-  }, [open]);
+    document.addEventListener("focusin", onDocFocus);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("focusin", onDocFocus);
+    };
+  }, [open, presetsOpen]);
 
   const summary = from && to ? `${formatShort(from)} - ${formatShort(to)}` : "";
 
@@ -211,6 +230,9 @@ export function PeriodPicker(props: PeriodPickerProps) {
       onChange(new Date(now.getTime() - (p.daysBack ?? 0) * 86_400_000), now);
     }
     setPresetsOpen(false);
+    /* M7 (MVP-8.2, раунд 3): фокус после монтажа панели теряется (activeElement
+       = body), возвращаем его на значок, открывший пресеты, как при Esc. */
+    iconRef.current?.focus();
   };
 
   const presetRange = (p: Preset): string => {
@@ -243,11 +265,43 @@ export function PeriodPicker(props: PeriodPickerProps) {
     }
   };
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      setOpen(false);
-      setPresetsOpen(false);
+  const closePopups = (returnFocus: boolean) => {
+    setOpen(false);
+    setPresetsOpen(false);
+    if (returnFocus) (openerRef.current === "icon" ? iconRef : inputRef).current?.focus();
+  };
+
+  /** U13.4: Esc closes any open popup from any element inside the component. */
+  const onRootKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape" && (open || presetsOpen)) {
+      e.stopPropagation();
+      closePopups(true);
     }
+  };
+
+  const openCalendar = () => {
+    setOpen(true);
+    setPresetsOpen(false);
+    openerRef.current = "field";
+  };
+
+  const openPresets = () => {
+    setPresetsOpen(true);
+    setOpen(false);
+    openerRef.current = "icon";
+  };
+
+  /** U13.4: ↓/↑ move focus across the preset options (Enter activates natively). */
+  const onPresetsKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    const buttons = Array.from(
+      presetsRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [],
+    );
+    if (buttons.length === 0) return;
+    const idx = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const next = e.key === "ArrowDown" ? Math.min(idx + 1, buttons.length - 1) : Math.max(idx - 1, 0);
+    buttons[next]?.focus();
   };
 
   const shiftMonth = (delta: number) => {
@@ -272,36 +326,45 @@ export function PeriodPicker(props: PeriodPickerProps) {
   const dayClass = (d: Date) => {
     if (isDisabled(d)) return "text-zinc-600";
     const cls = ["text-zinc-200 hover:bg-zinc-700"];
-    if (isEdge(d, "from")) cls.push("bg-sky-600 font-semibold text-white hover:bg-sky-600");
-    else if (isEdge(d, "to")) cls.push("bg-sky-500 text-white hover:bg-sky-500");
+    /* Sky-700 instead of sky-500/600: white text on those fails WCAG AA
+       (2.77:1 / 4.10:1); sky-700 gives 5.93:1. */
+    if (isEdge(d, "from")) cls.push("bg-sky-700 font-semibold text-white hover:bg-sky-700");
+    else if (isEdge(d, "to")) cls.push("bg-sky-700 text-white hover:bg-sky-700");
     else if (between(d)) cls.push("bg-sky-900/60 text-sky-100");
     return cls.join(" ");
   };
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className="relative" onKeyDown={onRootKeyDown}>
       <div className="flex">
         <input
+          ref={inputRef}
           type="text"
           readOnly
           className="w-full rounded-l border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200"
           value={summary}
           placeholder="выберите период"
           onClick={() => {
-            setOpen((v) => !v);
-            setPresetsOpen(false);
+            if (open) setOpen(false);
+            else openCalendar();
           }}
-          onKeyDown={onKeyDown}
-          aria-label="Период"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
+              e.preventDefault();
+              if (!open) openCalendar();
+            }
+          }}
+          aria-label={fieldLabel ?? "Период"}
         />
         <button
+          ref={iconRef}
           type="button"
-          className="rounded-r border border-l-0 border-zinc-700 bg-zinc-900 px-2 text-zinc-400 hover:text-zinc-200"
+          className="min-h-8 rounded-r border border-l-0 border-zinc-700 bg-zinc-900 px-2 text-zinc-400 hover:text-zinc-200"
           onClick={() => {
-            setOpen((v) => !v);
-            setPresetsOpen(false);
+            if (presetsOpen) setPresetsOpen(false);
+            else openPresets();
           }}
-          aria-label="Открыть календарь"
+          aria-label="Быстрый выбор периода"
         >
           📅
         </button>
@@ -312,12 +375,11 @@ export function PeriodPicker(props: PeriodPickerProps) {
           className="absolute left-0 top-full z-20 mt-1 w-[320px] rounded-lg border border-zinc-700 bg-zinc-900 p-3 shadow-xl"
           role="dialog"
           aria-label="Выбор периода"
-          onKeyDown={onKeyDown}
         >
           <div className="mb-2 flex items-center justify-between">
             <button
               type="button"
-              className="px-2 text-zinc-400 hover:text-zinc-200"
+              className="min-h-8 min-w-8 px-2 text-zinc-400 hover:text-zinc-200"
               onClick={() => shiftMonth(-1)}
               aria-label="Предыдущий месяц"
             >
@@ -328,7 +390,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
             </span>
             <button
               type="button"
-              className="px-2 text-zinc-400 hover:text-zinc-200"
+              className="min-h-8 min-w-8 px-2 text-zinc-400 hover:text-zinc-200"
               onClick={() => shiftMonth(1)}
               aria-label="Следующий месяц"
             >
@@ -338,7 +400,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
 
           <div className="grid grid-cols-7 gap-1 text-center text-xs">
             {WEEKDAYS_RU.map((w, i) => (
-              <div key={`${w}${i}`} className="py-1 text-zinc-500">
+              <div key={`${w}${i}`} className="py-1 text-text-muted">
                 {w}
               </div>
             ))}
@@ -349,7 +411,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
                   key={d.toISOString()}
                   disabled={isDisabled(d)}
                   onClick={() => pickDay(d)}
-                  className={dayClass(d)}
+                  className={"min-h-8 " + dayClass(d)}
                   aria-label={`${d.getDate()}.${d.getMonth() + 1}.${d.getFullYear()}`}
                 >
                   {d.getDate()}
@@ -362,11 +424,11 @@ export function PeriodPicker(props: PeriodPickerProps) {
 
           <div className="mt-3 space-y-2 border-t border-zinc-800 pt-2">
             <div className="flex items-center gap-2 text-xs">
-              <span className="w-10 text-zinc-500">С</span>
+              <span className="w-10 text-text-muted">С</span>
               <span aria-hidden>📅</span>
               <input
                 type="text"
-                className="w-24 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-24 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
                 value={drafts.fromDate}
                 placeholder="ДД.ММ.ГГГГ"
                 onChange={(e) => setDraft("from", "date", e.target.value)}
@@ -375,7 +437,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
               <span aria-hidden>🕐</span>
               <input
                 type="text"
-                className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
                 value={drafts.fromTime}
                 placeholder="ЧЧ:ММ"
                 onChange={(e) => setDraft("from", "time", e.target.value)}
@@ -383,11 +445,11 @@ export function PeriodPicker(props: PeriodPickerProps) {
               />
             </div>
             <div className="flex items-center gap-2 text-xs">
-              <span className="w-10 text-zinc-500">По</span>
+              <span className="w-10 text-text-muted">По</span>
               <span aria-hidden>📅</span>
               <input
                 type="text"
-                className="w-24 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-24 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
                 value={drafts.toDate}
                 placeholder="ДД.ММ.ГГГГ"
                 onChange={(e) => setDraft("to", "date", e.target.value)}
@@ -396,7 +458,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
               <span aria-hidden>🕐</span>
               <input
                 type="text"
-                className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
                 value={drafts.toTime}
                 placeholder="ЧЧ:ММ"
                 onChange={(e) => setDraft("to", "time", e.target.value)}
@@ -405,56 +467,51 @@ export function PeriodPicker(props: PeriodPickerProps) {
             </div>
           </div>
 
-          <div className="relative mt-3">
-            <button
-              type="button"
-              className="w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-left text-xs text-zinc-300"
-              onClick={() => setPresetsOpen((v) => !v)}
-            >
-              Быстрый выбор ▾
-            </button>
-            {presetsOpen ? (
-              <div className="absolute left-0 top-full z-30 mt-1 w-full rounded border border-zinc-700 bg-zinc-900 shadow-xl">
-                {visiblePresets.map((p) => {
-                  if (p.key === "all" && !earliest) {
-                    return (
-                      <button
-                        type="button"
-                        key={p.key}
-                        disabled
-                        title="нет данных о доступном диапазоне"
-                        className="w-full px-3 py-1.5 text-left text-xs text-zinc-600"
-                      >
-                        <span className="flex items-center justify-between">
-                          <span>Весь период</span>
-                          <span className="pl-3">нет данных о доступном диапазоне</span>
-                        </span>
-                      </button>
-                    );
-                  }
-                  return (
-                    <button
-                      type="button"
-                      key={p.key}
-                      onClick={() => applyPreset(p)}
-                      className="w-full px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
-                    >
-                      <span className="flex items-center justify-between">
-                        <span>{p.label}</span>
-                        <span className="pl-3 text-zinc-500">{presetRange(p)}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
-
-          <p className="mt-3 border-t border-zinc-800 pt-2 text-xs text-zinc-500">
+          <p className="mt-3 border-t border-zinc-800 pt-2 text-xs text-text-muted">
             {earliest
               ? `Данные для бэктеста доступны с: ${pad2(earliest.getDate())}.${pad2(earliest.getMonth() + 1)}.${earliest.getFullYear()}`
               : "нет данных о доступном диапазоне"}
           </p>
+        </div>
+      ) : null}
+
+      {presetsOpen ? (
+        <div
+          ref={presetsRef}
+          className="absolute right-0 top-full z-20 mt-1 w-80 rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl"
+          onKeyDown={onPresetsKeyDown}
+        >
+          {visiblePresets.map((p) => {
+            if (p.key === "all" && !earliest) {
+              return (
+                <button
+                  type="button"
+                  key={p.key}
+                  disabled
+                  title="нет данных о доступном диапазоне"
+                  className="min-h-8 w-full px-3 py-1.5 text-left text-xs text-zinc-600"
+                >
+                  <span className="flex items-center justify-between">
+                    <span>Весь период</span>
+                    <span className="pl-3">нет данных о доступном диапазоне</span>
+                  </span>
+                </button>
+              );
+            }
+            return (
+              <button
+                type="button"
+                key={p.key}
+                onClick={() => applyPreset(p)}
+                className="min-h-8 w-full px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
+              >
+                <span className="flex items-center justify-between">
+                  <span>{p.label}</span>
+                  <span className="pl-3 text-text-muted">{presetRange(p)}</span>
+                </span>
+              </button>
+            );
+          })}
         </div>
       ) : null}
     </div>

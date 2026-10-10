@@ -119,7 +119,7 @@ export function OverviewPage() {
       <SuccessBanner text={success} />
       <ErrorBanner text={error} />
       <Section title="T-Invest">
-        <p className="text-sm text-zinc-500">Backend: {backendLabel}</p>
+        <p className="text-sm text-text-muted">Backend: {backendLabel}</p>
         <p className="text-sm">
           <span
             className={
@@ -146,7 +146,7 @@ export function OverviewPage() {
 
       <Section title="Счета брокера">
         {accounts.length === 0 ? (
-          <p className="text-sm text-zinc-500">Счета не загружены (нужен TINVEST_TOKEN).</p>
+          <p className="text-sm text-text-muted">Счета не загружены (нужен TINVEST_TOKEN).</p>
         ) : (
           <ul className="space-y-1 text-sm">
             {accounts.map((acc) => (
@@ -158,7 +158,7 @@ export function OverviewPage() {
                     сохранён
                   </span>
                 ) : null}
-                <span className="block text-xs text-zinc-500">
+                <span className="block text-xs text-text-muted">
                   {acc.account_type ?? ""} · {acc.currency} · свободно:{" "}
                   {acc.portfolio_available ? acc.available_cash : "—"} · эквити:{" "}
                   {acc.portfolio_available ? acc.equity : "—"}
@@ -176,11 +176,11 @@ export function OverviewPage() {
 
       <Section title="Позиции">
         {positions.length === 0 ? (
-          <p className="text-sm text-zinc-500">Открытых позиций нет.</p>
+          <p className="text-sm text-text-muted">Открытых позиций нет.</p>
         ) : (
           <table className="w-full text-left text-xs">
             <thead>
-              <tr className="border-b border-zinc-800 text-zinc-500">
+              <tr className="border-b border-zinc-800 text-text-muted">
                 <th className="py-1">тикер</th>
                 <th>объём</th>
                 <th>средняя</th>
@@ -205,7 +205,7 @@ export function OverviewPage() {
 
       <Section title="Рынок">
         {instruments.length === 0 ? (
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-text-muted">
             Инструменты пусты. Нажмите «Синхронизировать инструменты».
           </p>
         ) : (
@@ -224,13 +224,13 @@ export function OverviewPage() {
             <CandleChart candles={candles} />
             {sel ? (
               <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded bg-zinc-900 p-3 text-sm lg:grid-cols-4">
-                <dt className="text-zinc-500">Лот</dt>
+                <dt className="text-text-muted">Лот</dt>
                 <dd>{sel.lot_size ?? "—"}</dd>
-                <dt className="text-zinc-500">Шаг цены</dt>
+                <dt className="text-text-muted">Шаг цены</dt>
                 <dd>{sel.tick_size ?? "—"}</dd>
-                <dt className="text-zinc-500">Статус</dt>
+                <dt className="text-text-muted">Статус</dt>
                 <dd>{sel.trading_status}</dd>
-                <dt className="text-zinc-500">Биржа</dt>
+                <dt className="text-text-muted">Биржа</dt>
                 <dd>{sel.exchange ?? "—"}</dd>
               </dl>
             ) : null}
@@ -244,7 +244,7 @@ export function OverviewPage() {
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div>
-              <p className="mb-1 text-xs text-zinc-500">Заявки</p>
+              <p className="mb-1 text-xs text-text-muted">Заявки</p>
               {orders.map((o) => (
                 <p key={o.order_id} className="text-xs">
                   {o.ticker ?? o.figi} · {o.side ?? "—"} · {o.status} · {o.requested_quantity}/
@@ -253,7 +253,7 @@ export function OverviewPage() {
               ))}
             </div>
             <div>
-              <p className="mb-1 text-xs text-zinc-500">Сделки</p>
+              <p className="mb-1 text-xs text-text-muted">Сделки</p>
               {deals.map((d) => (
                 <p key={d.deal_id} className="text-xs">
                   {d.figi} · {d.side} · {d.quantity} @ {d.price}

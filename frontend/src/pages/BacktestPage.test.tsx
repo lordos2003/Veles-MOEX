@@ -150,7 +150,7 @@ describe("BacktestPage: U11 период", () => {
     const fromExpected = new Date(prev.getFullYear(), prev.getMonth(), 5);
     const toExpected = new Date(prev.getFullYear(), prev.getMonth(), 7);
 
-    fireEvent.click(screen.getByLabelText("Открыть календарь"));
+    fireEvent.click(screen.getByLabelText("Период"));
     fireEvent.click(screen.getByLabelText("Предыдущий месяц"));
     fireEvent.click(screen.getByRole("button", { name: `5.${prev.getMonth() + 1}.${prev.getFullYear()}` }));
     fireEvent.click(screen.getByRole("button", { name: `7.${prev.getMonth() + 1}.${prev.getFullYear()}` }));
@@ -200,8 +200,8 @@ describe("BacktestPage: MVP-7.6 U12 «портфель данных»", () => {
     await screen.findByText(hintContains(`Данные для бэктеста доступны с: ${dayLabel("2020-02-07T12:00:00Z")}`));
 
     // «Весь период» включён; выбор пресета ставит from = earliest.
-    fireEvent.click(screen.getByLabelText("Открыть календарь"));
-    fireEvent.click(screen.getByText("Быстрый выбор ▾"));
+    fireEvent.click(screen.getByLabelText("Период"));
+    fireEvent.click(screen.getByRole("button", { name: "Быстрый выбор периода" }));
     const all = screen.getByRole("button", { name: /Весь период/ }) as HTMLButtonElement;
     expect(all.disabled).toBe(false);
     fireEvent.click(all);
@@ -253,7 +253,7 @@ describe("MVP-7.7 P1/P2: «Ценная бумага» — единый поис
 
     const now = new Date();
     const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    fireEvent.click(screen.getByLabelText("Открыть календарь"));
+    fireEvent.click(screen.getByLabelText("Период"));
     fireEvent.click(screen.getByLabelText("Предыдущий месяц"));
     fireEvent.click(screen.getByRole("button", { name: `5.${prev.getMonth() + 1}.${prev.getFullYear()}` }));
     fireEvent.click(screen.getByRole("button", { name: `7.${prev.getMonth() + 1}.${prev.getFullYear()}` }));
@@ -340,7 +340,7 @@ describe("MVP-7.7 P3: комиссии и проскальзывание по у
 
     const now = new Date();
     const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    fireEvent.click(screen.getByLabelText("Открыть календарь"));
+    fireEvent.click(screen.getByLabelText("Период"));
     fireEvent.click(screen.getByLabelText("Предыдущий месяц"));
     fireEvent.click(screen.getByRole("button", { name: `5.${prev.getMonth() + 1}.${prev.getFullYear()}` }));
     fireEvent.click(screen.getByRole("button", { name: `7.${prev.getMonth() + 1}.${prev.getFullYear()}` }));
@@ -353,5 +353,48 @@ describe("MVP-7.7 P3: комиссии и проскальзывание по у
     expect(payload.maker_fee).toBe("0.005");
     expect(payload.taker_fee).toBe("0.004");
     expect(payload.slippage).toBe("0.002");
+  });
+});
+
+describe("MVP-8.2 A2: программные подписи всех полей бэктеста", () => {
+  it("селекты и текстовые поля доступны по имени", async () => {
+    render(<BacktestPage />);
+    await pickerInput();
+    expect(screen.getByLabelText("Стратегия")).toBeTruthy();
+    expect(screen.getByLabelText("Версия")).toBeTruthy();
+    expect(screen.getByLabelText("Ценная бумага")).toBeTruthy();
+    expect(screen.getByLabelText("Таймфрейм (из конфигурации)")).toBeTruthy();
+    expect(screen.getByLabelText("Период")).toBeTruthy();
+    expect(screen.getByLabelText("Депозит сделки")).toBeTruthy();
+    expect(screen.getByLabelText("Maker-комиссия")).toBeTruthy();
+    expect(screen.getByLabelText("Taker-комиссия")).toBeTruthy();
+    expect(screen.getByLabelText("Проскальзывание")).toBeTruthy();
+  });
+
+  it("textarea инлайн-конфигурации имеет имя", async () => {
+    render(<BacktestPage />);
+    await pickerInput();
+    fireEvent.click(screen.getByRole("radio", { name: "Инлайн-конфигурация" }));
+    expect(screen.getByLabelText("Конфигурация (JSON)")).toBeTruthy();
+  });
+
+  it("список бумаг — listbox с option и активной строкой", async () => {
+    render(<BacktestPage />);
+    const input = await pickerInput();
+    fireEvent.focus(input);
+    expect(screen.getByRole("listbox")).toBeTruthy();
+    const options = screen.getAllByRole("option");
+    expect(options.length).toBeGreaterThanOrEqual(2);
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input.getAttribute("aria-activedescendant")).toBeTruthy();
+  });
+
+  it("M6 (раунд 3): label радиокнопок источника конфигурации — min-h-8", () => {
+    render(<BacktestPage />);
+    for (const text of ["По версии стратегии", "Инлайн-конфигурация"]) {
+      const label = screen.getByText(text).closest("label");
+      expect(label).toBeTruthy();
+      expect(label!.className).toContain("min-h-8");
+    }
   });
 });

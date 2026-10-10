@@ -104,8 +104,7 @@ describe("PeriodPicker: быстрые пресеты", () => {
   it("«Месяц» = −1 календарный месяц от текущего момента", () => {
     const onChange = vi.fn();
     render(<PeriodPicker from={null} to={null} onChange={onChange} earliestAvailable="2026-09-01" />);
-    openPanel();
-    fireEvent.click(screen.getByText("Быстрый выбор ▾"));
+    fireEvent.click(screen.getByRole("button", { name: "Быстрый выбор периода" }));
     fireEvent.click(screen.getByRole("button", { name: /Месяц/ }));
 
     expect(onChange).toHaveBeenCalledWith(new Date(2026, 8, 8, 16, 19), new Date(2026, 9, 8, 16, 19));
@@ -113,8 +112,7 @@ describe("PeriodPicker: быстрые пресеты", () => {
 
   it("«Год»/«3 года» скрыты, когда история короче", () => {
     render(<PeriodPicker from={null} to={null} onChange={() => {}} earliestAvailable="2026-06-01" />);
-    openPanel();
-    fireEvent.click(screen.getByText("Быстрый выбор ▾"));
+    fireEvent.click(screen.getByRole("button", { name: "Быстрый выбор периода" }));
 
     expect(screen.getByRole("button", { name: /Месяц/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /3 месяца/ })).toBeTruthy();
@@ -126,25 +124,131 @@ describe("PeriodPicker: быстрые пресеты", () => {
   it("«Весь период» начинается с самой ранней даты", () => {
     const onChange = vi.fn();
     render(<PeriodPicker from={null} to={null} onChange={onChange} earliestAvailable="2025-03-17" />);
-    openPanel();
-    fireEvent.click(screen.getByText("Быстрый выбор ▾"));
+    fireEvent.click(screen.getByRole("button", { name: "Быстрый выбор периода" }));
     fireEvent.click(screen.getByRole("button", { name: /Весь период/ }));
 
     expect(onChange).toHaveBeenCalledWith(new Date(2025, 2, 17), new Date(2026, 9, 8, 16, 19));
+    // U13: календарь закрыт при открытых пресетах — подсказка снова в календаре.
+    fireEvent.click(screen.getByLabelText("Период"));
     expect(screen.getByText("Данные для бэктеста доступны с: 17.03.2025")).toBeTruthy();
   });
 
   it("без источника ранней даты «Весь период» отключён", () => {
     const onChange = vi.fn();
     render(<PeriodPicker from={null} to={null} onChange={onChange} />);
-    openPanel();
-    fireEvent.click(screen.getByText("Быстрый выбор ▾"));
+    fireEvent.click(screen.getByRole("button", { name: "Быстрый выбор периода" }));
 
     const all = screen.getByRole("button", { name: /Весь период/ }) as HTMLButtonElement;
     expect(all.disabled).toBe(true);
     fireEvent.click(all);
     expect(onChange).not.toHaveBeenCalled();
-    // Пояснение видно и у пресета, и в подсказке под календарём.
-    expect(screen.getAllByText("нет данных о доступном диапазоне").length).toBeGreaterThan(0);
+    // Пояснение видно у пресета (календарь закрыт — подсказка там не видна).
+    expect(screen.getAllByText("нет данных о доступном диапазоне").length).toBe(1);
+  });
+});
+
+describe("PeriodPicker: U13 (раунд 2) — календарь по датам, пресеты по значку", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 8, 16, 19));
+  });
+
+  it("клик по полю дат открывает календарь без пресетов", () => {
+    render(<PeriodPicker from={null} to={null} onChange={() => {}} />);
+    openPanel();
+
+    expect(screen.getByRole("dialog", { name: "Выбор периода" })).toBeTruthy();
+    expect(screen.getByText("октябрь 2026")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Месяц/ })).toBeNull();
+  });
+
+  it("клик по значку открывает пресеты без календаря", () => {
+    render(<PeriodPicker from={null} to={null} onChange={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Быстрый выбор периода" }));
+
+    expect(screen.getByRole("button", { name: /Месяц/ })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByLabelText("Дата начала")).toBeNull();
+  });
+
+  it("одновременно открыт один попап: значок закрывает календарь и наоборот", () => {
+    render(<PeriodPicker from={null} to={null} onChange={() => {}} />);
+    openPanel();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Быстрый выбор периода" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: /Месяц/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Период"));
+    expect(screen.queryByRole("button", { name: /Месяц/ })).toBeNull();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("Esc с поля закрывает календарь и возвращает фокус на поле", () => {
+    render(<PeriodPicker from={null} to={null} onChange={() => {}} />);
+    openPanel();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    const input = screen.getByLabelText("Период") as HTMLInputElement;
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("Esc с кнопки-значка закрывает пресеты и возвращает фокус на значок", () => {
+    render(<PeriodPicker from={null} to={null} onChange={() => {}} />);
+    const icon = screen.getByRole("button", { name: "Быстрый выбор периода" });
+    fireEvent.click(icon);
+    expect(screen.getByRole("button", { name: /Месяц/ })).toBeTruthy();
+
+    fireEvent.keyDown(icon, { key: "Escape" });
+    expect(screen.queryByRole("button", { name: /Месяц/ })).toBeNull();
+    expect(document.activeElement).toBe(icon);
+  });
+
+  it("нет видимого текста «Быстрый выбор» (остался только aria-label значка)", () => {
+    render(<PeriodPicker from={null} to={null} onChange={() => {}} />);
+    expect(screen.queryByText(/Быстрый выбор/)).toBeNull();
+  });
+
+  it("поле открывает календарь по Enter, Space и ↓", () => {
+    render(<PeriodPicker from={null} to={null} onChange={() => {}} />);
+    const input = screen.getByLabelText("Период");
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    fireEvent.keyDown(input, { key: " " });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("внутри пресетов ↓/↑ двигают фокус по опциям", () => {
+    render(<PeriodPicker from={null} to={null} onChange={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Быстрый выбор периода" }));
+
+    const first = screen.getByRole("button", { name: /Месяц/ }) as HTMLButtonElement;
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: /3 месяца/ }));
+
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(first);
+  });
+
+  it("M7 (раунд 3): выбор пресета возвращает фокус на значок", () => {
+    render(<PeriodPicker from={null} to={null} onChange={() => {}} />);
+    const icon = screen.getByRole("button", { name: "Быстрый выбор периода" });
+    fireEvent.click(icon);
+    expect(screen.getByRole("button", { name: /Месяц/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Месяц/ }));
+    expect(screen.queryByRole("button", { name: /Месяц/ })).toBeNull();
+    expect(document.activeElement).toBe(icon);
   });
 });

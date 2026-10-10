@@ -1,4 +1,18 @@
-import { ReactNode } from "react";
+import { createContext, useContext } from "react";
+import type { ReactNode } from "react";
+
+/**
+ * MVP-8.2 A2: Field renders a visible label and passes its text down; every
+ * form control inside associates itself via aria-label. This keeps the page
+ * markup unchanged (Field children are arbitrary components) while giving
+ * each control a programmatic name. The marker/hint stay inside the visible
+ * label element, so the accessible name is the clean label text.
+ */
+const FieldLabelContext = createContext<string | null>(null);
+
+export function useFieldLabel(): string | null {
+  return useContext(FieldLabelContext);
+}
 
 /** Labeled field wrapper: label, optional hint, error line (for 422 paths). */
 export function Field(props: {
@@ -14,20 +28,20 @@ export function Field(props: {
         {props.label}
         {props.required ? <span className="ml-1 text-amber-400">*</span> : null}
         {props.hint ? (
-          <span className="ml-2 text-xs font-normal text-zinc-500" title={props.hint}>
+          <span className="ml-2 text-xs font-normal text-text-muted" title={props.hint}>
             ⓘ {props.hint}
           </span>
         ) : null}
       </label>
-      {props.children}
+      <FieldLabelContext.Provider value={props.label}>{props.children}</FieldLabelContext.Provider>
       {props.error ? <p className="text-xs text-red-400">{props.error}</p> : null}
     </div>
   );
 }
 
 const inputClass =
-  "w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100 " +
-  "focus:border-zinc-500 focus:outline-none disabled:opacity-50";
+  "min-h-8 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100 " +
+  "focus:border-zinc-500 disabled:opacity-50";
 
 export function TextInput(props: {
   value: string;
@@ -35,6 +49,7 @@ export function TextInput(props: {
   placeholder?: string;
   disabled?: boolean;
 }) {
+  const fieldLabel = useFieldLabel();
   return (
     <input
       type="text"
@@ -43,6 +58,27 @@ export function TextInput(props: {
       disabled={props.disabled}
       placeholder={props.placeholder}
       onChange={(e) => props.onChange(e.target.value)}
+      aria-label={fieldLabel ?? undefined}
+    />
+  );
+}
+
+export function TextareaInput(props: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  spellCheck?: boolean;
+  className?: string;
+}) {
+  const fieldLabel = useFieldLabel();
+  return (
+    <textarea
+      className={`min-h-8 w-full rounded border border-zinc-700 bg-zinc-950 p-2 text-xs font-mono text-zinc-200 focus:border-zinc-500 ${props.className ?? ""}`}
+      value={props.value}
+      placeholder={props.placeholder}
+      spellCheck={props.spellCheck ?? false}
+      onChange={(e) => props.onChange(e.target.value)}
+      aria-label={fieldLabel ?? undefined}
     />
   );
 }
@@ -54,6 +90,7 @@ export function NumberInput(props: {
   disabled?: boolean;
   step?: string;
 }) {
+  const fieldLabel = useFieldLabel();
   return (
     <input
       type="number"
@@ -71,6 +108,7 @@ export function NumberInput(props: {
         const parsed = Number(raw);
         props.onChange(Number.isNaN(parsed) ? null : parsed);
       }}
+      aria-label={fieldLabel ?? undefined}
     />
   );
 }
@@ -83,6 +121,7 @@ export function SelectInput(props: {
   emptyLabel?: string;
   disabled?: boolean;
 }) {
+  const fieldLabel = useFieldLabel();
   const value = props.value === null || props.value === undefined ? "" : String(props.value);
   return (
     <select
@@ -90,6 +129,7 @@ export function SelectInput(props: {
       value={value}
       disabled={props.disabled}
       onChange={(e) => props.onChange(e.target.value)}
+      aria-label={fieldLabel ?? undefined}
     >
       {props.allowEmpty ? <option value="">{props.emptyLabel ?? "— не выбрано —"}</option> : null}
       {props.options.map((o) => (
@@ -107,6 +147,7 @@ export function NullableBoolInput(props: {
   onChange: (value: boolean | null) => void;
   disabled?: boolean;
 }) {
+  const fieldLabel = useFieldLabel();
   const current = props.value === true ? "true" : props.value === false ? "false" : "";
   return (
     <select
@@ -118,6 +159,7 @@ export function NullableBoolInput(props: {
         else if (e.target.value === "true") props.onChange(true);
         else props.onChange(false);
       }}
+      aria-label={fieldLabel ?? undefined}
     >
       <option value="">— не выбрано —</option>
       <option value="true">да</option>
@@ -131,21 +173,30 @@ export function CheckboxInput(props: {
   onChange: (value: boolean) => void;
   disabled?: boolean;
 }) {
+  const fieldLabel = useFieldLabel();
   return (
-    <input
-      type="checkbox"
-      className="h-4 w-4 accent-zinc-400"
-      checked={props.value}
-      disabled={props.disabled}
-      onChange={(e) => props.onChange(e.target.checked)}
-    />
+    /* A4 (MVP-8.2, раунд 2): Chromium ignores padding on a native checkbox,
+       so box-content+p-2 gave 16x16; the wrapping label is the 32x32 target
+       (clicking it toggles the control) while the box stays 16x16 visually.
+       Раунд 3 (B4): inline-flex без justify-center — инлайн-обёртка тянется
+       только на чекбокс и оставляет его слева, как в раунде 1. */
+    <label className="inline-flex min-h-8 min-w-8 cursor-pointer items-center">
+      <input
+        type="checkbox"
+        className="h-4 w-4 accent-zinc-400"
+        checked={props.value}
+        disabled={props.disabled}
+        aria-label={fieldLabel ?? undefined}
+        onChange={(e) => props.onChange(e.target.checked)}
+      />
+    </label>
   );
 }
 
 export function Section(props: { title: string; children: ReactNode }) {
   return (
     <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
-      <h3 className="mb-3 text-base font-semibold text-zinc-200">{props.title}</h3>
+      <h2 className="mb-3 text-base font-semibold text-zinc-200">{props.title}</h2>
       <div className="space-y-3">{props.children}</div>
     </section>
   );
@@ -170,7 +221,7 @@ export function SuccessBanner(props: { text: string | null }) {
 }
 
 export function Loading(props: { text?: string }) {
-  return <p className="text-sm text-zinc-500">{props.text ?? "Загрузка…"}</p>;
+  return <p className="text-sm text-text-muted">{props.text ?? "Загрузка…"}</p>;
 }
 
 export function Button(props: {
@@ -193,7 +244,7 @@ export function Button(props: {
       disabled={props.disabled}
       title={props.title}
       className={
-        "rounded border px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40 " +
+        "min-h-8 rounded border px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40 " +
         variantClass
       }
     >
