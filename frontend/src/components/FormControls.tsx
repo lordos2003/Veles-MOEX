@@ -27,7 +27,7 @@ export function Field(props: {
 
 const inputClass =
   "w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100 " +
-  "focus:border-zinc-500 focus:outline-none disabled:opacity-50";
+  "focus:border-zinc-500 focus:outline-hidden disabled:opacity-50";
 
 export function TextInput(props: {
   value: string;

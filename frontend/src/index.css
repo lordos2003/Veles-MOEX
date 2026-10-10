@@ -1,6 +1,22 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Tailwind 3 -> 4 upgrade (official guide): v4 defaults the border color to
+   currentColor (v3 used gray-200) and buttons to cursor:default (v3: pointer).
+   Every border usage in the app sets a color explicitly; the rules below keep
+   the preflight behaviour of v3 for any spot that does not. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentColor);
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
 
 :root {
   color-scheme: light dark;

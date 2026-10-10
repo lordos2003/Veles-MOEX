@@ -7,7 +7,13 @@ the project title and the backend connection status from `GET /api/health`.
 
 - React 18 + TypeScript
 - Vite
-- Tailwind CSS v3 (PostCSS + autoprefixer)
+- Tailwind CSS v4 (via the `@tailwindcss/vite` plugin, CSS-first `@theme` config)
+
+## Browser support
+
+Tailwind CSS v4 targets modern browsers: Safari 16.4+, Chrome 111+,
+Firefox 128+ (same baseline as the official v4 requirement). The app is
+designed for the desktop tool belt; no IE/legacy fallbacks are built.
 
 ## Running locally
 
