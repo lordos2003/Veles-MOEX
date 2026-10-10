@@ -173,6 +173,22 @@ for (const [text, bgName] of EXTRA_PAIRS) {
   pairs.set(key, { text, bg: bgName, ratio, files: ["EXTRA_PAIRS"] });
 }
 
+// B3 (раунд 2): ::placeholder глобально стилизован в index.css токеном
+// text-muted — проверяем его на каждом фоне, где встречаются поля ввода
+// (surface — inputClass, page — поля даты/времени PeriodPicker).
+const PLACEHOLDER_BGS = [
+  ["text-muted", "surface"],
+  ["text-muted", "page"],
+];
+
+for (const [text, bgName] of PLACEHOLDER_BGS) {
+  const t = resolve(text);
+  const b = resolve(bgName);
+  const ratio = contrast(t.hex, b.hex);
+  const key = `placeholder ${text} on bg-${bgName}`;
+  pairs.set(key, { text, bg: bgName, ratio, files: ["index.css ::placeholder"] });
+}
+
 // CSS (index.css): пара body text/background и focus ring не текст.
 let failed = 0;
 const rows = [...pairs.values()]

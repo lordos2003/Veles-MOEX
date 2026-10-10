@@ -43,6 +43,15 @@
     outline: 2px solid var(--color-accent-bright);
     outline-offset: 2px;
   }
+
+  /* B3 (MVP-8.2, раунд 2): Tailwind 4 preflight renders ::placeholder as
+     50%-transparent currentColor (4.42:1 on zinc-950 in period fields — below
+     WCAG AA). The muted token is 6.91:1 on surface / 7.76:1 on page, which
+     also matches the v3 placeholder look (gray-400). */
+  ::placeholder {
+    color: var(--color-text-muted);
+    opacity: 1;
+  }
 }
 
 :root {
