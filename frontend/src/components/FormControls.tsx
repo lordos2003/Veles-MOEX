@@ -175,16 +175,19 @@ export function CheckboxInput(props: {
 }) {
   const fieldLabel = useFieldLabel();
   return (
-    <input
-      type="checkbox"
-      /* box-content + p-2: the 16px box keeps its visual size while the whole
-         32x32 area stays clickable (MVP-8.2 A4 minimum target). */
-      className="box-content h-4 w-4 p-2 accent-zinc-400"
-      checked={props.value}
-      disabled={props.disabled}
-      aria-label={fieldLabel ?? undefined}
-      onChange={(e) => props.onChange(e.target.checked)}
-    />
+    /* A4 (MVP-8.2, раунд 2): Chromium ignores padding on a native checkbox,
+       so box-content+p-2 gave 16x16; the wrapping label is the 32x32 target
+       (clicking it toggles the control) while the box stays 16x16 visually. */
+    <label className="flex min-h-8 min-w-8 cursor-pointer items-center justify-center">
+      <input
+        type="checkbox"
+        className="h-4 w-4 accent-zinc-400"
+        checked={props.value}
+        disabled={props.disabled}
+        aria-label={fieldLabel ?? undefined}
+        onChange={(e) => props.onChange(e.target.checked)}
+      />
+    </label>
   );
 }
 

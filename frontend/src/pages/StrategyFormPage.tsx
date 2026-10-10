@@ -669,7 +669,7 @@ function StopItem(props: {
 }) {
   return (
     <div className="rounded border border-zinc-800 p-3">
-      <label className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+      <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm font-medium text-zinc-200">
         <input
           type="checkbox"
           checked={props.enabled}

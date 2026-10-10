@@ -19,6 +19,19 @@ describe("FormControls: A2 программные подписи", () => {
     );
     expect(screen.getByRole("checkbox", { name: "Аварийный стоп" })).toBeTruthy();
   });
+
+  it("A4 (раунд 2 B1): чекбокс обёрнут в label — кликабельная область 32×32", () => {
+    render(
+      <Field label="Аварийный стоп">
+        <CheckboxInput value={false} onChange={() => undefined} />
+      </Field>,
+    );
+    const box = screen.getByRole("checkbox");
+    const wrapper = box.closest("label");
+    expect(wrapper).toBeTruthy();
+    expect(wrapper!.className).toContain("min-h-8");
+    expect(wrapper!.className).toContain("min-w-8");
+  });
 });
 
 describe("FormControls: heading-order", () => {
