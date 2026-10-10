@@ -173,6 +173,7 @@ export function CheckboxInput(props: {
   onChange: (value: boolean) => void;
   disabled?: boolean;
 }) {
+  const fieldLabel = useFieldLabel();
   return (
     <input
       type="checkbox"
@@ -181,6 +182,7 @@ export function CheckboxInput(props: {
       className="box-content h-4 w-4 p-2 accent-zinc-400"
       checked={props.value}
       disabled={props.disabled}
+      aria-label={fieldLabel ?? undefined}
       onChange={(e) => props.onChange(e.target.checked)}
     />
   );
@@ -189,7 +191,7 @@ export function CheckboxInput(props: {
 export function Section(props: { title: string; children: ReactNode }) {
   return (
     <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
-      <h3 className="mb-3 text-base font-semibold text-zinc-200">{props.title}</h3>
+      <h2 className="mb-3 text-base font-semibold text-zinc-200">{props.title}</h2>
       <div className="space-y-3">{props.children}</div>
     </section>
   );
