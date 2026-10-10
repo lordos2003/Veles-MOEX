@@ -32,7 +32,7 @@ export function StrategiesListPage() {
       {!strategies ? (
         <Loading />
       ) : strategies.length === 0 ? (
-        <p className="text-sm text-zinc-500">Стратегий пока нет.</p>
+        <p className="text-sm text-text-muted">Стратегий пока нет.</p>
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {strategies.map((s) => (
@@ -43,10 +43,10 @@ export function StrategiesListPage() {
             >
               <div className="flex items-center justify-between">
                 <span className="font-medium text-zinc-100">{s.name}</span>
-                <span className="text-xs text-zinc-500">версия {s.versions}</span>
+                <span className="text-xs text-text-muted">версия {s.versions}</span>
               </div>
-              {s.description ? <p className="mt-1 text-xs text-zinc-500">{s.description}</p> : null}
-              <p className="mt-1 text-xs text-zinc-500">
+              {s.description ? <p className="mt-1 text-xs text-text-muted">{s.description}</p> : null}
+              <p className="mt-1 text-xs text-text-muted">
                 Обновлена: {s.updated_at ? new Date(s.updated_at).toLocaleString("ru-RU") : "—"}
               </p>
             </Link>
@@ -96,7 +96,7 @@ export function StrategyDetailPage() {
         </div>
       </div>
       {strategy.description ? <p className="text-sm text-zinc-400">{strategy.description}</p> : null}
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-text-muted">
         Версия {strategy.versions} · создана:{" "}
         {strategy.created_at ? new Date(strategy.created_at).toLocaleString("ru-RU") : "—"} ·
         обновлена: {strategy.updated_at ? new Date(strategy.updated_at).toLocaleString("ru-RU") : "—"}
@@ -119,7 +119,7 @@ export function StrategyDetailPage() {
         <p className="mb-2 text-sm font-medium text-zinc-300">История версий</p>
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b border-zinc-800 text-xs text-zinc-500">
+            <tr className="border-b border-zinc-800 text-xs text-text-muted">
               <th className="py-1">версия</th>
               <th>создана</th>
               <th></th>

@@ -5,7 +5,7 @@ export function ModeBadge() {
   const { runtime, mode, error } = useRuntime();
 
   if (mode === "checking") {
-    return <span className="text-sm text-zinc-500">Режим: проверка…</span>;
+    return <span className="text-sm text-text-muted">Режим: проверка…</span>;
   }
   const live = mode === "live";
   const realMoney = live && runtime?.live_trading_enabled === true;

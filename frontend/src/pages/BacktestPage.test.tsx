@@ -355,3 +355,37 @@ describe("MVP-7.7 P3: комиссии и проскальзывание по у
     expect(payload.slippage).toBe("0.002");
   });
 });
+
+describe("MVP-8.2 A2: программные подписи всех полей бэктеста", () => {
+  it("селекты и текстовые поля доступны по имени", async () => {
+    render(<BacktestPage />);
+    await pickerInput();
+    expect(screen.getByLabelText("Стратегия")).toBeTruthy();
+    expect(screen.getByLabelText("Версия")).toBeTruthy();
+    expect(screen.getByLabelText("Ценная бумага")).toBeTruthy();
+    expect(screen.getByLabelText("Таймфрейм (из конфигурации)")).toBeTruthy();
+    expect(screen.getByLabelText("Период")).toBeTruthy();
+    expect(screen.getByLabelText("Депозит сделки")).toBeTruthy();
+    expect(screen.getByLabelText("Maker-комиссия")).toBeTruthy();
+    expect(screen.getByLabelText("Taker-комиссия")).toBeTruthy();
+    expect(screen.getByLabelText("Проскальзывание")).toBeTruthy();
+  });
+
+  it("textarea инлайн-конфигурации имеет имя", async () => {
+    render(<BacktestPage />);
+    await pickerInput();
+    fireEvent.click(screen.getByRole("radio", { name: "Инлайн-конфигурация" }));
+    expect(screen.getByLabelText("Конфигурация (JSON)")).toBeTruthy();
+  });
+
+  it("список бумаг — listbox с option и активной строкой", async () => {
+    render(<BacktestPage />);
+    const input = await pickerInput();
+    fireEvent.focus(input);
+    expect(screen.getByRole("listbox")).toBeTruthy();
+    const options = screen.getAllByRole("option");
+    expect(options.length).toBeGreaterThanOrEqual(2);
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(input.getAttribute("aria-activedescendant")).toBeTruthy();
+  });
+});

@@ -152,7 +152,7 @@ export function SandboxPage() {
       {!accounts ? (
         <Loading />
       ) : accounts.length === 0 ? (
-        <p className="text-sm text-zinc-500">Счетов нет. Откройте песочничный счёт или синхронизируйте брокерские.</p>
+        <p className="text-sm text-text-muted">Счетов нет. Откройте песочничный счёт или синхронизируйте брокерские.</p>
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {accounts.map((a) => (
@@ -171,7 +171,7 @@ export function SandboxPage() {
                   <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">не сохранён</span>
                 )}
               </div>
-              <div className="mt-1 grid grid-cols-2 gap-1 text-xs text-zinc-500">
+              <div className="mt-1 grid grid-cols-2 gap-1 text-xs text-text-muted">
                 <span>ID: {a.account_id}</span>
                 <span>Брокер: {a.broker}</span>
                 <span>Валюта: {a.currency}</span>
@@ -220,12 +220,12 @@ export function SandboxPage() {
           <section>
             <h4 className="mb-2 text-sm font-medium text-zinc-300">Позиции</h4>
             {positions.length === 0 ? (
-              <p className="text-sm text-zinc-500">Нет открытых позиций.</p>
+              <p className="text-sm text-text-muted">Нет открытых позиций.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
-                    <tr className="border-b border-zinc-800 text-zinc-500">
+                    <tr className="border-b border-zinc-800 text-text-muted">
                       <th className="py-1 pr-3">FIGI</th>
                       <th className="pr-3">Тикер</th>
                       <th className="pr-3">Кол-во</th>
@@ -254,12 +254,12 @@ export function SandboxPage() {
           <section>
             <h4 className="mb-2 text-sm font-medium text-zinc-300">Заявки</h4>
             {orders.length === 0 ? (
-              <p className="text-sm text-zinc-500">Заявок нет.</p>
+              <p className="text-sm text-text-muted">Заявок нет.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
-                    <tr className="border-b border-zinc-800 text-zinc-500">
+                    <tr className="border-b border-zinc-800 text-text-muted">
                       <th className="py-1 pr-3">Заявка</th>
                       <th className="pr-3">FIGI</th>
                       <th className="pr-3">Сторона</th>
@@ -290,12 +290,12 @@ export function SandboxPage() {
           <section>
             <h4 className="mb-2 text-sm font-medium text-zinc-300">Сделки</h4>
             {deals.length === 0 ? (
-              <p className="text-sm text-zinc-500">Сделок нет.</p>
+              <p className="text-sm text-text-muted">Сделок нет.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
-                    <tr className="border-b border-zinc-800 text-zinc-500">
+                    <tr className="border-b border-zinc-800 text-text-muted">
                       <th className="py-1 pr-3">Сделка</th>
                       <th className="pr-3">FIGI</th>
                       <th className="pr-3">Сторона</th>
@@ -324,7 +324,7 @@ export function SandboxPage() {
           </section>
         </div>
       ) : (
-        <p className="text-xs text-zinc-500">Выберите счёт, чтобы увидеть позиции, заявки и сделки.</p>
+        <p className="text-xs text-text-muted">Выберите счёт, чтобы увидеть позиции, заявки и сделки.</p>
       )}
 
       <ConfirmDialog

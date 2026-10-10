@@ -8,7 +8,7 @@ import type {
   StrategyResponse,
   StrategyVersionResponse,
 } from "../types";
-import { Button, ErrorBanner, Field, Loading, SelectInput, TextInput } from "../components/FormControls";
+import { Button, ErrorBanner, Field, Loading, SelectInput, TextareaInput, TextInput } from "../components/FormControls";
 import { InstrumentPicker } from "../components/InstrumentPicker";
 import CandleChart, { ChartMarker } from "../components/CandleChart";
 import { PeriodPicker, PeriodRange } from "../components/PeriodPicker";
@@ -262,14 +262,13 @@ export function BacktestPage() {
             </div>
           ) : (
             <Field label="Конфигурация (JSON)" required error={inlineError ?? undefined}>
-              <textarea
-                className="h-40 w-full rounded border border-zinc-700 bg-zinc-950 p-2 font-mono text-xs text-zinc-200"
+              <TextareaInput
+                className="h-40"
                 value={inlineConfig}
-                onChange={(e) => {
-                  setInlineConfig(e.target.value);
+                onChange={(v) => {
+                  setInlineConfig(v);
                   setInlineError(null);
                 }}
-                spellCheck={false}
                 placeholder='{"name": "", "direction": "LONG", "entry": {...}, "exit": {...}}'
               />
             </Field>
@@ -278,7 +277,7 @@ export function BacktestPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Ценная бумага" required error={fieldErrors.instrument}>
               {instruments.length === 0 ? (
-                <p className="text-sm text-zinc-500">Инструменты не загружены.</p>
+                <p className="text-sm text-text-muted">Инструменты не загружены.</p>
               ) : (
                 <InstrumentPicker
                   instruments={instruments}
@@ -335,7 +334,7 @@ export function BacktestPage() {
               <TextInput value={slippage} onChange={setSlippage} />
             </Field>
           </div>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-text-muted">
             Комиссии задаются долей (например, 0.003 = 0.3%). Для тарифа «Инвестор» в Т-Инвестициях, акции.
           </p>
           <div className="flex justify-end">
@@ -372,7 +371,7 @@ export function BacktestPage() {
             <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
               <h3 className="mb-2 font-medium text-zinc-200">График свечей и сделки</h3>
               <CandleChart candles={chart.candles} markers={chart.markers} />
-              <div className="mt-1 flex gap-4 text-xs text-zinc-500">
+              <div className="mt-1 flex gap-4 text-xs text-text-muted">
                 <span><span className="text-yellow-400">●</span> вход</span>
                 <span><span className="text-sky-400">●</span> выход</span>
               </div>
@@ -382,12 +381,12 @@ export function BacktestPage() {
           <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
             <h3 className="mb-2 font-medium text-zinc-200">Сделки ({result.deals.length})</h3>
             {result.deals.length === 0 ? (
-              <p className="text-sm text-zinc-500">Сделок за период нет.</p>
+              <p className="text-sm text-text-muted">Сделок за период нет.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
-                    <tr className="border-b border-zinc-800 text-zinc-500">
+                    <tr className="border-b border-zinc-800 text-text-muted">
                       <th className="py-1 pr-3">Вход</th>
                       <th className="pr-3">Выход</th>
                       <th className="pr-3">Направление</th>
@@ -425,7 +424,7 @@ export function BacktestPage() {
 function Metric(props: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-xs text-zinc-500">{props.label}</p>
+      <p className="text-xs text-text-muted">{props.label}</p>
       <p className="font-mono text-sm text-zinc-100">{props.value}</p>
     </div>
   );

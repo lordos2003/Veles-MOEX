@@ -258,7 +258,7 @@ function ArgumentEditor(props: {
 function SourceMarker({ source }: { source: DefaultSource | null }) {
   const label = defaultSourceLabel(source);
   if (!label) return null;
-  return <p className="text-xs text-zinc-500">{label}</p>;
+  return <p className="text-xs text-text-muted">{label}</p>;
 }
 
 function IndicatorArgs(props: {

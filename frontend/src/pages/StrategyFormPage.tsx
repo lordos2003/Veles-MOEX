@@ -306,15 +306,16 @@ export function StrategyFormPage(props: { edit?: boolean }) {
 
       {jsonMode ? (
         <div className="space-y-2">
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-text-muted">
             Правка конфигурации текстом. Изменения синхронны с формой; невалидный JSON не
             сохраняется.
           </p>
           <textarea
-            className="h-[28rem] w-full rounded border border-zinc-700 bg-zinc-950 p-3 font-mono text-xs text-zinc-200"
+            className="min-h-8 h-[28rem] w-full rounded border border-zinc-700 bg-zinc-950 p-3 font-mono text-xs text-zinc-200"
             value={jsonText}
             onChange={(e) => onJsonChange(e.target.value)}
             spellCheck={false}
+            aria-label="Конфигурация (JSON)"
           />
           {jsonError ? <p className="text-xs text-red-400">JSON: {jsonError}</p> : null}
         </div>
@@ -352,7 +353,7 @@ export function StrategyFormPage(props: { edit?: boolean }) {
                 error={pathError(errors, "instrument_id")}
               >
                 {instruments.length === 0 ? (
-                  <p className="text-sm text-zinc-500">Инструменты не загружены.</p>
+                  <p className="text-sm text-text-muted">Инструменты не загружены.</p>
                 ) : (
                   <InstrumentPicker
                     instruments={instruments}

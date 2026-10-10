@@ -60,7 +60,7 @@ export default function CandleChart({ candles, markers = [] }: CandleChartProps)
   }, [candles, markers]);
 
   if (candles.length === 0) {
-    return <p className="text-sm text-zinc-500">Нет данных для отображения</p>;
+    return <p className="text-sm text-text-muted">Нет данных для отображения</p>;
   }
 
   return (

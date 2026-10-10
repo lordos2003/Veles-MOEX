@@ -280,7 +280,7 @@ export function BotSettingsPanel(props: {
         </Button>
       </div>
       {meta.loading && !open ? (
-        <p className="mt-1 text-xs text-zinc-500">Загрузка счёта, инструмента и версии…</p>
+        <p className="mt-1 text-xs text-text-muted">Загрузка счёта, инструмента и версии…</p>
       ) : null}
       {open ? (
         <div className="mt-3 space-y-3">
