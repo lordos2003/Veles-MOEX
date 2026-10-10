@@ -324,13 +324,13 @@ export function PeriodPicker(props: PeriodPickerProps) {
   };
 
   const dayClass = (d: Date) => {
-    if (isDisabled(d)) return "text-zinc-600";
-    const cls = ["text-zinc-200 hover:bg-zinc-700"];
-    /* Sky-700 instead of sky-500/600: white text on those fails WCAG AA
-       (2.77:1 / 4.10:1); sky-700 gives 5.93:1. */
-    if (isEdge(d, "from")) cls.push("bg-sky-700 font-semibold text-white hover:bg-sky-700");
-    else if (isEdge(d, "to")) cls.push("bg-sky-700 text-white hover:bg-sky-700");
-    else if (between(d)) cls.push("bg-sky-900/60 text-sky-100");
+    if (isDisabled(d)) return "text-text-muted/50";
+    const cls = ["text-text hover:bg-surface-raised"];
+    /* accent-strong (indigo-700) instead of lighter shades: white text on those fails WCAG AA
+       (2.77:1 / 4.10:1); it gives 8.6:1 with white. */
+    if (isEdge(d, "from")) cls.push("bg-accent-strong font-semibold text-white hover:bg-accent-strong");
+    else if (isEdge(d, "to")) cls.push("bg-accent-strong text-white hover:bg-accent-strong");
+    else if (between(d)) cls.push("bg-accent-soft/70 text-text");
     return cls.join(" ");
   };
 
@@ -341,7 +341,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
           ref={inputRef}
           type="text"
           readOnly
-          className="w-full rounded-l border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200"
+          className="w-full rounded-l border border-border bg-sunken px-3 py-2 text-sm text-text"
           value={summary}
           placeholder="выберите период"
           onClick={() => {
@@ -359,7 +359,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
         <button
           ref={iconRef}
           type="button"
-          className="min-h-8 rounded-r border border-l-0 border-zinc-700 bg-zinc-900 px-2 text-zinc-400 hover:text-zinc-200"
+          className="min-h-8 rounded-r border border-l-0 border-border bg-control px-2 text-text-muted hover:text-text"
           onClick={() => {
             if (presetsOpen) setPresetsOpen(false);
             else openPresets();
@@ -372,25 +372,25 @@ export function PeriodPicker(props: PeriodPickerProps) {
 
       {open ? (
         <div
-          className="absolute left-0 top-full z-20 mt-1 w-[320px] rounded-lg border border-zinc-700 bg-zinc-900 p-3 shadow-xl"
+          className="absolute left-0 top-full z-20 mt-1 w-[320px] rounded-card border border-border bg-control p-3 shadow-pop"
           role="dialog"
           aria-label="Выбор периода"
         >
           <div className="mb-2 flex items-center justify-between">
             <button
               type="button"
-              className="min-h-8 min-w-8 px-2 text-zinc-400 hover:text-zinc-200"
+              className="min-h-8 min-w-8 px-2 text-text-muted hover:text-text"
               onClick={() => shiftMonth(-1)}
               aria-label="Предыдущий месяц"
             >
               ←
             </button>
-            <span className="text-sm font-medium capitalize text-zinc-100">
+            <span className="text-sm font-medium capitalize text-text">
               {MONTHS_RU[viewMonth]} {viewYear}
             </span>
             <button
               type="button"
-              className="min-h-8 min-w-8 px-2 text-zinc-400 hover:text-zinc-200"
+              className="min-h-8 min-w-8 px-2 text-text-muted hover:text-text"
               onClick={() => shiftMonth(1)}
               aria-label="Следующий месяц"
             >
@@ -422,13 +422,13 @@ export function PeriodPicker(props: PeriodPickerProps) {
             )}
           </div>
 
-          <div className="mt-3 space-y-2 border-t border-zinc-800 pt-2">
+          <div className="mt-3 space-y-2 border-t border-border-soft pt-2">
             <div className="flex items-center gap-2 text-xs">
               <span className="w-10 text-text-muted">С</span>
               <span aria-hidden>📅</span>
               <input
                 type="text"
-                className="min-h-8 w-24 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-24 rounded-control border border-border bg-sunken px-2 py-1 text-xs text-text"
                 value={drafts.fromDate}
                 placeholder="ДД.ММ.ГГГГ"
                 onChange={(e) => setDraft("from", "date", e.target.value)}
@@ -437,7 +437,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
               <span aria-hidden>🕐</span>
               <input
                 type="text"
-                className="min-h-8 w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-16 rounded-control border border-border bg-sunken px-2 py-1 text-xs text-text"
                 value={drafts.fromTime}
                 placeholder="ЧЧ:ММ"
                 onChange={(e) => setDraft("from", "time", e.target.value)}
@@ -449,7 +449,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
               <span aria-hidden>📅</span>
               <input
                 type="text"
-                className="min-h-8 w-24 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-24 rounded-control border border-border bg-sunken px-2 py-1 text-xs text-text"
                 value={drafts.toDate}
                 placeholder="ДД.ММ.ГГГГ"
                 onChange={(e) => setDraft("to", "date", e.target.value)}
@@ -458,7 +458,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
               <span aria-hidden>🕐</span>
               <input
                 type="text"
-                className="min-h-8 w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-16 rounded-control border border-border bg-sunken px-2 py-1 text-xs text-text"
                 value={drafts.toTime}
                 placeholder="ЧЧ:ММ"
                 onChange={(e) => setDraft("to", "time", e.target.value)}
@@ -467,7 +467,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
             </div>
           </div>
 
-          <p className="mt-3 border-t border-zinc-800 pt-2 text-xs text-text-muted">
+          <p className="mt-3 border-t border-border-soft pt-2 text-xs text-text-muted">
             {earliest
               ? `Данные для бэктеста доступны с: ${pad2(earliest.getDate())}.${pad2(earliest.getMonth() + 1)}.${earliest.getFullYear()}`
               : "нет данных о доступном диапазоне"}
@@ -478,7 +478,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
       {presetsOpen ? (
         <div
           ref={presetsRef}
-          className="absolute right-0 top-full z-20 mt-1 w-80 rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl"
+          className="absolute right-0 top-full z-20 mt-1 w-80 rounded-card border border-border bg-control shadow-pop"
           onKeyDown={onPresetsKeyDown}
         >
           {visiblePresets.map((p) => {
@@ -489,7 +489,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
                   key={p.key}
                   disabled
                   title="нет данных о доступном диапазоне"
-                  className="min-h-8 w-full px-3 py-1.5 text-left text-xs text-zinc-600"
+                  className="min-h-8 w-full px-3 py-1.5 text-left text-xs text-text-muted/50"
                 >
                   <span className="flex items-center justify-between">
                     <span>Весь период</span>
@@ -503,7 +503,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
                 type="button"
                 key={p.key}
                 onClick={() => applyPreset(p)}
-                className="min-h-8 w-full px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-800"
+                className="min-h-8 w-full px-3 py-1.5 text-left text-xs text-text hover:bg-surface-raised"
               >
                 <span className="flex items-center justify-between">
                   <span>{p.label}</span>

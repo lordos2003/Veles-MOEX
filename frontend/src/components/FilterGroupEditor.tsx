@@ -58,9 +58,9 @@ export function FilterGroupEditor(props: EditorProps) {
         const conditions = (group.conditions as Record<string, unknown>[]) ?? [];
         const groupPath = `${pathPrefix}.${gi}`;
         return (
-          <div key={gi} className="rounded border border-zinc-800 bg-zinc-950/60 p-3">
+          <div key={gi} className="rounded-control border border-border-soft bg-sunken/60 p-3">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-medium text-zinc-400">
+              <span className="text-xs font-medium text-text-muted">
                 Группа {gi + 1} {gi > 0 ? "(ИЛИ с предыдущими)" : ""}
               </span>
               <Button variant="ghost" onClick={() => removeGroup(gi)} disabled={props.disabled}>
@@ -71,7 +71,7 @@ export function FilterGroupEditor(props: EditorProps) {
               {conditions.map((_condition, ci) => {
                 const condPath = `${groupPath}.conditions.${ci}`;
                 return (
-                  <div key={ci} className="rounded border border-zinc-800 p-2">
+                  <div key={ci} className="rounded-control border border-border-soft p-2">
                     <div className="mb-2 flex justify-end">
                       <Button
                         variant="ghost"
@@ -172,7 +172,7 @@ function ArgumentEditor(props: {
   const kind = typeof value.kind === "string" ? value.kind : undefined;
 
   return (
-    <div className="space-y-2 rounded border border-zinc-800 p-2">
+    <div className="space-y-2 rounded-control border border-border-soft p-2">
       <Field label={label} error={getPathError(errors, pathPrefix)} required>
         <SelectInput
           value={kind}
@@ -247,7 +247,7 @@ function ArgumentEditor(props: {
         </>
       ) : null}
       {catalogError ? (
-        <p className="text-xs text-amber-400">Каталог индикаторов недоступен: {catalogError}</p>
+        <p className="text-xs text-warning">Каталог индикаторов недоступен: {catalogError}</p>
       ) : null}
     </div>
   );
@@ -377,8 +377,8 @@ function IndicatorArgs(props: {
         />
       </Field>
       {entry && entry.params.length > 0 ? (
-        <div className="space-y-2 rounded border border-zinc-800 p-2">
-          <p className="text-xs text-zinc-400">Параметры индикатора</p>
+        <div className="space-y-2 rounded-control border border-border-soft p-2">
+          <p className="text-xs text-text-muted">Параметры индикатора</p>
           {entry.params.map((param) => (
             <Field
               key={param.name}

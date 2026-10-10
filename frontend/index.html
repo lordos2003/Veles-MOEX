@@ -1,9 +1,42 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Veles-MOEX</title>
+    <!-- MVP-8.3 (T4): тема применяется до отрисовки — внешний синхронный скрипт
+         (CSP запрещает инлайн), без вспышки тёмной темы при светлой. -->
+    <script src="/theme-init.js"></script>
+    <title>Veles-MOEX — панель торговых ботов для MOEX</title>
+    <meta
+      name="description"
+      content="Veles-MOEX — локальная панель управления торговыми ботами и бэктестами для Московской биржи через T-Invest API."
+    />
+    <meta name="theme-color" content="#0c0e16" />
+    <meta name="color-scheme" content="dark" />
+    <!-- Интерфейс торгового бота не предназначен для индексации (решение архитектора, MVP-8.3 R3). -->
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Veles-MOEX" />
+    <meta property="og:locale" content="ru_RU" />
+    <meta property="og:title" content="Veles-MOEX — панель торговых ботов для MOEX" />
+    <meta
+      property="og:description"
+      content="Торговые боты, бэктесты и песочница для Московской биржи через T-Invest API."
+    />
+    <meta property="og:image" content="/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Veles-MOEX — панель управления торговыми ботами" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Veles-MOEX — панель торговых ботов для MOEX" />
+    <meta
+      name="twitter:description"
+      content="Торговые боты, бэктесты и песочница для Московской биржи через T-Invest API."
+    />
+    <meta name="twitter:image" content="/og-image.png" />
   </head>
   <body>
     <div id="root"></div>

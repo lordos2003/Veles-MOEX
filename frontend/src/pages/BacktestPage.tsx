@@ -8,8 +8,9 @@ import type {
   StrategyResponse,
   StrategyVersionResponse,
 } from "../types";
-import { Button, ErrorBanner, Field, Loading, SelectInput, TextareaInput, TextInput } from "../components/FormControls";
+import { Button, ErrorBanner, Field, Loading, SelectInput, TableWrap, TextareaInput, TextInput } from "../components/FormControls";
 import { InstrumentPicker } from "../components/InstrumentPicker";
+import { PageHeader } from "../components/PageHeader";
 import CandleChart, { ChartMarker } from "../components/CandleChart";
 import { PeriodPicker, PeriodRange } from "../components/PeriodPicker";
 
@@ -220,19 +221,22 @@ export function BacktestPage() {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-xl font-semibold">Бэктест</h2>
+      <PageHeader
+        title="Бэктест"
+        description="Проверка стратегии на исторических свечах с комиссиями и проскальзыванием."
+      />
       <ErrorBanner text={error} />
 
-      <div className="grid grid-cols-1 gap-4 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 rounded-card border border-border-soft bg-surface/60 p-4 shadow-card sm:p-5 lg:grid-cols-2">
         <div className="space-y-4">
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
             {/* M6 (MVP-8.2, раунд 3): label min-h-8 — интерактивная область радио ≥32px */}
             <label className="flex min-h-8 items-center gap-1">
-              <input type="radio" checked={useVersion} onChange={() => setUseVersion(true)} />
+              <input type="radio" className="accent-accent-bright" checked={useVersion} onChange={() => setUseVersion(true)} />
               По версии стратегии
             </label>
             <label className="flex min-h-8 items-center gap-1">
-              <input type="radio" checked={!useVersion} onChange={() => setUseVersion(false)} />
+              <input type="radio" className="accent-accent-bright" checked={!useVersion} onChange={() => setUseVersion(false)} />
               Инлайн-конфигурация
             </label>
           </div>
@@ -291,7 +295,7 @@ export function BacktestPage() {
             </Field>
             <Field label="Таймфрейм (из конфигурации)" error={fieldErrors.timeframe}>
               {configTimeframe ? (
-                <p className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2 font-mono text-sm text-zinc-200">
+                <p className="num rounded-control border border-border-soft bg-control/70 px-3 py-2 text-sm text-text">
                   {configTimeframe}
                 </p>
               ) : (
@@ -350,8 +354,8 @@ export function BacktestPage() {
 
       {result ? (
         <div className="space-y-4">
-          <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
-            <h3 className="mb-3 font-medium text-zinc-200">Результат</h3>
+          <section className="rounded-card border border-border-soft bg-surface/60 p-4 shadow-card sm:p-5">
+            <h3 className="mb-3 text-base font-medium text-text">Результат</h3>
             <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:grid-cols-6">
               <Metric label="Начальный капитал" value={result.initial_capital} />
               <Metric label="Итоговый капитал" value={result.final_capital} />
@@ -369,51 +373,51 @@ export function BacktestPage() {
           </section>
 
           {chart ? (
-            <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
-              <h3 className="mb-2 font-medium text-zinc-200">График свечей и сделки</h3>
+            <section className="rounded-card border border-border-soft bg-surface/60 p-4 shadow-card sm:p-5">
+              <h3 className="mb-2 text-base font-medium text-text">График свечей и сделки</h3>
               <CandleChart candles={chart.candles} markers={chart.markers} />
               <div className="mt-1 flex gap-4 text-xs text-text-muted">
-                <span><span className="text-yellow-400">●</span> вход</span>
-                <span><span className="text-sky-400">●</span> выход</span>
+                <span><span className="text-warning">●</span> вход</span>
+                <span><span className="text-accent-bright">●</span> выход</span>
               </div>
             </section>
           ) : null}
 
-          <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
-            <h3 className="mb-2 font-medium text-zinc-200">Сделки ({result.deals.length})</h3>
+          <section className="rounded-card border border-border-soft bg-surface/60 p-4 shadow-card sm:p-5">
+            <h3 className="mb-2 text-base font-medium text-text">Сделки ({result.deals.length})</h3>
             {result.deals.length === 0 ? (
               <p className="text-sm text-text-muted">Сделок за период нет.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+              <TableWrap label="Таблица сделок бэктеста">
+                <table className="data-table">
                   <thead>
-                    <tr className="border-b border-zinc-800 text-text-muted">
-                      <th className="py-1 pr-3">Вход</th>
-                      <th className="pr-3">Выход</th>
-                      <th className="pr-3">Направление</th>
-                      <th className="pr-3">Цена входа</th>
-                      <th className="pr-3">Цена выхода</th>
-                      <th className="pr-3">Кол-во</th>
-                      <th className="pr-3">Чистая PnL</th>
-                      <th className="pr-3">Причина</th>
+                    <tr>
+                      <th>Вход</th>
+                      <th>Выход</th>
+                      <th>Направление</th>
+                      <th>Цена входа</th>
+                      <th>Цена выхода</th>
+                      <th>Кол-во</th>
+                      <th>Чистая PnL</th>
+                      <th>Причина</th>
                     </tr>
                   </thead>
                   <tbody>
                     {result.deals.map((d) => (
-                      <tr key={d.deal_id} className="border-b border-zinc-900">
-                        <td className="py-1 pr-3">{new Date(d.entry_time).toLocaleString("ru-RU")}</td>
-                        <td className="pr-3">{new Date(d.exit_time).toLocaleString("ru-RU")}</td>
-                        <td className="pr-3">{d.direction === "LONG" ? "Лонг" : "Шорт"}</td>
-                        <td className="pr-3 font-mono">{d.entry_price}</td>
-                        <td className="pr-3 font-mono">{d.exit_price}</td>
-                        <td className="pr-3 font-mono">{d.quantity}</td>
-                        <td className="pr-3 font-mono">{d.net_pnl}</td>
-                        <td className="pr-3">{d.reason}</td>
+                      <tr key={d.deal_id}>
+                        <td>{new Date(d.entry_time).toLocaleString("ru-RU")}</td>
+                        <td>{new Date(d.exit_time).toLocaleString("ru-RU")}</td>
+                        <td>{d.direction === "LONG" ? "Лонг" : "Шорт"}</td>
+                        <td className="num">{d.entry_price}</td>
+                        <td className="num">{d.exit_price}</td>
+                        <td className="num">{d.quantity}</td>
+                        <td className={"num " + (d.net_pnl.trim().startsWith("-") ? "text-error" : "text-success")}>{d.net_pnl}</td>
+                        <td>{d.reason}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </TableWrap>
             )}
           </section>
         </div>
@@ -424,9 +428,9 @@ export function BacktestPage() {
 
 function Metric(props: { label: string; value: string }) {
   return (
-    <div>
+    <div className="rounded-control border border-border-soft bg-sunken/40 px-3 py-2">
       <p className="text-xs text-text-muted">{props.label}</p>
-      <p className="font-mono text-sm text-zinc-100">{props.value}</p>
+      <p className="num mt-0.5 break-words text-sm font-medium text-text">{props.value}</p>
     </div>
   );
 }

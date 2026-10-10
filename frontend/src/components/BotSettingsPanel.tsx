@@ -146,7 +146,7 @@ export function instrumentLabel(meta: BotDisplayMeta, instrumentId: number | nul
 export function AccountErrorNote(props: { meta: BotDisplayMeta }) {
   if (props.meta.accountsError === null) return null;
   return (
-    <span className="ml-1 text-red-400" title={props.meta.accountsError}>
+    <span className="ml-1 text-error" title={props.meta.accountsError}>
       счета недоступны
     </span>
   );
@@ -272,9 +272,9 @@ export function BotSettingsPanel(props: {
   };
 
   return (
-    <div className="rounded border border-zinc-800 bg-zinc-950/50 p-3">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-zinc-400">Настройки бота</span>
+    <div className="rounded-control border border-border-soft bg-sunken/50 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-medium text-text-muted">Настройки бота</span>
         <Button variant="ghost" onClick={() => setOpen(!open)}>
           {open ? "Скрыть" : "Изменить (депозит, версия, удалить)"}
         </Button>
@@ -293,7 +293,7 @@ export function BotSettingsPanel(props: {
                 placeholder="например, 100000"
                 onChange={setDeposit}
               />
-              <div className="mt-2 flex gap-2">
+              <div className="mt-2 flex flex-wrap gap-2">
                 <Button onClick={() => void saveDeposit()} disabled={depositBusy || deposit === null}>
                   Сохранить депозит
                 </Button>
@@ -317,22 +317,22 @@ export function BotSettingsPanel(props: {
                 options={versionOptions}
                 disabled={lifecycleDisabled || versionBusy || current === undefined}
               />
-              <div className="mt-2 flex items-center gap-2">
+              <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Button
                   onClick={() => void saveVersion()}
                   disabled={versionBusy || !versionId || lifecycleDisabled}
                 >
                   Сменить версию
                 </Button>
-                {lifecycleBlocked ? <span className="text-xs text-amber-400">{lifecycleBlocked}</span> : null}
+                {lifecycleBlocked ? <span className="text-xs text-warning">{lifecycleBlocked}</span> : null}
               </div>
             </Field>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={deleteBusy || lifecycleDisabled}>
               Удалить бота
             </Button>
-            {lifecycleBlocked ? <span className="text-xs text-amber-400">{lifecycleBlocked}</span> : null}
+            {lifecycleBlocked ? <span className="text-xs text-warning">{lifecycleBlocked}</span> : null}
           </div>
         </div>
       ) : null}

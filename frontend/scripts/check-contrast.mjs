@@ -1,20 +1,26 @@
 #!/usr/bin/env node
 /**
- * MVP-8.2 A1: статическая проверка WCAG 2.1 AA контраста (>= 4.5:1) всех
- * text/bg пар, встречающихся в className-литералах фронтенда.
+ * MVP-8.3, раунд 2 (T1/T8): статическая проверка WCAG 2.1 AA контраста
+ * в ОБЕИХ темах («Тёмная» и «Светлая»):
+ *   - text/background пары >= 4.5:1 (WCAG 1.4.3), как в MVP-8.2;
+ *   - границы интерактивных элементов и фокус-рамки >= 3:1 (WCAG 1.4.11) —
+ *     только для токенов border и accent-bright (декоративные линии таблиц,
+ *     рамки баннеров и hover-подсветки в гейт не входят: элемент опознаётся
+ *     заливкой и текстом >= 4.5:1).
  *
  * Скрипт извлекает классы `text-*` / `bg-*` из всех файлов src (.tsx/.css),
- * приводит каждый утилитный класс к HEX из используемой палитры (zinc/sky/
- * red/amber/emerald + токены @theme), вычисляет контраст по формуле WCAG
- * (relative luminance) и падает с ненулевым кодом, если пара не проходит.
+ * приводит каждый утилитный класс к HEX из палитры кадой темы (zinc/sky/red/
+ * amber/emerald + токены @theme и переопределения :root[data-theme="light"])
+ * и вычисляет контраст по формуле WCAG (relative luminance).
  *
  * Ограничения (осознанные):
  * - полупрозрачные фоны (bg-zinc-900/40 и т.п.) считаются наложением на
- *   страницу #09090b — наихудший (самый тёмный) случай;
- * - `text-zinc-600` исключается: в коде это только состояния disabled
- *   элементов (WCAG 1.4.3 не применяется к неактивному тексту);
+ *   страницу текущей темы — наихудший случай;
+ * - `text-zinc-600` и `text-muted/50` исключаются: в коде это состояния
+ *   disabled (WCAG 1.4.3 не применяется к неактивному тексту);
  * - условные классы, собираемые конкатенацией через `${...}`, проверяются
- *   по статическим фрагментам строк.
+ *   по статическим фрагментам строк; пары, которые склейка прячет (кнопки,
+ *   календарь, заглушки), — в списке EXTRA_PAIRS ниже.
  *
  * Запуск: npm run check:contrast
  */
@@ -22,14 +28,44 @@ import { readFileSync } from "node:fs";
 import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const PAGE = "#09090b"; // --color-page (zinc-950)
+const CSS = readFileSync("src/index.css", "utf8");
 
-const PALETTE = {
-  zinc: {
-    50: "#fafafa", 100: "#f4f4f5", 200: "#e4e4e7", 300: "#d4d4d8",
-    400: "#a1a1aa", 500: "#71717a", 600: "#52525b", 700: "#3f3f46",
-    800: "#27272a", 900: "#18181b", 950: "#09090b",
-  },
+// --- Токены: базовый блок @theme и переопределения светлой темы ------------
+
+function extractColors(text) {
+  const map = new Map();
+  for (const m of text.matchAll(/--color-([a-z0-9-]+):\s*([^;]+);/g)) map.set(m[1], m[2].trim());
+  return map;
+}
+
+const baseRaw = new Map();
+for (const block of CSS.matchAll(/@theme\s*\{([\s\S]*?)\n\}/g)) {
+  for (const [name, value] of extractColors(block[1])) baseRaw.set(name, value);
+}
+
+const lightBlock = CSS.match(/:root\[data-theme="light"\]\s*\{([\s\S]*?)\n\}/);
+const lightRaw = new Map(baseRaw);
+if (lightBlock) {
+  for (const [name, value] of extractColors(lightBlock[1])) lightRaw.set(name, value);
+}
+
+function resolveAll(raw) {
+  const resolveVar = (name, depth = 0) => {
+    const v = raw.get(name);
+    if (v === undefined || depth > 5) return undefined;
+    const ref = /^var\(--color-([a-z0-9-]+)\)$/.exec(v);
+    return ref ? resolveVar(ref[1], depth + 1) : v;
+  };
+  const out = new Map();
+  for (const name of raw.keys()) out.set(name, resolveVar(name));
+  return out;
+}
+
+const BASE = resolveAll(baseRaw);
+const LIGHT = resolveAll(lightRaw);
+
+// Стандартные палитры Tailwind 4 (не зависят от темы).
+const STATIC = {
   sky: {
     50: "#f0f9ff", 100: "#e0f2fe", 200: "#bae6fd", 300: "#7dd3fc",
     400: "#38bdf8", 500: "#0ea5e9", 600: "#0284c7", 700: "#0369a1",
@@ -50,23 +86,32 @@ const PALETTE = {
     400: "#34d399", 500: "#10b981", 600: "#059669", 700: "#047857",
     800: "#065f46", 900: "#064e3b", 950: "#022c22",
   },
-  // Токены @theme (index.css); суффиксы читаются по порядку от бо́льших.
-  tokens: {
-    "text": "#f4f4f5",
-    "text-secondary": "#d4d4d8",
-    "text-muted": "#a1a1aa",
-    "page": "#09090b",
-    "surface": "#18181b",
-    "surface-raised": "#27272a",
-    "border": "#3f3f46",
-    "border-soft": "#27272a",
-    "accent": "#0369a1",
-    "accent-bright": "#38bdf8",
-    "error": "#f87171",
-    "warning": "#fbbf24",
-    "success": "#34d399",
-  },
 };
+
+function paletteFor(tokens) {
+  return {
+    zinc: Object.fromEntries(
+      [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map((n) => [n, tokens.get(`zinc-${n}`)]),
+    ),
+    ...STATIC,
+    // Семантические токены @theme без числового суффикса (page, surface,
+    // accent-bright, error-soft, …). Значения-функции (color-mix, rgb, var
+    // без zinc-базы) в гейт не входят — это декоративные линии и оверлеи.
+    tokens: Object.fromEntries(
+      [...tokens.entries()].filter(
+        ([k, v]) => !/^(zinc|sky|red|amber|emerald)-\d+$/.test(k) && /^#[0-9a-f]{6}$/i.test(v ?? ""),
+      ),
+    ),
+  };
+}
+
+const THEME_KEYS = ["dark", "light"];
+const THEMES = {
+  dark: { palette: paletteFor(BASE), page: BASE.get("page") },
+  light: { palette: paletteFor(LIGHT), page: LIGHT.get("page") },
+};
+
+// --- WCAG-математика --------------------------------------------------------
 
 function hexToRgb(hex) {
   const h = hex.replace("#", "");
@@ -88,30 +133,41 @@ function contrast(a, b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-/** Наложение полупрозрачного фона поверх PAGE (наихудший случай для текста). */
-function blend(fg, alpha) {
+/** Наложение полупрозрачного фона поверх страницы темы (наихудший случай). */
+function blend(fg, alpha, page) {
   const [fr, fg2, fb] = hexToRgb(fg);
-  const [pr, pg, pb] = hexToRgb(PAGE);
+  const [pr, pg, pb] = hexToRgb(page);
   const mix = (f, p) => Math.round((f * alpha + p * (1 - alpha)) * 255);
   const toHex = (n) => n.toString(16).padStart(2, "0");
   return `#${toHex(mix(fr, pr))}${toHex(mix(fg2, pg))}${toHex(mix(fb, pb))}`;
 }
 
-function resolve(name) {
-  // name: "zinc-400", "zinc-900/40", "text-muted", "page", "white", ...
+function resolve(name, themeKey) {
+  // name: "zinc-400", "zinc-900/40", "text-muted", "error-soft/70", "white", …
   if (name === "white") return { hex: "#ffffff", alpha: 1 };
   if (name === "black") return { hex: "#000000", alpha: 1 };
-  const tok = PALETTE.tokens[name];
-  if (tok) return { hex: tok, alpha: 1 };
-  const m = /^([a-z]+)-(\d{1,3})(?:\/(\d{1,3}))?$/.exec(name);
-  if (m && PALETTE[m[1]]) {
-    const hex = PALETTE[m[1]][Number(m[2])];
+  const pal = THEMES[themeKey].palette;
+  const slash = /^(.*)\/(\d{1,3})$/.exec(name);
+  const base = slash ? slash[1] : name;
+  const alpha = slash ? Number(slash[2]) / 100 : 1;
+  if (pal.tokens[base]) return { hex: pal.tokens[base], alpha };
+  const m = /^([a-z]+)-(\d{1,3})$/.exec(base);
+  if (m && pal[m[1]]) {
+    const hex = pal[m[1]][Number(m[2])];
     if (!hex) return null;
-    const alpha = m[3] ? Number(m[3]) / 100 : 1;
     return { hex, alpha };
   }
   return null;
 }
+
+/** Итоговая гекс-заливка пары (учёт alpha поверх страницы темы). */
+function bgHexFor(name, themeKey) {
+  const b = resolve(name, themeKey);
+  if (!b?.hex) return undefined;
+  return b.alpha < 1 ? blend(b.hex, b.alpha, THEMES[themeKey].page) : b.hex;
+}
+
+// --- Сбор пар из разметки ---------------------------------------------------
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {
@@ -122,15 +178,16 @@ function walk(dir, out = []) {
   return out;
 }
 
-const TEXT_RE = /\btext-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|white|black|text(?:-secondary|-muted)?)\b/g;
-const BG_RE = /\bbg-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|page|surface|surface-raised)\b/g;
 const CLASS_RE = /\b(?:className|class)\s*=\s*["'`]([^"'`]*)["'`]/g;
+
+const TOKEN_TEXT = "(zinc-\\d{2,3}(?:\\/\\d+)?|red-\\d{2,3}(?:\\/\\d+)?|amber-\\d{2,3}(?:\\/\\d+)?|emerald-\\d{2,3}(?:\\/\\d+)?|sky-\\d{2,3}(?:\\/\\d+)?|white|black|text-secondary|text-muted(?:\\/\\d+)?|text|accent-bright|accent-strong|accent-soft|accent|error|warning|success)(?![\\w-])";
+const TOKEN_BG = "(zinc-\\d{2,3}(?:\\/\\d+)?|red-\\d{2,3}(?:\\/\\d+)?|amber-\\d{2,3}(?:\\/\\d+)?|emerald-\\d{2,3}(?:\\/\\d+)?|sky-\\d{2,3}(?:\\/\\d+)?|page(?:\\/\\d+)?|surface(?:\\/\\d+)?|surface-raised|accent-strong|accent-soft|accent(?:\\/\\d+)?|error-soft(?:\\/\\d+)?|error|warning-soft(?:\\/\\d+)?|warning(?:\\/\\d+)?|success-soft(?:\\/\\d+)?|success|control(?:\\/\\d+)?|sunken(?:\\/\\d+)?)(?![\\w-])";
 
 const MIN_RATIO = 4.5;
 // Только состояния disabled (WCAG 1.4.3 не распространяется на disabled).
-const EXCLUDED_TEXT = new Set(["zinc-600"]);
+const EXCLUDED_TEXT = new Set(["zinc-600", "text-muted/50"]);
 
-const pairs = new Map(); // key `${text} | ${bg}` -> {text,bg,ratio,files}
+const pairs = new Map(); // key `${text} | ${bg}` -> {text, bg, files}
 
 for (const file of walk("src")) {
   const content = readFileSync(file, "utf8");
@@ -139,69 +196,133 @@ for (const file of walk("src")) {
     // Динамические вставки ${...} не разбираем; пропускаем такие строки.
     if (classStr.includes("${") || classStr.includes("}")) continue;
 
-    const textTokens = [...classStr.matchAll(/\btext-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|white|black|text(?:-secondary|-muted)?)\b/g)].map((x) => x[1]);
+    const textTokens = [...classStr.matchAll(new RegExp(`\\btext-${TOKEN_TEXT}`, "g"))].map((x) => x[1]);
     if (textTokens.length === 0) continue;
-    const bgTokens = [...classStr.matchAll(/\bbg-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|page|surface|surface-raised)\b/g)].map((x) => x[1]);
+    const bgTokens = [...classStr.matchAll(new RegExp(`\\bbg-${TOKEN_BG}`, "g"))].map((x) => x[1]);
     const text = textTokens[textTokens.length - 1];
     const bgName = bgTokens.length > 0 ? bgTokens[bgTokens.length - 1] : "page";
 
-    const t = resolve(text);
-    const b = resolve(bgName);
-    if (!t || !b || !t?.hex || !b?.hex) continue;
     const plain = text.replace(/^text-/, "");
     if (EXCLUDED_TEXT.has(plain)) continue;
 
-    const bgHex = b.alpha < 1 ? blend(b.hex, b.alpha) : b.hex;
-    const ratio = contrast(t.hex, bgHex);
     const key = `${text} on bg-${bgName}`;
-    if (!pairs.has(key)) pairs.set(key, { text, bg: bgName, ratio, files: [] });
+    if (!pairs.has(key)) pairs.set(key, { text, bg: bgName, files: [] });
     pairs.get(key).files.push(relative("src", file));
   }
 }
 
-// Пары из условных классов (склеиваются конкатенацией строк, напр. день
-// календаря в PeriodPicker) — держим их здесь как явные инварианты.
+// Пары из условных/шаблонных классов (склеиваются конкатенацией строк —
+// кнопки FormControls, режим ModeBadge, календарь PeriodPicker) — держим их
+// здесь как явные инварианты обеих тем. Значения вида /NN — alpha-заливка.
 const EXTRA_PAIRS = [
-  ["white", "sky-700"], // край диапазона календаря (было 2.77:1 на sky-500)
+  ["white", "accent"], // основная кнопка (Button primary)
+  ["white", "accent-strong"], // край диапазона календаря; hover основной кнопки
+  ["text", "accent-soft"], // календарь: текст внутри диапазона
+  ["text", "accent-soft/70"], // дни диапазона PeriodPicker (склейка dayClass)
+  ["accent-bright", "page"], // акцентный текст (вордмарк, легенда графика)
+  ["accent-bright", "surface"],
+  ["accent-bright", "surface-raised"],
+  ["success", "page"], // PnL > 0, дот статуса
+  ["success", "surface"],
+  ["error", "page"], // PnL < 0, ошибки
+  ["error", "surface"],
+  ["error", "error-soft"], // баннеры и бейдж «Реальные деньги»
+  ["error", "error-soft/70"],
+  ["warning", "surface"],
+  ["warning", "warning-soft"],
+  ["warning", "warning-soft/70"],
+  ["success", "success-soft"],
+  ["success", "success-soft/70"],
+  ["text-secondary", "surface"], // вторичный текст, подписи полей
+  ["text-secondary", "page"], // ghost-кнопка (кнопка на странице)
+  ["text-muted", "surface-raised"], // приглушённый текст на активной вкладке
+  ["text", "surface-raised"],
+  ["text", "control/70"], // поля ввода FormControls (bg-control/70)
+  ["text", "sunken"], // textarea/редактор JSON, поле периода
+  ["text-muted", "sunken"], // подпись «нет данных» в тёмных панелях
 ];
 
 for (const [text, bgName] of EXTRA_PAIRS) {
-  const t = resolve(text);
-  const b = resolve(bgName);
-  const ratio = contrast(t.hex, b.hex);
   const key = `${text} on bg-${bgName}`;
-  pairs.set(key, { text, bg: bgName, ratio, files: ["EXTRA_PAIRS"] });
+  if (!pairs.has(key)) pairs.set(key, { text, bg: bgName, files: [] });
+  pairs.get(key).files.push("EXTRA_PAIRS");
 }
 
-// B3 (раунд 2): ::placeholder глобально стилизован в index.css токеном
-// text-muted — проверяем его на каждом фоне, где встречаются поля ввода
-// (surface — inputClass, page — поля даты/времени PeriodPicker).
+// B3 (раунд 1) + раунд 2: ::placeholder глобально стилизован токеном
+// text-muted; поля ввода теперь на control/70 (FormControls) и sunken
+// (PeriodPicker) — проверяем пару на этих заливках в обеих темах.
 const PLACEHOLDER_BGS = [
-  ["text-muted", "surface"],
-  ["text-muted", "page"],
+  ["text-muted", "control/70"],
+  ["text-muted", "sunken"],
 ];
 
 for (const [text, bgName] of PLACEHOLDER_BGS) {
-  const t = resolve(text);
-  const b = resolve(bgName);
-  const ratio = contrast(t.hex, b.hex);
   const key = `placeholder ${text} on bg-${bgName}`;
-  pairs.set(key, { text, bg: bgName, ratio, files: ["index.css ::placeholder"] });
+  pairs.set(key, { text, bg: bgName, files: ["index.css ::placeholder"] });
 }
 
-// CSS (index.css): пара body text/background и focus ring не текст.
+// --- WCAG 1.4.11: границы и фокус-рамки (не текст) --------------------------
+
+// border — рамка интерактивных элементов (поля, кнопки, бургер, сегменты
+// переключателя); accent-bright — глобальная фокус-рамка (:focus-visible).
+const UI_BOUNDARY = [
+  ["border", "page"],
+  ["border", "surface"],
+  ["border", "surface-raised"],
+  ["border", "control"],
+  ["border", "sunken"],
+  ["accent-bright", "page"],
+  ["accent-bright", "surface"],
+  ["accent-bright", "surface-raised"],
+  ["accent-bright", "control/70"],
+  ["accent-bright", "sunken"],
+];
+const MIN_BOUNDARY_RATIO = 3.0;
+
+// --- Вывод ------------------------------------------------------------------
+
 let failed = 0;
-const rows = [...pairs.values()]
-  .map((p) => ({ ...p, ratio: Math.round(p.ratio * 100) / 100 }))
-  .sort((a, b) => a.ratio - b.ratio);
+for (const themeKey of THEME_KEYS) {
+  const label = themeKey === "dark" ? "ТЁМНАЯ" : "СВЕТЛАЯ";
+  console.log(`\n=== Тема: ${label} ===`);
 
-for (const p of rows) {
-  const ok = p.ratio >= MIN_RATIO;
-  if (!ok) failed++;
-  console.log(
-    `${ok ? "OK  " : "FAIL"} ${String(p.ratio).padStart(5)}:1  text-${p.text.padStart(16)} on bg-${p.bg}  (${p.files[0]})`,
-  );
+  const rows = [...pairs.values()]
+    .map((p) => {
+      const t = resolve(p.text, themeKey);
+      const bgHex = bgHexFor(p.bg, themeKey);
+      if (!t?.hex || !bgHex) return null;
+      return {
+        ...p,
+        ratio: Math.round(contrast(t.hex, bgHex) * 100) / 100,
+        group: "text",
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.ratio - b.ratio);
+
+  for (const p of rows) {
+    const ok = p.ratio >= MIN_RATIO;
+    if (!ok) failed++;
+    console.log(
+      `${ok ? "OK  " : "FAIL"} ${String(p.ratio).padStart(5)}:1  text-${p.text.padStart(16)} on bg-${p.bg}  (${p.files[0]})`,
+    );
+  }
+  console.log(`\n${rows.length} text/bg пар, ${rows.filter((r) => r.ratio < MIN_RATIO).length} ниже ${MIN_RATIO}:1`);
+
+  console.log(`\n--- 1.4.11 (границы/фокус, >= ${MIN_BOUNDARY_RATIO}:1) ---`);
+  for (const [boundary, surface] of UI_BOUNDARY) {
+    const b = bgHexFor(boundary, themeKey);
+    const s = bgHexFor(surface, themeKey);
+    if (!b || !s) {
+      console.log(`SKIP ${boundary} vs ${surface} — не токен гейта`);
+      continue;
+    }
+    const ratio = Math.round(contrast(b, s) * 100) / 100;
+    const ok = ratio >= MIN_BOUNDARY_RATIO;
+    if (!ok) failed++;
+    console.log(`${ok ? "OK  " : "FAIL"} ${String(ratio).padStart(5)}:1  ${boundary} vs ${surface}`);
+  }
 }
 
-console.log(`\n${rows.length} text/bg пар, ${failed} ниже ${MIN_RATIO}:1`);
+console.log(`\n========== ИТОГ: ${failed} нарушений ==========`);
 process.exit(failed > 0 ? 1 : 0);

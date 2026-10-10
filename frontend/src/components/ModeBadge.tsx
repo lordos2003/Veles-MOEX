@@ -13,22 +13,26 @@ export function ModeBadge() {
     <div className="flex flex-col items-end gap-1">
       <span
         className={
-          "rounded px-2 py-0.5 text-xs font-medium " +
+          "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset " +
           (realMoney
-            ? "bg-red-900/60 text-red-200"
+            ? "bg-error-soft/70 text-error ring-error-border/60"
             : live
-              ? "bg-amber-900/50 text-amber-200"
-              : "bg-emerald-900/50 text-emerald-200")
+              ? "bg-warning-soft/70 text-warning ring-warning-border/60"
+              : "bg-success-soft/70 text-success ring-success-border/60")
         }
       >
+        <span
+          aria-hidden="true"
+          className={"h-1.5 w-1.5 rounded-full " + (realMoney ? "bg-error" : live ? "bg-warning" : "bg-success")}
+        />
         {live ? "Боевой счёт" : "Песочница"}
       </span>
       {realMoney ? (
-        <span className="rounded bg-red-950 px-2 py-0.5 text-xs font-semibold text-red-300 ring-1 ring-red-700">
+        <span className="rounded-full bg-error-soft px-2.5 py-0.5 text-xs font-semibold text-error ring-1 ring-error-border">
           Реальные деньги
         </span>
       ) : null}
-      {error ? <span className="text-xs text-red-400" title={error}>режим недоступен: {error}</span> : null}
+      {error ? <span className="text-xs text-error" title={error}>режим недоступен: {error}</span> : null}
     </div>
   );
 }

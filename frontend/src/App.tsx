@@ -1,62 +1,61 @@
-import { NavLink, Route, Routes } from "react-router-dom";
+import { Suspense, lazy } from "react";
+import { Link, Route, Routes } from "react-router-dom";
+import { MainNav } from "./components/MainNav";
 import { ModeBadge } from "./components/ModeBadge";
-import { OverviewPage } from "./pages/OverviewPage";
-import { StrategyFormPage } from "./pages/StrategyFormPage";
-import { StrategiesListPage, StrategyDetailPage } from "./pages/StrategiesPage";
-import { BotsPage, BotDetailPage } from "./pages/BotsPage";
-import { BacktestPage } from "./pages/BacktestPage";
-import { SandboxPage } from "./pages/SandboxPage";
+import { ThemeSwitcher } from "./components/ThemeSwitcher";
+import { PageTransition } from "./components/PageTransition";
+import { PageSkeleton } from "./components/ui/Skeleton";
+import { Wordmark } from "./components/Wordmark";
 
-const NAV = [
-  { to: "/", label: "Обзор", end: true },
-  { to: "/strategies", label: "Стратегии", end: false },
-  { to: "/bots", label: "Боты", end: false },
-  { to: "/backtest", label: "Бэктест", end: false },
-  { to: "/sandbox", label: "Песочница и счета", end: false },
-];
+// R5: страницы грузятся лениво — первый экран не тянет форму стратегий и бэктест.
+const OverviewPage = lazy(() => import("./pages/OverviewPage").then((m) => ({ default: m.OverviewPage })));
+const StrategyFormPage = lazy(() => import("./pages/StrategyFormPage").then((m) => ({ default: m.StrategyFormPage })));
+const StrategiesListPage = lazy(() => import("./pages/StrategiesPage").then((m) => ({ default: m.StrategiesListPage })));
+const StrategyDetailPage = lazy(() => import("./pages/StrategiesPage").then((m) => ({ default: m.StrategyDetailPage })));
+const BotsPage = lazy(() => import("./pages/BotsPage").then((m) => ({ default: m.BotsPage })));
+const BotDetailPage = lazy(() => import("./pages/BotsPage").then((m) => ({ default: m.BotDetailPage })));
+const BacktestPage = lazy(() => import("./pages/BacktestPage").then((m) => ({ default: m.BacktestPage })));
+const SandboxPage = lazy(() => import("./pages/SandboxPage").then((m) => ({ default: m.SandboxPage })));
 
 function App() {
   return (
-    <main className="min-h-screen bg-page text-text">
-      <div className="mx-auto max-w-6xl px-6 py-6">
-        <header className="flex items-center justify-between gap-4 border-b border-zinc-800 pb-4">
-          <h1 className="text-2xl font-semibold tracking-tight">Veles-MOEX</h1>
-          <ModeBadge />
-        </header>
-
-        <nav className="mt-4 flex flex-wrap gap-1 border-b border-zinc-800 pb-3">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                "rounded px-3 py-1.5 text-sm " +
-                (isActive
-                  ? "bg-zinc-800 font-medium text-zinc-100"
-                  : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200")
-              }
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-
-        <div className="mt-6">
-          <Routes>
-            <Route path="/" element={<OverviewPage />} />
-            <Route path="/strategies" element={<StrategiesListPage />} />
-            <Route path="/strategies/new" element={<StrategyFormPage />} />
-            <Route path="/strategies/:id" element={<StrategyDetailPage />} />
-            <Route path="/strategies/:id/edit" element={<StrategyFormPage edit />} />
-            <Route path="/bots" element={<BotsPage />} />
-            <Route path="/bots/:id" element={<BotDetailPage />} />
-            <Route path="/backtest" element={<BacktestPage />} />
-            <Route path="/sandbox" element={<SandboxPage />} />
-          </Routes>
+    <div className="min-h-screen bg-page text-text">
+      <a href="#main" className="skip-link">
+        К содержимому
+      </a>
+      <header className="sticky top-0 z-40 border-b border-border-soft/80 bg-page/80 backdrop-blur-md">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <h1 className="m-0">
+            <Link to="/" aria-label="Veles-MOEX — на главную" className="inline-flex rounded-control">
+              <Wordmark />
+            </Link>
+          </h1>
+          <div className="flex items-center gap-3">
+            <MainNav />
+            <ThemeSwitcher className="hidden lg:inline-flex" />
+            <ModeBadge />
+          </div>
         </div>
-      </div>
-    </main>
+      </header>
+
+      <main id="main" tabIndex={-1} className="mx-auto max-w-7xl px-4 py-6 outline-none sm:px-6 sm:py-8">
+        <PageTransition>
+          <Suspense fallback={<PageSkeleton />}>
+            <Routes>
+              <Route path="/" element={<OverviewPage />} />
+              <Route path="/strategies" element={<StrategiesListPage />} />
+              <Route path="/strategies/new" element={<StrategyFormPage />} />
+              <Route path="/strategies/:id" element={<StrategyDetailPage />} />
+              <Route path="/strategies/:id/edit" element={<StrategyFormPage edit />} />
+              <Route path="/bots" element={<BotsPage />} />
+              <Route path="/bots/:id" element={<BotDetailPage />} />
+              <Route path="/backtest" element={<BacktestPage />} />
+              <Route path="/sandbox" element={<SandboxPage />} />
+            </Routes>
+          </Suspense>
+        </PageTransition>
+      </main>
+    </div>
   );
 }
 

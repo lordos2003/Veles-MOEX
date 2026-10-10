@@ -201,8 +201,9 @@ describe("MVP-7.4: «Обзор» (U1/U2/U3/U4)", () => {
     fireEvent.click(button);
 
     await screen.findByText("Синхронизировано инструментов: 3");
-    expect(screen.queryByText(/Синхронизировано инструментов: 3/)?.closest("div")?.className).toContain(
-      "emerald",
+    expect(screen.queryByText(/Синхронизировано инструментов: 3/)?.closest("div")?.className).toContain("success");
+    expect(screen.queryByText(/Синхронизировано инструментов: 3/)?.closest("div")?.className).not.toContain(
+      "error",
     );
   });
 });

@@ -10,9 +10,10 @@ import type {
   StrategyResponse,
   StrategyVersionOption,
 } from "../types";
-import { Button, ErrorBanner, Field, Loading, SelectInput, TextInput } from "../components/FormControls";
+import { Button, ErrorBanner, Field, Loading, SelectInput, TextInput, TableWrap } from "../components/FormControls";
 import { InstrumentPicker } from "../components/InstrumentPicker";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { PageHeader } from "../components/PageHeader";
 import {
   AccountErrorNote,
   BotSettingsPanel,
@@ -29,13 +30,13 @@ function StatusBadge(props: { status: string }) {
   const label = BOT_STATUS_LABELS[props.status] ?? props.status;
   const cls =
     props.status === "RUNNING"
-      ? "bg-emerald-900/50 text-emerald-200"
+      ? "bg-success-soft/70 text-success"
       : props.status === "ERROR" || props.status === "EMERGENCY_STOP"
-        ? "bg-red-900/60 text-red-200"
+        ? "bg-error-soft/70 text-error"
         : props.status === "STARTING" || props.status === "STOP_REQUESTED"
-          ? "bg-amber-900/50 text-amber-200"
-          : "bg-zinc-800 text-zinc-300";
-  return <span className={`rounded px-2 py-0.5 text-xs font-medium ${cls}`}>{label}</span>;
+          ? "bg-warning-soft/70 text-warning"
+          : "bg-surface-raised text-text-secondary";
+  return <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${cls}`}>{label}</span>;
 }
 
 /** U2: lifecycle actions with a START confirmation in live mode. */
@@ -131,28 +132,31 @@ export function BotsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold">Боты</h2>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-text-muted">
-            Автообновление:{" "}
-            <select
-              className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs min-h-8"
-              value={String(pollMs)}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                setPollMs(v);
-              }}
-            >
-              <option value="0">выкл</option>
-              <option value="5000">5 секунд</option>
-              <option value="10000">10 секунд</option>
-              <option value="30000">30 секунд</option>
-            </select>
-          </label>
-          <Button onClick={() => setShowCreate((v) => !v)}>{showCreate ? "Отмена" : "+ Создать бота"}</Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Боты"
+        description="Запуск, остановка и состояние торговых ботов; список обновляется автоматически."
+        actions={
+          <>
+            <label className="text-xs text-text-muted">
+              Автообновление:{" "}
+              <select
+                className="min-h-9 rounded-control border border-border bg-control px-2 py-1 text-xs text-text"
+                value={String(pollMs)}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setPollMs(v);
+                }}
+              >
+                <option value="0">выкл</option>
+                <option value="5000">5 секунд</option>
+                <option value="10000">10 секунд</option>
+                <option value="30000">30 секунд</option>
+              </select>
+            </label>
+            <Button onClick={() => setShowCreate((v) => !v)}>{showCreate ? "Отмена" : "+ Создать бота"}</Button>
+          </>
+        }
+      />
       <ErrorBanner text={error} />
       {showCreate ? <CreateBotPanel onCreated={() => { setShowCreate(false); void load(); }} /> : null}
       {!bots ? (
@@ -162,19 +166,19 @@ export function BotsPage() {
       ) : (
         <div className="space-y-2">
           {bots.map((bot) => (
-            <div key={bot.id} className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
+            <div key={bot.id} className="rounded-card border border-border-soft bg-surface/60 p-4 shadow-card">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <Link to={`/bots/${bot.id}`} className="font-medium text-zinc-100 hover:underline">
+                  <Link to={`/bots/${bot.id}`} className="inline-flex min-h-8 items-center text-base font-medium text-text hover:underline">
                     {bot.name}
                   </Link>
-                  <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-text-muted">
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
                     <StatusBadge status={bot.status} />
                     <span>Счёт: {accountLabel(meta, bot.account_id) ?? "—"}<AccountErrorNote meta={meta} /></span>
                     <span>Инструмент: {instrumentLabel(meta, bot.instrument_id) ?? "—"}</span>
                     <span>Стратегия: {versionLabel(meta, bot.strategy_version_id) ?? "—"}</span>
                     <span>Депозит: {bot.deposit ?? "—"}</span>
-                    {bot.last_error ? <span className="max-w-md truncate text-red-400" title={bot.last_error}>ошибка: {bot.last_error}</span> : null}
+                    {bot.last_error ? <span className="max-w-md truncate text-error" title={bot.last_error}>ошибка: {bot.last_error}</span> : null}
                     {bot.last_skip_reason ? <span title={bot.last_skip_reason}>пропуск: {bot.last_skip_reason}</span> : null}
                   </div>
                 </div>
@@ -311,8 +315,8 @@ function CreateBotPanel(props: { onCreated: () => void }) {
   };
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
-      <h3 className="mb-3 font-medium text-zinc-200">Новый бот</h3>
+    <div className="rounded-card border border-border-soft bg-surface/60 p-4 shadow-card sm:p-5">
+      <h3 className="mb-3 font-medium text-text">Новый бот</h3>
       <ErrorBanner text={error} />
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Field label="Название" required>
@@ -330,7 +334,7 @@ function CreateBotPanel(props: { onCreated: () => void }) {
               emptyLabel="— выберите —"
               options={(strategies ?? []).map((s) => ({ value: String(s.id), label: s.name }))}
             />
-            {strategiesError ? <p className="text-xs text-red-400">{strategiesError}</p> : null}
+            {strategiesError ? <p className="text-xs text-error">{strategiesError}</p> : null}
           </Field>
           <Field label="Версия" required>
             <SelectInput
@@ -350,11 +354,11 @@ function CreateBotPanel(props: { onCreated: () => void }) {
             emptyLabel="— выберите —"
             options={(accounts ?? []).map((a) => ({ value: String(a.id), label: `#${a.id} · ${a.name ?? a.account_id}` }))}
           />
-          {accountsError ? <p className="text-xs text-red-400">{accountsError}</p> : null}
+          {accountsError ? <p className="text-xs text-error">{accountsError}</p> : null}
         </Field>
         <Field label="Ценная бумага" required>
           {instrumentsError ? (
-            <p className="text-sm text-red-400">{instrumentsError}</p>
+            <p className="text-sm text-error">{instrumentsError}</p>
           ) : !instruments || instruments.length === 0 ? (
             <p className="text-sm text-text-muted">Инструменты не загружены.</p>
           ) : (
@@ -427,10 +431,10 @@ export function BotDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold">{bot.name}</h2>
-          <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-text-muted">
+      <PageHeader
+        title={bot.name}
+        description={
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
             <StatusBadge status={bot.status} />
             <span>Стратегия: {versionLabel(meta, bot.strategy_version_id) ?? "—"}</span>
             <span>Счёт: {accountLabel(meta, bot.account_id) ?? "—"}<AccountErrorNote meta={meta} /></span>
@@ -438,24 +442,26 @@ export function BotDetailPage() {
             <span>Депозит: {bot.deposit ?? "—"}</span>
             {bot.started_at ? <span>Запущен: {new Date(bot.started_at).toLocaleString("ru-RU")}</span> : null}
             {bot.stopped_at ? <span>Остановлен: {new Date(bot.stopped_at).toLocaleString("ru-RU")}</span> : null}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={() => navigate("/bots")}>К списку</Button>
-          <BotActions bot={bot} onChanged={load} onError={setError} />
-        </div>
-      </div>
+          </span>
+        }
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => navigate("/bots")}>К списку</Button>
+            <BotActions bot={bot} onChanged={load} onError={setError} />
+          </>
+        }
+      />
       <ErrorBanner text={error} />
       {bot.last_error ? (
-        <div className="rounded border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-300">
+        <div className="rounded-control border border-error-border bg-error-soft/70 px-3 py-2 text-sm text-error">
           {bot.last_error}
         </div>
       ) : null}
       {bot.last_skip_reason ? (
-        <p className="text-xs text-amber-300">Последний пропуск цикла: {bot.last_skip_reason}</p>
+        <p className="text-xs text-warning">Последний пропуск цикла: {bot.last_skip_reason}</p>
       ) : null}
       {bot.deal_error ? (
-        <p className="text-xs text-red-400">Ошибка сделки: {bot.deal_error}</p>
+        <p className="text-xs text-error">Ошибка сделки: {bot.deal_error}</p>
       ) : null}
 
       <BotSettingsPanel
@@ -468,12 +474,12 @@ export function BotDetailPage() {
       />
 
       <section>
-        <h3 className="mb-2 font-medium text-zinc-200">Текущая сделка</h3>
+        <h3 className="mb-2 text-base font-medium text-text">Текущая сделка</h3>
         {openDeal ? <DealCard deal={openDeal} /> : <p className="text-sm text-text-muted">Открытых сделок нет.</p>}
       </section>
 
       <section>
-        <h3 className="mb-2 font-medium text-zinc-200">История сделок</h3>
+        <h3 className="mb-2 text-base font-medium text-text">История сделок</h3>
         {deals.length === 0 ? (
           <p className="text-sm text-text-muted">Закрытых сделок нет.</p>
         ) : (
@@ -489,20 +495,20 @@ export function BotDetailPage() {
 function DealCard(props: { deal: DealResponse }) {
   const d = props.deal;
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 text-sm">
+    <div className="rounded-card border border-border-soft bg-surface/60 shadow-card p-3 text-sm">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-text-muted">
         <span>Сделка #{d.id}</span>
         <span>FIGI: {d.instrument_figi}</span>
         <span>Направление: {d.direction === "LONG" ? "Лонг" : "Шорт"}</span>
-        <span className={d.status === "CLOSED" ? "text-zinc-400" : "text-amber-300"}>
+        <span className={d.status === "CLOSED" ? "text-text-muted" : "text-warning"}>
           {DEAL_STATUS_LABELS[d.status] ?? d.status}
         </span>
         {d.close_reason ? (
-          <span className="text-emerald-300">Причина закрытия: {CLOSE_REASON_LABELS[d.close_reason] ?? d.close_reason}</span>
+          <span className="text-success">Причина закрытия: {CLOSE_REASON_LABELS[d.close_reason] ?? d.close_reason}</span>
         ) : null}
         {d.stop_bot_after === true ? <span>бот остановлен после срабатывания</span> : null}
       </div>
-      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Info label="Опорная цена" value={d.reference_price} />
         <Info label="Средняя цена" value={d.average_price} />
         <Info label="Позиция" value={d.position_quantity} />
@@ -513,37 +519,39 @@ function DealCard(props: { deal: DealResponse }) {
         <Info label="SL активен" value={d.sl_active === null ? "—" : d.sl_active ? "да" : "нет"} />
       </div>
       {d.levels.length > 0 ? (
-        <div className="mt-2 overflow-x-auto">
-          <table className="w-full text-left text-xs">
+        <div className="mt-3">
+          <TableWrap label="Таблица уровней сетки">
+          <table className="data-table num">
             <thead>
-              <tr className="border-b border-zinc-800 text-text-muted">
-                <th className="py-1 pr-3">№</th>
-                <th className="pr-3">Сторона</th>
-                <th className="pr-3">Цена</th>
-                <th className="pr-3">Номинал</th>
-                <th className="pr-3">Кол-во</th>
-                <th className="pr-3">Смещение %</th>
-                <th className="pr-3">Статус</th>
-                <th className="pr-3">Исполнено</th>
+              <tr>
+                <th>№</th>
+                <th>Сторона</th>
+                <th>Цена</th>
+                <th>Номинал</th>
+                <th>Кол-во</th>
+                <th>Смещение %</th>
+                <th>Статус</th>
+                <th>Исполнено</th>
                 <th>Заявка</th>
               </tr>
             </thead>
             <tbody>
               {d.levels.map((lv) => (
-                <tr key={lv.index} className="border-b border-zinc-900">
-                  <td className="py-1 pr-3">{lv.index}</td>
-                  <td className="pr-3">{lv.side === "BUY" ? "Покупка" : "Продажа"}</td>
-                  <td className="pr-3">{lv.price ?? "—"}</td>
-                  <td className="pr-3">{lv.nominal}</td>
-                  <td className="pr-3">{lv.quantity}</td>
-                  <td className="pr-3">{lv.offset_percent}</td>
-                  <td className="pr-3">{LEVEL_STATUS_LABELS[lv.status] ?? lv.status}</td>
-                  <td className="pr-3">{lv.filled_quantity}</td>
-                  <td className="pr-3">{lv.broker_order_id ?? lv.order_id ?? "—"}</td>
+                <tr key={lv.index}>
+                  <td>{lv.index}</td>
+                  <td>{lv.side === "BUY" ? "Покупка" : "Продажа"}</td>
+                  <td>{lv.price ?? "—"}</td>
+                  <td>{lv.nominal}</td>
+                  <td>{lv.quantity}</td>
+                  <td>{lv.offset_percent}</td>
+                  <td>{LEVEL_STATUS_LABELS[lv.status] ?? lv.status}</td>
+                  <td>{lv.filled_quantity}</td>
+                  <td>{lv.broker_order_id ?? lv.order_id ?? "—"}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </TableWrap>
         </div>
       ) : null}
     </div>
@@ -554,7 +562,7 @@ function Info(props: { label: string; value: unknown }) {
   return (
     <div>
       <p className="text-xs text-text-muted">{props.label}</p>
-      <p className="font-mono text-xs text-zinc-200">{String(props.value ?? "—")}</p>
+      <p className="num text-xs text-text">{String(props.value ?? "—")}</p>
     </div>
   );
 }

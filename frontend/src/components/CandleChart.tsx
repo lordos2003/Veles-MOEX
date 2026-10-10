@@ -44,10 +44,9 @@ export default function CandleChart({ candles, markers = [] }: CandleChartProps)
       const low = Number(c.low);
       const x = xAt(i);
       const up = close >= open;
-      const color = up ? "#22c55e" : "#ef4444";
       const bodyTop = yAt(Math.max(open, close));
       const bodyBottom = yAt(Math.min(open, close));
-      return { x, up, color, bodyTop, bodyBottom, wickTop: yAt(high), wickBottom: yAt(low), candleW };
+      return { x, up, bodyTop, bodyBottom, wickTop: yAt(high), wickBottom: yAt(low), candleW };
     });
     const scaledMarkers = markers
       .map((m) => {
@@ -64,30 +63,40 @@ export default function CandleChart({ candles, markers = [] }: CandleChartProps)
   }
 
   return (
-    <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="bg-zinc-900">
+    <svg
+      width="100%"
+      viewBox={`0 0 ${W} ${H}`}
+      className="block rounded-control border border-border-soft bg-chart-bg"
+      role="img"
+      aria-label="График свечей"
+    >
+      {/* R7: горизонтальная сетка для ориентира по цене (токен, светлая тема — своя). */}
+      {[0.25, 0.5, 0.75].map((f) => (
+        <line key={f} x1="0" x2={W} y1={H * f} y2={H * f} className="stroke-chart-grid" strokeWidth="1" strokeDasharray="3 5" />
+      ))}
       {bars.map((bar, i) => (
-        <g key={i}>
-          <line
-            x1={bar.x}
-            x2={bar.x}
-            y1={bar.wickTop}
-            y2={bar.wickBottom}
-            stroke={bar.color}
-            strokeWidth="1"
-          />
+        <g key={i} className={bar.up ? "fill-success stroke-success" : "fill-error stroke-error"}>
+          <line x1={bar.x} x2={bar.x} y1={bar.wickTop} y2={bar.wickBottom} strokeWidth="1" />
           <rect
             x={bar.x - bar.candleW / 2}
             y={bar.bodyTop}
             width={bar.candleW}
             height={Math.max(bar.bodyBottom - bar.bodyTop, 1)}
-            fill={bar.color}
-            opacity="0.9"
+            stroke="none"
+            opacity="0.92"
           />
         </g>
       ))}
       {scaledMarkers.map((m, i) => (
         <g key={`m-${i}`}>
-          <circle cx={m.x} cy={m.y} r="4" fill={m.kind === "entry" ? "#facc15" : "#38bdf8"} stroke="#000" strokeWidth="1" />
+          <circle
+            cx={m.x}
+            cy={m.y}
+            r="4"
+            className={m.kind === "entry" ? "fill-warning" : "fill-accent-bright"}
+            stroke="var(--color-chart-stroke)"
+            strokeWidth="1"
+          />
           <title>{m.kind === "entry" ? "Вход" : "Выход"}</title>
         </g>
       ))}

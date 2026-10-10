@@ -1,70 +1,421 @@
 @import "tailwindcss";
 
-/* A0 (MVP-8.2): design tokens. Values are the exact zinc/sky/red/amber/emerald
-   hexes the v3 config used, so the migration keeps the same palette and only
-   names it. `--color-accent` is sky-700: white text on sky-600/sky-500 fails
-   WCAG AA (4.10:1 / 2.77:1), sky-700 gives 5.93:1. */
-@theme {
-  --color-page: #09090b; /* zinc-950 */
-  --color-surface: #18181b; /* zinc-900 */
-  --color-surface-raised: #27272a; /* zinc-800 */
-  --color-border: #3f3f46; /* zinc-700 */
-  --color-border-soft: #27272a; /* zinc-800 */
-  --color-text: #f4f4f5; /* zinc-100 */
-  --color-text-secondary: #d4d4d8; /* zinc-300 */
-  --color-text-muted: #a1a1aa; /* zinc-400 (was zinc-500: 3.67:1 on surfaces) */
-  --color-accent: #0369a1; /* sky-700 */
-  --color-accent-bright: #38bdf8; /* sky-400 — focus ring */
-  --color-error: #f87171; /* red-400 */
-  --color-warning: #fbbf24; /* amber-400 */
-  --color-success: #34d399; /* emerald-400 */
+/* ==========================================================================
+   MVP-8.3 — дизайн-система «Ночной терминал».
+   Направление: глубокие холодные «чернильные» нейтрали, тонкие границы,
+   один акцент (индиго) и три семантических цвета состояния; цифры — моно
+   (JetBrains Mono, tabular-nums), текст — Onest. Только тёмная тема.
+   Токены MVP-8.2 (page/surface/text/…) сохранены под теми же именами.
+   ========================================================================== */
+
+/* R2: шрифты self-hosted (CSP default-src 'self'), только кириллица и латиница.
+   Файлы woff2 из @fontsource-variable (SIL OFL 1.1) попадают в сборку Vite. */
+@font-face {
+  font-family: "Onest Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../node_modules/@fontsource-variable/onest/files/onest-cyrillic-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Onest Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../node_modules/@fontsource-variable/onest/files/onest-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-cyrillic-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* Запасной шрифт с подгонкой размера: смена шрифта не сдвигает вёрстку.
+   Коэффициент приближённый (Onest немного шире Arial). */
+@font-face {
+  font-family: "Onest Fallback";
+  src: local("Arial"), local("Helvetica Neue"), local("Liberation Sans");
+  size-adjust: 104%;
+  ascent-override: 96%;
+  descent-override: 26%;
+  line-gap-override: 0%;
 }
 
-/* Tailwind 3 -> 4 upgrade (official guide): v4 defaults the border color to
-   currentColor (v3 used gray-200) and buttons to cursor:default (v3: pointer).
-   Every border usage in the app sets a color explicitly; the rules below keep
-   the preflight behaviour of v3 for any spot that does not. */
+@theme {
+  /* R1: нейтральная шкала — холодные «чернильные» оттенки. Переопределяет
+     палитру zinc Tailwind, поэтому существующие классы zinc-* получают новый
+     вид без массовой правки разметки. */
+  --color-zinc-50: #f7f8fc;
+  --color-zinc-100: #eef0f7;
+  --color-zinc-200: #dcdfeb;
+  --color-zinc-300: #c3c8da;
+  --color-zinc-400: #9ca3bd;
+  --color-zinc-500: #6c7491;
+  --color-zinc-600: #4b5370;
+  --color-zinc-700: #353c55;
+  --color-zinc-800: #242a3d;
+  --color-zinc-900: #171b2a;
+  --color-zinc-950: #0c0e16;
+
+  /* Семантические токены (имена MVP-8.2 сохранены).
+     border = zinc-500, а не zinc-700: границы интерактивных элементов должны
+     давать >=3:1 (WCAG 1.4.11) на поверхностях темы — проверяет check:contrast. */
+  --color-page: var(--color-zinc-950);
+  --color-surface: var(--color-zinc-900);
+  --color-surface-raised: var(--color-zinc-800);
+  --color-border: var(--color-zinc-500);
+  --color-border-soft: var(--color-zinc-800);
+  --color-text: var(--color-zinc-100);
+  --color-text-secondary: var(--color-zinc-300);
+  --color-text-muted: var(--color-zinc-400);
+
+  /* Акцент (индиго). accent — заливка кнопок (белый текст 6.3:1+),
+     accent-bright — фокус и акцентный текст на тёмном. */
+  --color-accent: #4f46e5;
+  --color-accent-strong: #4338ca;
+  --color-accent-bright: #a5b4fc;
+  --color-accent-soft: #312e81;
+
+  /* Состояния: пары «текст / мягкий фон / граница» для обеих тем (MVP-8.3, раунд 2).
+     Классы вида bg-error-soft / text-error / border-error-border заменяют жёсткие
+     red-, amber- и emerald-сочетания, чтобы светлая тема получила свою пару. */
+  --color-error: #f87171;
+  --color-error-soft: #4c1717;
+  --color-error-border: #b91c1c;
+  --color-warning: #fbbf24;
+  --color-warning-soft: #45310f;
+  --color-warning-border: #b45309;
+  --color-success: #34d399;
+  --color-success-soft: #113b2c;
+  --color-success-border: #059669;
+
+  /* Раунд 2: заливки контролов и «утопленных» блоков (код, внутренние панели).
+     control — поля ввода/селекты, sunken — блоки кода; в тёмной теме они равны
+     zinc-900/zinc-950, чтобы вид не изменился, в светлой становятся светлыми. */
+  --color-control: var(--color-zinc-900);
+  --color-sunken: var(--color-zinc-950);
+  --color-overlay: rgb(4 6 16 / 0.68);
+  --color-border-strong: var(--color-zinc-400);
+
+  /* Декоративные линии и hover строк таблиц (alpha-значения старой темы). */
+  --color-row-border: color-mix(in srgb, var(--color-border-soft) 60%, transparent);
+  --color-row-hover: color-mix(in srgb, var(--color-surface-raised) 40%, transparent);
+
+  /* График свечей (T7): контейнер = page, сетка и обводка маркеров — отдельные
+     токены, чтобы светлая тема получила светлый график и «пробойную» обводку. */
+  --color-chart-bg: var(--color-page);
+  --color-chart-grid: var(--color-border-soft);
+  --color-chart-stroke: var(--color-page);
+
+  /* Свечения и «прожектор» (T5): значения предыдущей тёмной темы. */
+  --glow-accent: rgb(79 70 229 / 0.16);
+  --glow-sky: rgb(56 189 248 / 0.05);
+  --spotlight-fill: rgb(129 140 248 / 0.16);
+  --spotlight-ring: rgb(165 180 252 / 0.55);
+
+  /* Бренд (Wordmark, T5): инвариантен между темами, но вынесен в токены. */
+  --color-logo-1: #6366f1;
+  --color-logo-2: #3730a3;
+  --color-logo-stroke: #ffffff;
+  --color-logo-spark: #a5b4fc;
+
+  /* Типографика. */
+  --font-sans: "Onest Variable", "Onest Fallback", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* Радиусы, тени, свечение. */
+  --radius-control: 0.5rem;
+  --radius-card: 0.875rem;
+  --shadow-card: inset 0 1px 0 0 rgb(255 255 255 / 0.04), 0 10px 30px -18px rgb(0 0 0 / 0.8);
+  --shadow-pop: 0 18px 50px -12px rgb(0 0 0 / 0.75), 0 0 0 1px rgb(255 255 255 / 0.06);
+  --shadow-glow: 0 0 0 1px rgb(165 180 252 / 0.35), 0 8px 28px -10px rgb(79 70 229 / 0.55);
+  --shadow-button: 0 6px 18px -8px rgb(79 70 229 / 0.9);
+
+  /* Motion-токены (R1/R10): длительности и easing для CSS и motion. */
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 400ms;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Tailwind 3 -> 4 upgrade (MVP-8.2): v4 по умолчанию рисует границы цветом
+   currentColor и курсор кнопок — default; правила ниже сохраняют поведение v3.
+   Раунд 2: цвет по умолчанию — токен border-soft (в светлой теме не тёмный). */
 @layer base {
   *,
   ::after,
   ::before,
   ::backdrop,
   ::file-selector-button {
-    border-color: var(--color-gray-200, currentColor);
+    border-color: var(--color-border-soft);
   }
   button:not(:disabled),
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
 
-  /* A3 (MVP-8.2): one visible focus indicator for every interactive element.
-     Native outlines were suppressed in components; this rule replaces them. */
+  /* A3 (MVP-8.2): единый видимый индикатор фокуса. */
   :focus-visible {
     outline: 2px solid var(--color-accent-bright);
     outline-offset: 2px;
   }
 
-  /* B3 (MVP-8.2, раунд 2): Tailwind 4 preflight renders ::placeholder as
-     50%-transparent currentColor (4.42:1 on zinc-950 in period fields — below
-     WCAG AA). The muted token is 6.91:1 on surface / 7.76:1 on page, which
-     also matches the v3 placeholder look (gray-400). */
+  /* B3 (MVP-8.2): плейсхолдер — токен text-muted (≥ 4.5:1), не 50% currentColor. */
   ::placeholder {
     color: var(--color-text-muted);
     opacity: 1;
   }
+
+  /* R2: цифры таблиц выровнены по ширине. */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 :root {
-  /* A5 (MVP-8.2): the UI is dark-only; dark mode also styles native
-     scrollbars/form controls (Chrome). */
+  /* A5 (MVP-8.2): интерфейс только тёмный; тёмная схема и для нативных контролов. */
   color-scheme: dark;
 }
 
-/* A5 (MVP-8.2): page background and default text live on body, not only on
-   <main>, so every surface (overflow areas, popups) is dark. */
+/* ==========================================================================
+   MVP-8.3, раунд 2 (T5): светлая тема. Переопределяются только семантические
+   токены на тех же именах — разметка не копируется. Шкала zinc остаётся
+   «чернильной» (её значения — база тёмной темы), поэтому после перевода
+   жёстких классов на токены в светлой теме не остаётся тёмных «хвостов».
+   data-theme ставится theme-init.js до отрисовки (T4), поэтому переключение
+   применяется без вспышки тёмного экрана.
+   ========================================================================== */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-page: #f6f7fc;
+  --color-surface: #ffffff;
+  --color-surface-raised: #eef0f8;
+  --color-border: #7d87a1;
+  --color-border-soft: #e4e7f2;
+  --color-border-strong: #6b7394;
+  --color-text: #191d33;
+  --color-text-secondary: #3c4258;
+  --color-text-muted: #5f6685;
+
+  /* Акцент: заливка та же (белый текст 6.29:1), bright — тёмный индиго для
+     фокус-рамки и акцентного текста на светлом; soft — пастельный фон. */
+  --color-accent-bright: #4338ca;
+  --color-accent-soft: #e3e6ff;
+
+  --color-error: #b91c1c;
+  --color-error-soft: #fee2e2;
+  --color-error-border: #fca5a5;
+  --color-warning: #92400e;
+  --color-warning-soft: #fef3c7;
+  --color-warning-border: #fcd34d;
+  --color-success: #047857;
+  --color-success-soft: #d1fae5;
+  --color-success-border: #a7f3d0;
+
+  --color-control: #fbfcfe;
+  --color-sunken: #e9ebf4;
+
+  --color-overlay: rgb(17 21 38 / 0.4);
+
+  /* Свечения/прожектор/тени — мягче, чем в тёмной теме. */
+  --glow-accent: rgb(79 70 229 / 0.1);
+  --glow-sky: rgb(56 189 248 / 0.12);
+  --spotlight-fill: rgb(99 102 241 / 0.12);
+  --spotlight-ring: rgb(79 70 229 / 0.5);
+  --shadow-card: inset 0 1px 0 0 rgb(255 255 255 / 0.9), 0 10px 30px -18px rgb(28 34 62 / 0.3);
+  --shadow-pop: 0 18px 50px -12px rgb(28 34 62 / 0.35), 0 0 0 1px rgb(28 34 62 / 0.1);
+  --shadow-glow: 0 0 0 1px rgb(79 70 229 / 0.4), 0 8px 28px -10px rgb(79 70 229 / 0.3);
+  --shadow-button: 0 6px 18px -8px rgb(79 70 229 / 0.35);
+}
+
+/* A5 (MVP-8.2): фон и цвет текста — на body. R1: мягкое свечение акцента в
+   верхней части страницы (градиент, фиксированный, без картинок); значения
+   свечений — токены (раунд 2), светлая тема задаёт свои. */
 body {
   margin: 0;
+  min-height: 100vh;
   background-color: var(--color-page);
+  background-image:
+    radial-gradient(60rem 30rem at 50% -12rem, var(--glow-accent), transparent 70%),
+    radial-gradient(40rem 24rem at 100% 0%, var(--glow-sky), transparent 70%);
+  background-repeat: no-repeat;
   color: var(--color-text);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+
+/* R2: числа (цены, объёмы, PnL) — моноширинные табличные цифры. */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* R6: ссылка «К содержимому» видна только при фокусе с клавиатуры. */
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -4rem;
+  z-index: 100;
+  border-radius: var(--radius-control);
+  background: var(--color-accent);
+  color: #fff;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: top var(--duration-fast) var(--ease-standard);
+}
+.skip-link:focus {
+  top: 0.75rem;
+}
+
+/* R9: «прожектор» — подсветка карточки, следящая за курсором. Только
+   радиальный градиент по CSS-переменным (--mx/--my), без layout. Включается
+   классом .spotlight и только на устройствах с точным указателем и без
+   prefers-reduced-motion. */
+.spotlight {
+  position: relative;
+  isolation: isolate;
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .spotlight::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    opacity: 0;
+    background: radial-gradient(
+      22rem circle at var(--mx, 50%) var(--my, 50%),
+      var(--spotlight-fill),
+      transparent 65%
+    );
+    transition: opacity var(--duration-base) var(--ease-standard);
+    pointer-events: none;
+  }
+  .spotlight::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    opacity: 0;
+    padding: 1px;
+    background: radial-gradient(
+      16rem circle at var(--mx, 50%) var(--my, 50%),
+      var(--spotlight-ring),
+      transparent 70%
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    transition: opacity var(--duration-base) var(--ease-standard);
+    pointer-events: none;
+  }
+  .spotlight:hover::before,
+  .spotlight:hover::after {
+    opacity: 1;
+  }
+}
+
+/* R10: при prefers-reduced-motion переходы и CSS-анимации отключены глобально. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Skeleton: пульс прозрачности (opacity), отключается правилом выше. */
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+.skeleton {
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+  animation: skeleton-pulse 1.6s var(--ease-standard) infinite;
+}
+
+/* Диалоги и панель меню: появление только opacity/transform. */
+@keyframes dialog-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes dialog-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.97);
+  }
+}
+@keyframes sheet-in {
+  from {
+    opacity: 0;
+    transform: translateX(1.5rem);
+  }
+}
+
+/* R7: единый вид таблиц данных. Классы th/td в разметке не задаются. */
+@layer components {
+  .data-table {
+    width: 100%;
+    min-width: 30rem;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: 0.8125rem;
+  }
+  .data-table th {
+    padding: 0.5rem 0.875rem 0.5rem 0;
+    border-bottom: 1px solid var(--color-border-soft);
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .data-table td {
+    padding: 0.625rem 0.875rem 0.625rem 0;
+    border-bottom: 1px solid var(--color-row-border);
+    vertical-align: middle;
+  }
+  .data-table tbody tr {
+    transition: background-color var(--duration-fast) var(--ease-standard);
+  }
+  .data-table tbody tr:hover {
+    background-color: var(--color-row-hover);
+  }
 }
