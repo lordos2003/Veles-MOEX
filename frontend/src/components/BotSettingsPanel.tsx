@@ -272,7 +272,7 @@ export function BotSettingsPanel(props: {
   };
 
   return (
-    <div className="rounded border border-zinc-800 bg-zinc-950/50 p-3">
+    <div className="rounded-control border border-zinc-800 bg-zinc-950/50 p-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium text-zinc-400">Настройки бота</span>
         <Button variant="ghost" onClick={() => setOpen(!open)}>

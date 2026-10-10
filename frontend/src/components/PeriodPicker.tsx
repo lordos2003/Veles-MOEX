@@ -372,7 +372,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
 
       {open ? (
         <div
-          className="absolute left-0 top-full z-20 mt-1 w-[320px] rounded-lg border border-zinc-700 bg-zinc-900 p-3 shadow-xl"
+          className="absolute left-0 top-full z-20 mt-1 w-[320px] rounded-card border border-zinc-700 bg-zinc-900 p-3 shadow-pop"
           role="dialog"
           aria-label="Выбор периода"
         >
@@ -428,7 +428,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
               <span aria-hidden>📅</span>
               <input
                 type="text"
-                className="min-h-8 w-24 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-24 rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
                 value={drafts.fromDate}
                 placeholder="ДД.ММ.ГГГГ"
                 onChange={(e) => setDraft("from", "date", e.target.value)}
@@ -437,7 +437,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
               <span aria-hidden>🕐</span>
               <input
                 type="text"
-                className="min-h-8 w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-16 rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
                 value={drafts.fromTime}
                 placeholder="ЧЧ:ММ"
                 onChange={(e) => setDraft("from", "time", e.target.value)}
@@ -449,7 +449,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
               <span aria-hidden>📅</span>
               <input
                 type="text"
-                className="min-h-8 w-24 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-24 rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
                 value={drafts.toDate}
                 placeholder="ДД.ММ.ГГГГ"
                 onChange={(e) => setDraft("to", "date", e.target.value)}
@@ -458,7 +458,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
               <span aria-hidden>🕐</span>
               <input
                 type="text"
-                className="min-h-8 w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
+                className="min-h-8 w-16 rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-200"
                 value={drafts.toTime}
                 placeholder="ЧЧ:ММ"
                 onChange={(e) => setDraft("to", "time", e.target.value)}
@@ -478,7 +478,7 @@ export function PeriodPicker(props: PeriodPickerProps) {
       {presetsOpen ? (
         <div
           ref={presetsRef}
-          className="absolute right-0 top-full z-20 mt-1 w-80 rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl"
+          className="absolute right-0 top-full z-20 mt-1 w-80 rounded-card border border-zinc-700 bg-zinc-900 shadow-pop"
           onKeyDown={onPresetsKeyDown}
         >
           {visiblePresets.map((p) => {

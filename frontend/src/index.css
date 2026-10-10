@@ -292,3 +292,35 @@ body {
     transform: translateX(1.5rem);
   }
 }
+
+/* R7: единый вид таблиц данных. Классы th/td в разметке не задаются. */
+@layer components {
+  .data-table {
+    width: 100%;
+    min-width: 30rem;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: 0.8125rem;
+  }
+  .data-table th {
+    padding: 0.5rem 0.875rem 0.5rem 0;
+    border-bottom: 1px solid var(--color-zinc-800);
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .data-table td {
+    padding: 0.625rem 0.875rem 0.625rem 0;
+    border-bottom: 1px solid rgb(36 42 61 / 0.6);
+    vertical-align: top;
+  }
+  .data-table tbody tr {
+    transition: background-color var(--duration-fast) var(--ease-standard);
+  }
+  .data-table tbody tr:hover {
+    background-color: rgb(36 42 61 / 0.4);
+  }
+}

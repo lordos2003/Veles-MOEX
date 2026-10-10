@@ -10,6 +10,7 @@ import type {
 } from "../types";
 import { Button, ErrorBanner, Field, Loading, SelectInput, SuccessBanner, TextInput } from "../components/FormControls";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { PageHeader } from "../components/PageHeader";
 import { ORDER_STATUS_LABELS } from "../lib/labels";
 
 export function SandboxPage() {
@@ -135,17 +136,20 @@ export function SandboxPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold">Песочница и счета</h2>
-        <div className="flex gap-2">
-          <Button variant="ghost" onClick={() => void syncAccounts()} disabled={busy}>
-            Синхронизировать счета
-          </Button>
-          <Button onClick={() => void createSandboxAccount()} disabled={busy}>
-            + Открыть песочничный счёт
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Песочница и счета"
+        description="Тестовые счета T-Invest: пополнение, позиции, заявки и сделки."
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => void syncAccounts()} disabled={busy}>
+              Синхронизировать счета
+            </Button>
+            <Button onClick={() => void createSandboxAccount()} disabled={busy}>
+              + Открыть песочничный счёт
+            </Button>
+          </>
+        }
+      />
       <SuccessBanner text={success} />
       <ErrorBanner text={error} />
 
@@ -159,19 +163,21 @@ export function SandboxPage() {
             <button
               key={a.account_id}
               onClick={() => void openAccount(a.account_id)}
-              className={`rounded-lg border p-4 text-left hover:border-zinc-500 ${
-                a.account_id === selectedId ? "border-emerald-600 bg-zinc-900/70" : "border-zinc-800 bg-zinc-900/40"
+              className={`rounded-card border p-4 text-left shadow-card transition-[border-color,background-color,box-shadow] duration-(--duration-fast) hover:border-zinc-600 ${
+                a.account_id === selectedId
+                  ? "border-accent-bright/60 bg-surface shadow-glow"
+                  : "border-zinc-800 bg-surface/60"
               }`}
             >
               <div className="flex items-center justify-between">
                 <span className="font-medium text-zinc-100">{a.name ?? a.account_id}</span>
                 {a.is_saved ? (
-                  <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-emerald-300">сохранён</span>
+                  <span className="rounded-full bg-emerald-900/40 px-2 py-0.5 text-xs text-emerald-300">сохранён</span>
                 ) : (
-                  <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">не сохранён</span>
+                  <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">не сохранён</span>
                 )}
               </div>
-              <div className="mt-1 grid grid-cols-2 gap-1 text-xs text-text-muted">
+              <div className="num mt-2 grid grid-cols-1 gap-1 break-words text-xs text-text-muted sm:grid-cols-2">
                 <span>ID: {a.account_id}</span>
                 <span>Брокер: {a.broker}</span>
                 <span>Валюта: {a.currency}</span>
@@ -188,11 +194,11 @@ export function SandboxPage() {
       )}
 
       {selected ? (
-        <div className="space-y-4 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
+        <div className="space-y-4 rounded-card border border-zinc-800 bg-surface/60 p-4 shadow-card sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h3 className="font-medium text-zinc-200">{selected.name ?? selected.account_id}</h3>
+            <h3 className="font-medium text-text">{selected.name ?? selected.account_id}</h3>
             <button
-              className="text-xs text-red-400 hover:underline"
+              className="inline-flex min-h-8 items-center rounded-control px-2 text-xs text-red-400 hover:bg-red-950/40 hover:underline"
               onClick={() => setClosing(true)}
               disabled={busy}
             >
@@ -218,31 +224,31 @@ export function SandboxPage() {
           </Button>
 
           <section>
-            <h4 className="mb-2 text-sm font-medium text-zinc-300">Позиции</h4>
+            <h4 className="mb-2 text-sm font-medium text-text-secondary">Позиции</h4>
             {positions.length === 0 ? (
               <p className="text-sm text-text-muted">Нет открытых позиций.</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <table className="data-table">
                   <thead>
-                    <tr className="border-b border-zinc-800 text-text-muted">
-                      <th className="py-1 pr-3">FIGI</th>
-                      <th className="pr-3">Тикер</th>
-                      <th className="pr-3">Кол-во</th>
-                      <th className="pr-3">Средняя цена</th>
-                      <th className="pr-3">Текущая цена</th>
-                      <th className="pr-3">Нереализ. PnL</th>
+                    <tr>
+                      <th>FIGI</th>
+                      <th>Тикер</th>
+                      <th>Кол-во</th>
+                      <th>Средняя цена</th>
+                      <th>Текущая цена</th>
+                      <th>Нереализ. PnL</th>
                     </tr>
                   </thead>
                   <tbody>
                     {positions.map((p, i) => (
-                      <tr key={i} className="border-b border-zinc-900">
-                        <td className="py-1 pr-3">{p.figi}</td>
-                        <td className="pr-3">{p.ticker ?? "—"}</td>
-                        <td className="pr-3">{p.quantity}</td>
-                        <td className="pr-3 font-mono">{p.average_price}</td>
-                        <td className="pr-3 font-mono">{p.current_price}</td>
-                        <td className="pr-3 font-mono">{p.unrealized_pnl}</td>
+                      <tr key={i}>
+                        <td>{p.figi}</td>
+                        <td>{p.ticker ?? "—"}</td>
+                        <td>{p.quantity}</td>
+                        <td className="num">{p.average_price}</td>
+                        <td className="num">{p.current_price}</td>
+                        <td className="num">{p.unrealized_pnl}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -252,33 +258,33 @@ export function SandboxPage() {
           </section>
 
           <section>
-            <h4 className="mb-2 text-sm font-medium text-zinc-300">Заявки</h4>
+            <h4 className="mb-2 text-sm font-medium text-text-secondary">Заявки</h4>
             {orders.length === 0 ? (
               <p className="text-sm text-text-muted">Заявок нет.</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <table className="data-table">
                   <thead>
-                    <tr className="border-b border-zinc-800 text-text-muted">
-                      <th className="py-1 pr-3">Заявка</th>
-                      <th className="pr-3">FIGI</th>
-                      <th className="pr-3">Сторона</th>
-                      <th className="pr-3">Статус</th>
-                      <th className="pr-3">Кол-во</th>
-                      <th className="pr-3">Цена</th>
-                      <th className="pr-3">Отклонено</th>
+                    <tr>
+                      <th>Заявка</th>
+                      <th>FIGI</th>
+                      <th>Сторона</th>
+                      <th>Статус</th>
+                      <th>Кол-во</th>
+                      <th>Цена</th>
+                      <th>Отклонено</th>
                     </tr>
                   </thead>
                   <tbody>
                     {orders.map((o) => (
-                      <tr key={o.order_id} className="border-b border-zinc-900">
-                        <td className="py-1 pr-3">{o.order_id}</td>
-                        <td className="pr-3">{o.figi ?? "—"}</td>
-                        <td className="pr-3">{o.side ?? "—"}</td>
-                        <td className="pr-3">{ORDER_STATUS_LABELS[o.status] ?? o.status}</td>
-                        <td className="pr-3">{o.executed_quantity}/{o.requested_quantity}</td>
-                        <td className="pr-3 font-mono">{o.price ?? "—"}</td>
-                        <td className="pr-3 text-red-400">{o.reject_info ?? "—"}</td>
+                      <tr key={o.order_id}>
+                        <td>{o.order_id}</td>
+                        <td>{o.figi ?? "—"}</td>
+                        <td>{o.side ?? "—"}</td>
+                        <td>{ORDER_STATUS_LABELS[o.status] ?? o.status}</td>
+                        <td>{o.executed_quantity}/{o.requested_quantity}</td>
+                        <td className="num">{o.price ?? "—"}</td>
+                        <td className="text-error">{o.reject_info ?? "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -288,33 +294,33 @@ export function SandboxPage() {
           </section>
 
           <section>
-            <h4 className="mb-2 text-sm font-medium text-zinc-300">Сделки</h4>
+            <h4 className="mb-2 text-sm font-medium text-text-secondary">Сделки</h4>
             {deals.length === 0 ? (
               <p className="text-sm text-text-muted">Сделок нет.</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <table className="data-table">
                   <thead>
-                    <tr className="border-b border-zinc-800 text-text-muted">
-                      <th className="py-1 pr-3">Сделка</th>
-                      <th className="pr-3">FIGI</th>
-                      <th className="pr-3">Сторона</th>
-                      <th className="pr-3">Кол-во</th>
-                      <th className="pr-3">Цена</th>
-                      <th className="pr-3">Комиссия</th>
-                      <th className="pr-3">Время</th>
+                    <tr>
+                      <th>Сделка</th>
+                      <th>FIGI</th>
+                      <th>Сторона</th>
+                      <th>Кол-во</th>
+                      <th>Цена</th>
+                      <th>Комиссия</th>
+                      <th>Время</th>
                     </tr>
                   </thead>
                   <tbody>
                     {deals.map((d) => (
-                      <tr key={d.deal_id} className="border-b border-zinc-900">
-                        <td className="py-1 pr-3">{d.deal_id}</td>
-                        <td className="pr-3">{d.figi}</td>
-                        <td className="pr-3">{d.side === "BUY" ? "Покупка" : "Продажа"}</td>
-                        <td className="pr-3">{d.quantity}</td>
-                        <td className="pr-3 font-mono">{d.price}</td>
-                        <td className="pr-3 font-mono">{d.commission}</td>
-                        <td className="pr-3">{d.happened_at ? new Date(d.happened_at).toLocaleString("ru-RU") : "—"}</td>
+                      <tr key={d.deal_id}>
+                        <td>{d.deal_id}</td>
+                        <td>{d.figi}</td>
+                        <td>{d.side === "BUY" ? "Покупка" : "Продажа"}</td>
+                        <td>{d.quantity}</td>
+                        <td className="num">{d.price}</td>
+                        <td className="num">{d.commission}</td>
+                        <td>{d.happened_at ? new Date(d.happened_at).toLocaleString("ru-RU") : "—"}</td>
                       </tr>
                     ))}
                   </tbody>

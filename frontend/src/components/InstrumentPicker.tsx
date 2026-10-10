@@ -83,7 +83,7 @@ export function InstrumentPicker(props: {
   return (
     <div className="relative">
       <input
-        className="min-h-8 w-full rounded border border-zinc-700 bg-zinc-900 p-2 text-sm"
+        className="min-h-8 w-full rounded-control border border-zinc-700 bg-zinc-900 p-2 text-sm"
         placeholder={props.placeholder ?? "Поиск по тикеру, названию или FIGI…"}
         value={open ? query : label}
         role="combobox"
@@ -108,7 +108,7 @@ export function InstrumentPicker(props: {
         onKeyDown={onKeyDown}
       />
       {open ? (
-        <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded border border-zinc-700 bg-zinc-900">
+        <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-control border border-zinc-700 bg-zinc-900">
           <p className="px-3 py-1 text-xs text-text-muted">
             Найдено: {filtered.length} из {selectable.length}
           </p>

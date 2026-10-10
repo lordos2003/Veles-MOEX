@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import type { StrategyResponse, StrategyVersionResponse } from "../types";
-import { Button, ErrorBanner, Loading } from "../components/FormControls";
+import { Button, ErrorBanner, Loading, TableWrap } from "../components/FormControls";
+import { PageHeader } from "../components/PageHeader";
+import { SpotlightCard } from "../components/ui/SpotlightCard";
 
 export function StrategiesListPage() {
   const [strategies, setStrategies] = useState<StrategyResponse[] | null>(null);
@@ -24,10 +26,11 @@ export function StrategiesListPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Стратегии</h2>
-        <Button onClick={() => navigate("/strategies/new")}>+ Новая стратегия</Button>
-      </div>
+      <PageHeader
+        title="Стратегии"
+        description="Конфигурации входа и усреднения; каждое изменение сохраняется отдельной версией."
+        actions={<Button onClick={() => navigate("/strategies/new")}>+ Новая стратегия</Button>}
+      />
       <ErrorBanner text={error} />
       {!strategies ? (
         <Loading />
@@ -36,20 +39,20 @@ export function StrategiesListPage() {
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           {strategies.map((s) => (
-            <Link
-              key={s.id}
-              to={`/strategies/${s.id}`}
-              className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 hover:border-zinc-600"
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-medium text-zinc-100">{s.name}</span>
-                <span className="text-xs text-text-muted">версия {s.versions}</span>
-              </div>
-              {s.description ? <p className="mt-1 text-xs text-text-muted">{s.description}</p> : null}
-              <p className="mt-1 text-xs text-text-muted">
-                Обновлена: {s.updated_at ? new Date(s.updated_at).toLocaleString("ru-RU") : "—"}
-              </p>
-            </Link>
+            <SpotlightCard key={s.id}>
+              <Link to={`/strategies/${s.id}`} className="block rounded-card p-4 sm:p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0 break-words text-base font-medium text-text">{s.name}</span>
+                  <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-text-secondary">
+                    версия {s.versions}
+                  </span>
+                </div>
+                {s.description ? <p className="mt-2 text-sm text-text-muted">{s.description}</p> : null}
+                <p className="mt-3 text-xs text-text-muted">
+                  Обновлена: {s.updated_at ? new Date(s.updated_at).toLocaleString("ru-RU") : "—"}
+                </p>
+              </Link>
+            </SpotlightCard>
           ))}
         </div>
       )}
@@ -86,16 +89,18 @@ export function StrategyDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{strategy.name}</h2>
-        <div className="flex gap-2">
-          <Button variant="ghost" onClick={() => navigate("/strategies")}>
-            Назад
-          </Button>
-          <Button onClick={() => navigate(`/strategies/${strategy.id}/edit`)}>Изменить</Button>
-        </div>
-      </div>
-      {strategy.description ? <p className="text-sm text-zinc-400">{strategy.description}</p> : null}
+      <PageHeader
+        title={strategy.name}
+        actions={
+          <>
+            <Button variant="ghost" onClick={() => navigate("/strategies")}>
+              Назад
+            </Button>
+            <Button onClick={() => navigate(`/strategies/${strategy.id}/edit`)}>Изменить</Button>
+          </>
+        }
+      />
+      {strategy.description ? <p className="text-sm text-text-muted">{strategy.description}</p> : null}
       <p className="text-xs text-text-muted">
         Версия {strategy.versions} · создана:{" "}
         {strategy.created_at ? new Date(strategy.created_at).toLocaleString("ru-RU") : "—"} ·
@@ -109,26 +114,29 @@ export function StrategyDetailPage() {
         </p>
       ) : null}
 
-      <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
-        <pre className="max-h-[32rem] overflow-auto text-xs text-zinc-300">
+      <div className="rounded-card border border-zinc-800 bg-zinc-950/70 p-4">
+        <pre className="num max-h-[32rem] overflow-auto text-xs leading-relaxed text-zinc-300" tabIndex={0} aria-label="Конфигурация стратегии (JSON)">
           {JSON.stringify(shown, null, 2)}
         </pre>
       </div>
 
       <div>
-        <p className="mb-2 text-sm font-medium text-zinc-300">История версий</p>
-        <table className="w-full text-left text-sm">
+        <p className="mb-2 text-sm font-medium text-text-secondary">История версий</p>
+        <TableWrap>
+        <table className="data-table">
           <thead>
-            <tr className="border-b border-zinc-800 text-xs text-text-muted">
-              <th className="py-1">версия</th>
+            <tr>
+              <th>версия</th>
               <th>создана</th>
-              <th></th>
+              <th>
+                <span className="sr-only">действия</span>
+              </th>
             </tr>
           </thead>
           <tbody>
             {versions.map((v) => (
-              <tr key={v.id} className="border-b border-zinc-900">
-                <td className="py-1">{v.version}</td>
+              <tr key={v.id}>
+                <td>{v.version}</td>
                 <td>{new Date(v.created_at).toLocaleString("ru-RU")}</td>
                 <td>
                   <Button variant="ghost" onClick={() => setViewVersion(v)}>
@@ -139,6 +147,7 @@ export function StrategyDetailPage() {
             ))}
           </tbody>
         </table>
+        </TableWrap>
       </div>
     </div>
   );
