@@ -24,7 +24,7 @@ export function Field(props: {
 }) {
   return (
     <div className="space-y-1">
-      <label className="block text-sm font-medium text-zinc-300">
+      <label className="block text-sm font-medium text-text-secondary">
         {props.label}
         {props.required ? <span className="ml-1 text-amber-400">*</span> : null}
         {props.hint ? (
@@ -40,8 +40,8 @@ export function Field(props: {
 }
 
 const inputClass =
-  "min-h-8 w-full rounded border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-100 " +
-  "focus:border-zinc-500 disabled:opacity-50";
+  "min-h-9 w-full rounded-control border border-zinc-700 bg-zinc-900/70 px-3 py-1.5 text-sm text-text " +
+  "transition-colors duration-(--duration-fast) hover:border-zinc-600 focus:border-accent-bright disabled:opacity-50";
 
 export function TextInput(props: {
   value: string;
@@ -73,7 +73,7 @@ export function TextareaInput(props: {
   const fieldLabel = useFieldLabel();
   return (
     <textarea
-      className={`min-h-8 w-full rounded border border-zinc-700 bg-zinc-950 p-2 text-xs font-mono text-zinc-200 focus:border-zinc-500 ${props.className ?? ""}`}
+      className={`min-h-9 w-full rounded-control border border-zinc-700 bg-zinc-950 p-3 text-xs font-mono text-zinc-200 transition-colors duration-(--duration-fast) hover:border-zinc-600 focus:border-accent-bright ${props.className ?? ""}`}
       value={props.value}
       placeholder={props.placeholder}
       spellCheck={props.spellCheck ?? false}
@@ -183,7 +183,7 @@ export function CheckboxInput(props: {
     <label className="inline-flex min-h-8 min-w-8 cursor-pointer items-center">
       <input
         type="checkbox"
-        className="h-4 w-4 accent-zinc-400"
+        className="h-4 w-4 accent-accent-bright"
         checked={props.value}
         disabled={props.disabled}
         aria-label={fieldLabel ?? undefined}
@@ -193,19 +193,37 @@ export function CheckboxInput(props: {
   );
 }
 
-export function Section(props: { title: string; children: ReactNode }) {
+export function Section(props: { title: string; children: ReactNode; className?: string }) {
   return (
-    <section className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
-      <h2 className="mb-3 text-base font-semibold text-zinc-200">{props.title}</h2>
+    <section
+      className={
+        "rounded-card border border-zinc-800 bg-surface/60 p-4 shadow-card sm:p-5 " + (props.className ?? "")
+      }
+    >
+      <h2 className="mb-3 text-base font-semibold tracking-tight text-text">{props.title}</h2>
       <div className="space-y-3">{props.children}</div>
     </section>
+  );
+}
+
+/** Широкие таблицы прокручиваются внутри контейнера, а не всей страницей (R11). */
+export function TableWrap(props: { children: ReactNode; label?: string }) {
+  return (
+    <div
+      className="-mx-1 overflow-x-auto px-1"
+      role={props.label ? "region" : undefined}
+      aria-label={props.label}
+      tabIndex={props.label ? 0 : undefined}
+    >
+      {props.children}
+    </div>
   );
 }
 
 export function ErrorBanner(props: { text: string | null }) {
   if (!props.text) return null;
   return (
-    <div className="rounded border border-red-800 bg-red-950/40 px-3 py-2 text-sm text-red-300">
+    <div role="alert" className="rounded-control border border-red-800/80 bg-red-950/40 px-3 py-2 text-sm text-red-300">
       {props.text}
     </div>
   );
@@ -214,7 +232,7 @@ export function ErrorBanner(props: { text: string | null }) {
 export function SuccessBanner(props: { text: string | null }) {
   if (!props.text) return null;
   return (
-    <div className="rounded border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300">
+    <div role="status" className="rounded-control border border-emerald-800/80 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300">
       {props.text}
     </div>
   );
@@ -235,8 +253,8 @@ export function Button(props: {
     props.variant === "danger"
       ? "border-red-800 bg-red-950/40 text-red-300 hover:bg-red-900/40"
       : props.variant === "ghost"
-        ? "border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-        : "border-zinc-600 bg-zinc-800 text-zinc-100 hover:bg-zinc-700";
+        ? "border-zinc-700 text-text-secondary hover:border-zinc-600 hover:bg-zinc-800 hover:text-text"
+        : "border-accent-bright/20 bg-accent text-white shadow-[0_6px_18px_-8px_rgb(79_70_229/0.9)] hover:bg-accent-strong";
   return (
     <button
       type="button"
@@ -244,7 +262,7 @@ export function Button(props: {
       disabled={props.disabled}
       title={props.title}
       className={
-        "min-h-8 rounded border px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40 " +
+        "min-h-9 rounded-control border px-3.5 py-1.5 text-sm font-medium transition-[background-color,border-color,color,transform] duration-(--duration-fast) active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 " +
         variantClass
       }
     >
