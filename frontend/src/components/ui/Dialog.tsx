@@ -26,12 +26,11 @@ export function DialogOverlay(props: ComponentPropsWithoutRef<typeof DialogPrimi
 }
 
 /** Центральное модальное окно. */
-export function DialogContent(props: { children: ReactNode; label?: string }) {
+export function DialogContent(props: { children: ReactNode }) {
   return (
     <DialogPrimitive.Portal>
       <DialogOverlay />
       <DialogPrimitive.Content
-        aria-label={props.label}
         className={
           "fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 " +
           "rounded-card border border-zinc-700 bg-surface p-5 shadow-pop " +
@@ -45,13 +44,12 @@ export function DialogContent(props: { children: ReactNode; label?: string }) {
 }
 
 /** Боковая панель (мобильное меню). */
-export function SheetContent(props: { children: ReactNode; label: string }) {
+export function SheetContent(props: { children: ReactNode }) {
   return (
     <DialogPrimitive.Portal>
       <DialogOverlay />
       <DialogPrimitive.Content
         aria-describedby={undefined}
-        aria-label={props.label}
         className={
           "fixed inset-y-0 right-0 z-50 flex w-[min(20rem,calc(100%-2.5rem))] flex-col " +
           "border-l border-zinc-800 bg-surface p-4 shadow-pop " +

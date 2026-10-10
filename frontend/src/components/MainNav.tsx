@@ -46,7 +46,7 @@ export function MainNav() {
             </svg>
           </button>
         </DialogTrigger>
-        <SheetContent label="Меню">
+        <SheetContent>
           <div className="mb-3 flex items-center justify-between">
             <DialogTitle className="text-sm font-medium text-text-muted">Разделы</DialogTitle>
             <DialogClose asChild>

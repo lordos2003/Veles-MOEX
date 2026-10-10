@@ -127,8 +127,6 @@ function walk(dir, out = []) {
   return out;
 }
 
-const TEXT_RE = /\btext-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|white|black|text-secondary|text-muted|text|accent-bright|accent-strong|accent-soft|accent|error|warning|success)(?![\w-])/g;
-const BG_RE = /\bbg-(zinc-\d{2,3}(?:\/\d+)?|red-\d{2,3}(?:\/\d+)?|amber-\d{2,3}(?:\/\d+)?|emerald-\d{2,3}(?:\/\d+)?|sky-\d{2,3}(?:\/\d+)?|page|surface-raised|surface|accent-strong|accent-soft|accent(?:\/\d+)?|error|warning|success)(?![\w-])/g;
 const CLASS_RE = /\b(?:className|class)\s*=\s*["'`]([^"'`]*)["'`]/g;
 
 const MIN_RATIO = 4.5;
@@ -167,7 +165,19 @@ for (const file of walk("src")) {
 // Пары из условных классов (склеиваются конкатенацией строк, напр. день
 // календаря в PeriodPicker) — держим их здесь как явные инварианты.
 const EXTRA_PAIRS = [
-  ["white", "accent-strong"], // край диапазона календаря
+  ["white", "accent"], // MVP-8.3: основная кнопка (Button primary)
+  ["white", "accent-strong"], // край диапазона календаря; hover основной кнопки
+  ["zinc-100", "accent-soft"], // MVP-8.3: дни внутри диапазона календаря
+  ["accent-bright", "page"], // MVP-8.3: акцентный текст (вордмарк, легенда графика)
+  ["accent-bright", "surface"],
+  ["success", "page"], // MVP-8.3: PnL > 0, дот статуса
+  ["success", "surface"],
+  ["error", "page"], // MVP-8.3: PnL < 0, ошибки
+  ["error", "surface"],
+  ["warning", "surface"],
+  ["text-secondary", "surface"], // вторичный текст, подписи полей
+  ["text-muted", "surface-raised"], // приглушённый текст на активной вкладке/плитках
+  ["text", "surface-raised"],
 ];
 
 for (const [text, bgName] of EXTRA_PAIRS) {
