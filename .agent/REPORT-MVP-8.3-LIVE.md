@@ -89,5 +89,5 @@ Veles-семантика, backend и `docker/` не изменялись; исп
 ## Публикация
 
 - Ветка фиксов запушена: `git push origin agent/review/mvp-8.3-live` — `1e3b443` (пушено, синхронно с origin).
-- Отчёт — в `agent/control` (этот файл и скриншоты), пушен; SHA указан после пуша.
+- Отчёт (этот файл, статус задачи и скриншоты) запушен в `agent/control`: **Pushed SHA `19b0086`** (пушено, синхронно с origin: `git ls-remote origin agent/control` = локальный HEAD).
 - Только plain push; `master` не изменялся.
